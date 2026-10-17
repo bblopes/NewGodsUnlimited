@@ -432,8 +432,22 @@ impl World {
         world
     }
 
-    /// Avança um tick lógico. A taxa é acumulada: 0,12/tick produz uma nova
-    /// partícula a cada 8 ou 9 ticks, sem depender do FPS da tela.
+    /// Avança um tick lógico completo do ecossistema.
+    ///
+    /// Este é o orquestrador das regras biológicas: ele não desenha a tela e
+    /// não decide quantos ticks por segundo serão calculados. `simulation_worker`
+    /// em `app.rs` o chama; aqui definimos somente a ordem dos fenômenos de um
+    /// único instante do mundo.
+    ///
+    /// Roteiro de leitura, na mesma ordem do código:
+    /// 1. relógio e limites de reprodução; 2. emissão de alimento;
+    /// 3. campo de feromônios; 4. sensores; 5. cérebro e motores;
+    /// 6. movimento do alimento; 7. movimento das células;
+    /// 8. interações físicas; 9. custo energético; 10. mortes;
+    /// 11. alimentação; 12. remoção de alimento; 13. reprodução.
+    ///
+    /// A taxa de emissão é acumulada: 0,12/tick produz uma nova partícula a
+    /// cada 8 ou 9 ticks, sem depender do FPS da tela.
     pub fn tick(
         &mut self,
         flow: &FlowField,
@@ -445,10 +459,13 @@ impl World {
         reproduction_minimum: f32,
         reproduction_limit: f32,
     ) {
+        // ── Etapa 1: tempo e limites desta rodada ────────────────────────
         self.tick += 1;
         let reproduction_minimum = reproduction_minimum.max(1.0);
         let reproduction_limit = reproduction_limit.max(reproduction_minimum);
         self.energy_capacity = reproduction_limit;
+        // ── Etapa 2: emissão de fitoplâncton ─────────────────────────────
+        // O crédito fracionário permite uma taxa média estável de emissão.
         self.desert_spawn_credit += desert_emission_per_tick.max(0.0);
         while self.desert_spawn_credit >= 1.0 {
             self.desert_spawn_credit -= 1.0;
@@ -464,11 +481,13 @@ impl World {
             self.fertile_spawn_credit = 0.0;
         }
 
+        // ── Etapa 3: fotografia química ──────────────────────────────────
         // Primeiro construímos o campo químico a partir da emissão basal e
         // dos motores decididos no tick anterior. Assim, não há persistência
         // química, mas existe uma defasagem causal de um tick.
         self.pheromones.rebuild(&self.organisms, &self.map);
 
+        // ── Etapas 4 e 5: perceber e decidir ─────────────────────────────
         // Sensores veem o retrato do mundo no início do tick. O cérebro
         // decide usando este mesmo retrato antes do movimento.
         self.update_sensors(flow, reproduction_limit);
@@ -480,6 +499,7 @@ impl World {
             organism.external_force = Vec2::ZERO;
         }
 
+        // ── Etapa 6: deslocar e envelhecer o alimento ────────────────────
         for particle in &mut self.food {
             let previous_position = particle.position;
             particle.position +=
@@ -498,6 +518,8 @@ impl World {
             particle.age_ticks += 1;
         }
 
+        // ── Etapa 7: deslocar as células ─────────────────────────────────
+        // Posição nova = corrente ambiental + velocidade escolhida pelo cérebro.
         for organism in &mut self.organisms {
             let previous_position = organism.position;
             let environment_velocity =
@@ -513,6 +535,7 @@ impl World {
                     .constrain_to_walls(organism.position, previous_position, radius);
         }
 
+        // ── Etapa 8: interações entre células ────────────────────────────
         // A fagocitose pode relaxar a repulsão somente para o par que está
         // em sucção válida. Todos os outros pares continuam anti-cramming.
         let phagocytosis_pairs = self.apply_phagocytosis();
@@ -520,6 +543,7 @@ impl World {
         self.consume_phagocytosed(&phagocytosis_pairs.capture_candidates, reproduction_limit);
         self.apply_donations(reproduction_limit);
 
+        // ── Etapa 9: cobrar o custo de existir e agir ────────────────────
         // O custo de existir e de nadar é pago antes do ganho alimentar.
         // Assim, alcançar o teto de energia após comer realmente dispara a divisão.
         for organism in &mut self.organisms {
@@ -531,6 +555,7 @@ impl World {
                 + pheromone_energy_cost(organism))
                 * organism.energy_cost_multiplier();
         }
+        // ── Etapa 10: remover mortes por energia ou idade ────────────────
         let population_before_deaths = self.organisms.len();
         let mut starvation_deaths = 0u64;
         let mut age_deaths = 0u64;
@@ -549,6 +574,7 @@ impl World {
         self.deaths_by_starvation_total += starvation_deaths;
         self.deaths_by_age_total += age_deaths;
 
+        // ── Etapa 11: encontrar a vencedora de cada alimento ─────────────
         // Para cada comida, só a célula mais próxima que a contém vence.
         // A grade espacial evita testar cada partícula contra toda a população.
         // Como a interação tem alcance CELL_RADIUS, bastam os nove quadrados
@@ -568,6 +594,7 @@ impl World {
         }
         self.clamp_organisms_to_physical_bounds();
 
+        // ── Etapa 12: remover alimento consumido ou vencido ──────────────
         self.food = self
             .food
             .drain(..)
@@ -577,9 +604,14 @@ impl World {
             })
             .collect();
 
+        // ── Etapa 13: dividir células aptas e criar descendentes ─────────
         self.reproduce_ready_organisms(reproduction_minimum, reproduction_limit);
     }
 
+    /// Atualiza a configuração; não executa uma etapa biológica por si só.
+    /// A regra é aplicada durante a etapa 8 de `tick()`, por
+    /// `apply_anti_cramming`. A interface chama este método quando a pessoa
+    /// altera força, distância ou estado do controle anti-cramming.
     pub fn set_anti_cramming(&mut self, config: AntiCrammingConfig) {
         self.anti_cramming = AntiCrammingConfig {
             enabled: config.enabled,
