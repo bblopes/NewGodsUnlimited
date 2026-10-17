@@ -49,6 +49,25 @@ ignorado pelo Git: contém a medição específica da máquina. A linha de base
 interpretada fica neste documento e pode ser atualizada quando houver uma
 mudança intencional de hardware ou de cenário.
 
+## Modo headless no executável
+
+Para comparar a influência da visualização durante uma sessão real, abra a aba
+**Sessão** e clique em **Modo headless · medir teto de cálculo**. O modal
+explica a troca e, ao confirmar, mantém somente um painel mínimo com tick,
+população e ticks/s. Nesse modo:
+
+- a arena, organismos, alimento, mapa e painéis detalhados não são desenhados;
+- o worker não clona nem publica `World` para a interface;
+- a simulação ignora o limitador de velocidade da interface e avança no máximo
+  que o cálculo permitir;
+- **Voltar à visualização** (ou `Esc`) restaura a tela e publica uma fotografia
+  atual do mundo imediatamente.
+
+Para uma comparação justa, observe primeiro a taxa visual com a velocidade da
+sessão em `1.000.000×`; nessa configuração a interface também deixa de impor
+um teto artificial. Depois ative o modo headless e compare as duas leituras.
+O modo não altera regras biológicas, seed ou parâmetros da run.
+
 ## Cenários
 
 | Cenário | Intenção | Configuração principal |

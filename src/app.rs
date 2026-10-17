@@ -48,7 +48,7 @@ const MAX_TELEMETRY_SAMPLES: usize = 12_000;
 const GENETICS_REFRESH_TICKS: u64 = 250;
 const GENETIC_GROUP_SIMILARITY: f32 = 0.985;
 const ENERGY_HISTOGRAM_BUCKETS: usize = 12;
-const SESSION_CONTENT_BOTTOM: f32 = 1_420.0;
+const SESSION_CONTENT_BOTTOM: f32 = 1_460.0;
 const PRESET_MAGIC: [u8; 8] = *b"ECOPRE01";
 const PRESET_FORMAT_VERSION: u32 = 1;
 const MAP_PRESET_MAGIC: [u8; 8] = *b"ECOMAP01";
@@ -95,6 +95,9 @@ enum EngineCommand {
     Pause(bool),
     Speed(usize),
     UiFps(f32),
+    /// Mantém a simulação viva, mas interrompe a cópia de snapshots para a
+    /// interface. O painel headless continua recebendo apenas métricas leves.
+    SetHeadless(bool),
     SetFlowIntensity(f32),
     SetFlowPreset(FlowPreset),
     SetDesertEmission(f32),
@@ -120,6 +123,9 @@ struct EngineMetrics {
     publication_hz: f32,
     active_desert_emission: f32,
     active_fertile_emission: f32,
+    tick: u64,
+    population: usize,
+    headless: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -252,6 +258,7 @@ struct PanelAction {
     save_map_preset: Option<String>,
     load_map_preset: Option<usize>,
     delete_map_preset: Option<usize>,
+    open_headless_modal: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -346,6 +353,10 @@ struct SessionUi {
     paused: bool,
     speed: usize,
     speed_menu_open: bool,
+    /// Quando ativo, a interface mostra somente o painel de controle leve;
+    /// o worker deixa de copiar o mundo para desenho.
+    headless: bool,
+    headless_modal_open: bool,
     /// Um popup consumiu o clique atual. Enquanto o botão do mouse continua
     /// pressionado, controles sob ele (especialmente sliders) não reagem.
     pointer_captured_until_release: bool,
@@ -449,6 +460,8 @@ impl Default for SessionUi {
             paused: false,
             speed: 0,
             speed_menu_open: false,
+            headless: false,
+            headless_modal_open: false,
             pointer_captured_until_release: false,
             // Vetores são uma camada de leitura. A corrente física continua
             // ativa conforme a configuração, mas a tela começa limpa.
@@ -864,6 +877,7 @@ fn simulation_worker(
         .with_preset(settings.flow_preset)
         .with_intensity(settings.flow_intensity);
     let mut paused = false;
+    let mut headless = false;
     let mut speed = 0usize;
     let mut ui_fps = 60.0;
     let mut estimated_tps = 1_000.0;
@@ -879,6 +893,34 @@ fn simulation_worker(
                 EngineCommand::Pause(value) => paused = value,
                 EngineCommand::Speed(value) => speed = value.min(SPEED_MULTIPLIERS.len() - 1),
                 EngineCommand::UiFps(value) => ui_fps = value.max(1.0),
+                EngineCommand::SetHeadless(value) => {
+                    headless = value;
+                    // Ao sair, a primeira fotografia já é publicada para que
+                    // a tela volte a refletir o mundo atual sem aguardar o
+                    // próximo intervalo de publicação normal.
+                    if !headless {
+                        publish_snapshot(
+                            &world,
+                            &latest,
+                            &metrics,
+                            estimated_tps,
+                            target_publish_hz(ui_fps, speed),
+                            settings.desert_emission,
+                            settings.fertile_emission,
+                        );
+                    } else if let Ok(mut current) = metrics.lock() {
+                        *current = EngineMetrics {
+                            ticks_per_second: estimated_tps,
+                            publication_hz: 0.0,
+                            active_desert_emission: settings.desert_emission,
+                            active_fertile_emission: settings.fertile_emission,
+                            tick: world.tick,
+                            population: world.organisms.len(),
+                            headless: true,
+                        };
+                    }
+                    last_publish = Instant::now();
+                }
                 EngineCommand::SetFlowIntensity(intensity) => {
                     settings.flow_intensity = intensity.clamp(0.0, 1.0);
                     flow = FlowField::new(settings.seed)
@@ -984,9 +1026,13 @@ fn simulation_worker(
 
         let speed_multiplier = SPEED_MULTIPLIERS[speed];
         let requested_tps = 10.0 * speed_multiplier;
-        let speed_penalty = 1.0 + 0.35 * speed_multiplier.log10().max(0.0);
-        let target_publish_hz = (ui_fps * 0.9 / speed_penalty).clamp(5.0, 60.0);
-        let batch = if requested_tps <= estimated_tps {
+        let target_publish_hz = target_publish_hz(ui_fps, speed);
+        let batch = if headless {
+            // O modo headless não obedece ao limitador de velocidade da UI:
+            // ele mede o máximo que o cálculo do mundo consegue avançar,
+            // mas ainda verifica comandos aproximadamente a cada 8 ms.
+            (estimated_tps * 0.008).round().clamp(64.0, 8_192.0) as u32
+        } else if requested_tps <= estimated_tps {
             (requested_tps / target_publish_hz).ceil().max(1.0) as u32
         } else {
             // Mantém a latência de pausa e controles abaixo de aproximadamente 8 ms.
@@ -1014,7 +1060,21 @@ fn simulation_worker(
         let elapsed = started.elapsed().as_secs_f32().max(0.000_001);
         let observed_tps = batch as f32 / elapsed;
         estimated_tps = estimated_tps * 0.85 + observed_tps * 0.15;
-        if last_publish.elapsed().as_secs_f32() >= 1.0 / target_publish_hz {
+        if headless && last_publish.elapsed() >= Duration::from_millis(250) {
+            // Métricas simples mantêm o modal legível sem clonar `World`.
+            if let Ok(mut current) = metrics.lock() {
+                *current = EngineMetrics {
+                    ticks_per_second: estimated_tps,
+                    publication_hz: 0.0,
+                    active_desert_emission: settings.desert_emission,
+                    active_fertile_emission: settings.fertile_emission,
+                    tick: world.tick,
+                    population: world.organisms.len(),
+                    headless: true,
+                };
+            }
+            last_publish = Instant::now();
+        } else if !headless && last_publish.elapsed().as_secs_f32() >= 1.0 / target_publish_hz {
             let snapshot = Arc::new(world.clone());
             if let Ok(mut target) = latest.lock() {
                 *target = snapshot;
@@ -1025,12 +1085,15 @@ fn simulation_worker(
                     publication_hz: target_publish_hz,
                     active_desert_emission: settings.desert_emission,
                     active_fertile_emission: settings.fertile_emission,
+                    tick: world.tick,
+                    population: world.organisms.len(),
+                    headless: false,
                 };
             }
             last_publish = Instant::now();
         }
 
-        if requested_tps < observed_tps {
+        if !headless && requested_tps < observed_tps {
             let desired_seconds = batch as f32 / requested_tps;
             let remaining = desired_seconds - elapsed;
             if remaining > 0.000_5 {
@@ -1058,8 +1121,17 @@ fn publish_snapshot(
             publication_hz,
             active_desert_emission,
             active_fertile_emission,
+            tick: world.tick,
+            population: world.organisms.len(),
+            headless: false,
         };
     }
+}
+
+fn target_publish_hz(ui_fps: f32, speed: usize) -> f32 {
+    let speed_multiplier = SPEED_MULTIPLIERS[speed];
+    let speed_penalty = 1.0 + 0.35 * speed_multiplier.log10().max(0.0);
+    (ui_fps * 0.9 / speed_penalty).clamp(5.0, 60.0)
 }
 
 fn capture_telemetry(world: &World) -> TelemetrySample {
@@ -1972,6 +2044,22 @@ pub async fn run() {
     let mut last_ui_feedback = 0.0f64;
 
     loop {
+        if session.headless {
+            // Neste ramo não pedimos `engine.snapshot()`: além de não desenhar
+            // a arena, evitamos a cópia completa do mundo que alimentaria a UI.
+            if session.paused != sent_paused {
+                engine.send(EngineCommand::Pause(session.paused));
+                sent_paused = session.paused;
+            }
+            clear_background(BACKGROUND);
+            if draw_headless_runtime(&mut session, engine.metrics()) {
+                session.headless = false;
+                engine.send(EngineCommand::SetHeadless(false));
+            }
+            next_frame().await;
+            continue;
+        }
+
         let world = engine.snapshot();
         refresh_demographics_window(&mut session, &world, || engine.telemetry());
         ensure_selected_cell(&mut session, &world);
@@ -2072,7 +2160,20 @@ pub async fn run() {
         if session.tab == PanelTab::Settings {
             draw_map_editor_overlay(arena, &session);
         }
-        let panel_action = draw_panel(panel_x, &mut session, &world, engine.metrics());
+        let panel_action = if session.headless_modal_open {
+            if draw_headless_activation_modal(&mut session) {
+                session.headless = true;
+                session.headless_modal_open = false;
+                engine.send(EngineCommand::SetHeadless(true));
+            }
+            PanelAction::default()
+        } else {
+            let action = draw_panel(panel_x, &mut session, &world, engine.metrics());
+            if action.open_headless_modal {
+                session.headless_modal_open = true;
+            }
+            action
+        };
         if let Some(name) = panel_action.save_preset {
             commit_all_numeric_inputs(&mut session);
             session.editing_field = None;
@@ -3031,6 +3132,126 @@ fn arrow(origin: Vec2, delta: Vec2, color: Color) {
     let left = tip - direction.rotate(vec2(0.0, 1.0)) * 5.0 - direction * 6.0;
     let right = tip + direction.rotate(vec2(0.0, 1.0)) * 5.0 - direction * 6.0;
     draw_triangle(tip, left, right, color);
+}
+
+/// Tela mínima do modo headless. Ela é propositalmente pequena: não pede
+/// snapshots, não desenha mapa, organismos, alimento ou painéis detalhados.
+fn draw_headless_runtime(session: &mut SessionUi, metrics: EngineMetrics) -> bool {
+    let width = 560.0;
+    let height = 340.0;
+    let x = (screen_width() - width) * 0.5;
+    let y = (screen_height() - height) * 0.5;
+    draw_rectangle(x - 2.0, y - 2.0, width + 4.0, height + 4.0, BACKGROUND);
+    draw_rectangle(x, y, width, height, SURFACE);
+    draw_rectangle_lines(x, y, width, height, 1.0, ACCENT);
+    draw_text("Execução headless", x + 22.0, y + 42.0, 27.0, TEXT);
+    draw_text(
+        if metrics.headless {
+            "Cálculo ativo sem renderização nem cópias do mundo para a tela."
+        } else {
+            "Ativando o worker headless..."
+        },
+        x + 22.0,
+        y + 68.0,
+        13.0,
+        MUTED,
+    );
+    draw_text(
+        &format!("tick {}", metrics.tick),
+        x + 22.0,
+        y + 122.0,
+        28.0,
+        TEXT,
+    );
+    draw_text(
+        &format!("{:.0} ticks/s", metrics.ticks_per_second),
+        x + 22.0,
+        y + 158.0,
+        28.0,
+        ACCENT,
+    );
+    draw_text(
+        &format!("{} células", metrics.population),
+        x + 22.0,
+        y + 188.0,
+        17.0,
+        MUTED,
+    );
+    draw_text(
+        "O limite de velocidade da interface está suspenso para mostrar o teto de cálculo.",
+        x + 22.0,
+        y + 222.0,
+        12.0,
+        MUTED,
+    );
+    if button(
+        Rect::new(x + 22.0, y + height - 60.0, 130.0, 36.0),
+        if session.paused { "Retomar" } else { "Pausar" },
+        !session.paused,
+    ) {
+        session.paused = !session.paused;
+    }
+    button(
+        Rect::new(x + width - 208.0, y + height - 60.0, 186.0, 36.0),
+        "Voltar à visualização",
+        false,
+    ) || is_key_pressed(KeyCode::Escape)
+}
+
+/// Confirma a troca de modo antes que a tela da arena seja interrompida.
+fn draw_headless_activation_modal(session: &mut SessionUi) -> bool {
+    let width = 560.0;
+    let height = 310.0;
+    let x = (screen_width() - width) * 0.5;
+    let y = (screen_height() - height) * 0.5;
+    draw_rectangle(
+        0.0,
+        0.0,
+        screen_width(),
+        screen_height(),
+        Color::new(0.0, 0.0, 0.0, 0.58),
+    );
+    draw_rectangle(x - 2.0, y - 2.0, width + 4.0, height + 4.0, BACKGROUND);
+    draw_rectangle(x, y, width, height, SURFACE);
+    draw_rectangle_lines(x, y, width, height, 1.0, ACCENT);
+    draw_text("Ativar execução headless?", x + 22.0, y + 42.0, 25.0, TEXT);
+    draw_text(
+        "A simulação continuará, mas o executável deixa de desenhar a arena",
+        x + 22.0,
+        y + 79.0,
+        14.0,
+        MUTED,
+    );
+    draw_text(
+        "e de copiar o World para a interface. Você verá tick, população e ticks/s.",
+        x + 22.0,
+        y + 102.0,
+        14.0,
+        MUTED,
+    );
+    draw_text(
+        "Use este modo para comparar o teto de cálculo; o estado biológico continua o mesmo.",
+        x + 22.0,
+        y + 141.0,
+        13.0,
+        MUTED,
+    );
+    if button(
+        Rect::new(x + 22.0, y + height - 60.0, 218.0, 36.0),
+        "Ativar modo headless",
+        true,
+    ) {
+        return true;
+    }
+    if button(
+        Rect::new(x + width - 130.0, y + height - 60.0, 108.0, 36.0),
+        "Cancelar",
+        false,
+    ) || is_key_pressed(KeyCode::Escape)
+    {
+        session.headless_modal_open = false;
+    }
+    false
 }
 
 fn draw_panel(
@@ -4127,8 +4348,15 @@ fn draw_session_tab_compact(
         session.pointer_captured_until_release = true;
         return action;
     }
+    if button(
+        Rect::new(left, y(460.0), width, 32.0),
+        "Modo headless · medir teto de cálculo",
+        false,
+    ) {
+        action.open_headless_modal = true;
+    }
 
-    let mut cursor = 476.0;
+    let mut cursor = 516.0;
     collapsible_session_section(
         left,
         y(cursor),
