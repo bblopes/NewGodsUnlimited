@@ -1,4 +1,4 @@
-//! Campo químico instantâneo. Ele é reconstruído a cada tick: não há
+//! Campos químicos instantâneos. Eles são reconstruídos a cada tick: não há
 //! persistência, difusão acumulada nem memória fora das emissões em curso.
 
 use macroquad::prelude::*;
@@ -6,7 +6,7 @@ use macroquad::prelude::*;
 use crate::{
     config::{WORLD_HEIGHT, WORLD_WIDTH},
     environment::map::MapDefinition,
-    simulation::world::{CELL_RADIUS, Organism},
+    simulation::world::{CELL_RADIUS, Organism, Phytoplankton},
 };
 
 /// Preserva células químicas de 100×100 unidades após o mundo dobrar nos
@@ -17,6 +17,9 @@ pub const GENERIC_CHANNEL_COUNT: usize = 8;
 pub const PHEROMONE_RANGE: f32 = 500.0;
 pub const BASAL_PG_PPM: f32 = 1.0;
 pub const GENERIC_PPM: f32 = 0.85;
+/// Emissão ambiental por partícula de fitoplâncton. O sinal é agregado pela
+/// grade antes de ser espalhado, para não custar uma gaussian por partícula.
+pub const FOOD_PHEROMONE_PPM: f32 = 0.12;
 pub const BASAL_PG_COST: f32 = 0.0004;
 pub const GENERIC_PPM_COST: f32 = 0.0010;
 const SENSOR_PPM_SCALE: f32 = 1.25;
@@ -25,6 +28,7 @@ const PHEROMONE_RANGE_SQUARED: f32 = PHEROMONE_RANGE * PHEROMONE_RANGE;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PheromoneDisplay {
     Pg,
+    Food,
     Generic(u8),
     All,
 }
@@ -33,6 +37,7 @@ impl PheromoneDisplay {
     pub fn label(self) -> String {
         match self {
             Self::Pg => "PG · assinatura genética".to_owned(),
+            Self::Food => "PF · alimento (fitoplâncton)".to_owned(),
             Self::Generic(channel) => format!("C{channel} · químico genérico"),
             Self::All => "Todos os feromônios".to_owned(),
         }
@@ -52,6 +57,9 @@ pub struct PheromoneField {
     pg: Vec<f32>,
     pg_signature_x: Vec<f32>,
     pg_signature_y: Vec<f32>,
+    /// PF é ambiental e universal. Cada posição armazena concentração, não
+    /// identidade genética nem um canal escolhido pelo receptor.
+    food: Vec<f32>,
     generic: Vec<Vec<f32>>,
 }
 
@@ -62,6 +70,7 @@ impl Default for PheromoneField {
             pg: vec![0.0; cells],
             pg_signature_x: vec![0.0; cells],
             pg_signature_y: vec![0.0; cells],
+            food: vec![0.0; cells],
             generic: (0..GENERIC_CHANNEL_COUNT)
                 .map(|_| vec![0.0; cells])
                 .collect(),
@@ -72,10 +81,16 @@ impl Default for PheromoneField {
 impl PheromoneField {
     /// Reconstrói a fotografia química do tick com as decisões motoras do
     /// tick anterior. O cérebro lê esta fotografia e escolhe a próxima.
-    pub fn rebuild(&mut self, organisms: &[Organism], map: &MapDefinition) {
+    pub fn rebuild(
+        &mut self,
+        organisms: &[Organism],
+        phytoplankton: &[Phytoplankton],
+        map: &MapDefinition,
+    ) {
         self.pg.fill(0.0);
         self.pg_signature_x.fill(0.0);
         self.pg_signature_y.fill(0.0);
+        self.food.fill(0.0);
         for field in &mut self.generic {
             field.fill(0.0);
         }
@@ -108,9 +123,26 @@ impl PheromoneField {
                 map,
             );
         }
+
+        // A população de fitoplâncton pode ser muito maior do que a de
+        // células. Agregamos primeiro as partículas na própria malha química
+        // (O(n)); em seguida cada célula ocupada é espalhada uma vez. O custo
+        // de gerar PF fica limitado a 128×72 fontes, não a n×121 gaussianas.
+        let mut food_sources = vec![0.0; FIELD_WIDTH * FIELD_HEIGHT];
+        for particle in phytoplankton {
+            food_sources[self.nearest_index(particle.position)] += FOOD_PHEROMONE_PPM;
+        }
+        for (index, amount) in food_sources.into_iter().enumerate() {
+            if amount <= 0.0 {
+                continue;
+            }
+            let x = index % FIELD_WIDTH;
+            let y = index / FIELD_WIDTH;
+            self.deposit_food(cell_center(x, y), amount, map);
+        }
     }
 
-    pub fn sensors_for(&self, organism: &Organism) -> [ChemicalSensors; 4] {
+    pub fn sensors_for(&self, organism: &Organism) -> [ChemicalSensors; 5] {
         let emission_scale = chemical_emission_scale(organism);
         let own_pg = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * emission_scale;
         let index = self.nearest_index(organism.position);
@@ -122,12 +154,13 @@ impl PheromoneField {
         } else {
             0.0
         };
-        let mut result = [ChemicalSensors::default(); 4];
+        let mut result = [ChemicalSensors::default(); 5];
         result[0] = self.sensors_at(&self.pg, organism.position, total_pg * affinity);
         for (slot, channel) in organism.genome.pheromone_channels().into_iter().enumerate() {
             result[slot + 1] =
                 self.sensors_at(&self.generic[channel as usize], organism.position, -1.0);
         }
+        result[4] = self.sensors_at(&self.food, organism.position, -1.0);
         result
     }
 
@@ -135,11 +168,14 @@ impl PheromoneField {
         let index = self.index(x.min(FIELD_WIDTH - 1), y.min(FIELD_HEIGHT - 1));
         match display {
             PheromoneDisplay::Pg => self.pg[index],
+            PheromoneDisplay::Food => self.food[index],
             PheromoneDisplay::Generic(channel) => {
                 self.generic[channel as usize % GENERIC_CHANNEL_COUNT][index]
             }
             PheromoneDisplay::All => {
-                self.pg[index] + self.generic.iter().map(|field| field[index]).sum::<f32>()
+                self.pg[index]
+                    + self.food[index]
+                    + self.generic.iter().map(|field| field[index]).sum::<f32>()
             }
         }
     }
@@ -169,11 +205,23 @@ impl PheromoneField {
         });
     }
 
+    fn deposit_food(&mut self, source: Vec2, amount: f32, map: &MapDefinition) {
+        for_each_deposition_sample(source, map, |index, weight| {
+            self.food[index] += amount * weight;
+        });
+    }
+
     #[cfg(test)]
-    fn rebuild_reference(&mut self, organisms: &[Organism], map: &MapDefinition) {
+    fn rebuild_reference(
+        &mut self,
+        organisms: &[Organism],
+        phytoplankton: &[Phytoplankton],
+        map: &MapDefinition,
+    ) {
         self.pg.fill(0.0);
         self.pg_signature_x.fill(0.0);
         self.pg_signature_y.fill(0.0);
+        self.food.fill(0.0);
         for field in &mut self.generic {
             field.fill(0.0);
         }
@@ -200,6 +248,20 @@ impl PheromoneField {
                         field[sample] += amount * weight;
                     }
                 }
+            }
+        }
+        let mut food_sources = vec![0.0; FIELD_WIDTH * FIELD_HEIGHT];
+        for particle in phytoplankton {
+            food_sources[self.nearest_index(particle.position)] += FOOD_PHEROMONE_PPM;
+        }
+        for (source, amount) in food_sources.into_iter().enumerate() {
+            if amount <= 0.0 {
+                continue;
+            }
+            let x = source % FIELD_WIDTH;
+            let y = source / FIELD_WIDTH;
+            for (sample, weight) in deposition_samples_reference(cell_center(x, y), map) {
+                self.food[sample] += amount * weight;
             }
         }
     }
@@ -352,8 +414,8 @@ mod tests {
 
         let mut optimized = PheromoneField::default();
         let mut reference = PheromoneField::default();
-        optimized.rebuild(&world.organisms, &world.map);
-        reference.rebuild_reference(&world.organisms, &world.map);
+        optimized.rebuild(&world.organisms, &world.food, &world.map);
+        reference.rebuild_reference(&world.organisms, &world.food, &world.map);
 
         assert_eq!(optimized.pg, reference.pg);
         assert_eq!(optimized.pg_signature_x, reference.pg_signature_x);
@@ -372,15 +434,38 @@ mod tests {
         world.organisms[0].energy = 0.0;
         let baseline_cost = pheromone_energy_cost(&world.organisms[0]);
         let mut field = PheromoneField::default();
-        field.rebuild(&world.organisms, &world.map);
+        field.rebuild(&world.organisms, &world.food, &world.map);
         let baseline_output = field.display_value(PheromoneDisplay::Pg, 10, 10);
 
         world.organisms[0].energy = crate::simulation::world::SIZE_GROWTH_ENERGY;
         let large_cost = pheromone_energy_cost(&world.organisms[0]);
-        field.rebuild(&world.organisms, &world.map);
+        field.rebuild(&world.organisms, &world.food, &world.map);
         let large_output = field.display_value(PheromoneDisplay::Pg, 10, 10);
 
         assert!((large_cost / baseline_cost - 4.0).abs() < 0.000_1);
         assert!((large_output / baseline_output - 8.0).abs() < 0.000_1);
+    }
+
+    #[test]
+    fn phytoplankton_is_aggregated_into_a_universal_food_gradient() {
+        let mut world = World::new(4_244, 1);
+        world.food.clear();
+        world.food.extend([
+            Phytoplankton {
+                position: vec2(1_000.0, 1_000.0),
+                age_ticks: 0,
+            },
+            Phytoplankton {
+                position: vec2(1_010.0, 1_005.0),
+                age_ticks: 0,
+            },
+        ]);
+        world.organisms[0].position = vec2(700.0, 1_000.0);
+        let mut field = PheromoneField::default();
+        field.rebuild(&world.organisms, &world.food, &world.map);
+
+        let sensors = field.sensors_for(&world.organisms[0]);
+        assert!(sensors[4].intensity > 0.0);
+        assert!(sensors[4].gradient_x > 0.0);
     }
 }

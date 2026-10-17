@@ -1,6 +1,7 @@
 # Rust: saídas de compilação locais e recriáveis.
 /target/
 /target_publicacao/
+/target_pf_vision_experimental/
 
 # Artefatos transitórios do sistema.
 *.pdb
@@ -14,6 +15,7 @@
 /data/presets/
 /data/benchmarks/
 /releases/windows/current/
+/releases/windows/*/
 /releases/windows/*.zip
 /archive/releases/
 

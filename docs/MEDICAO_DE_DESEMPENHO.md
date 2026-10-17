@@ -15,7 +15,7 @@ O binário headless `benchmark_simulacao` cria uma população inicial usando:
 Assim, a carga não mede uma população aleatória: nesta primeira linha de
 base, ela usou 87 genomas da run `run-4643592898594514058.ecosrun` (tick
 9.780.201), com a fiação Val 2 garantida para navegação e porta de doação.
-O benchmark entende os formatos de run V1 a V15 para poder reutilizar a
+O benchmark entende os formatos de run V1 a V19 para poder reutilizar a
 história já existente do projeto.
 
 Há duas passagens independentes por repetição:

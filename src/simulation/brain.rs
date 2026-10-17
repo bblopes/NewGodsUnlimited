@@ -2,26 +2,28 @@ use macroquad::prelude::*;
 
 use crate::config::MAX_SWIM_SPEED;
 
-/// 23 sensores + 19 internos + 11 motores. Os sensores químicos recebem
-/// intensidade e os dois componentes do gradiente para PG, P1, P2 e P3.
-pub const SLOT_COUNT: usize = 53;
-pub const EXTERNAL_SLOT_COUNT: usize = 23;
-pub const INTERNAL_START: usize = 23;
+/// 26 sensores + 19 internos + 11 motores. Além de PG, P1–P3, PF informa
+/// intensidade e gradiente químico do fitoplâncton.
+pub const SLOT_COUNT: usize = 56;
+pub const EXTERNAL_SLOT_COUNT: usize = 26;
+pub const INTERNAL_START: usize = 26;
 pub const INTERNAL_COUNT: usize = 19;
 pub const TIMER_INTERNAL_START: usize = 16;
-pub const MOTOR_START: usize = 42;
+pub const MOTOR_START: usize = 45;
 pub const MOTOR_SLOT_COUNT: usize = 11;
-/// Só os 19 internos e os 11 motores são neurônios opcionais. Os 23 slots
+/// Só os 19 internos e os 11 motores são neurônios opcionais. Os 26 slots
 /// externos são sensores físicos fixos e continuam disponíveis a toda célula.
 pub const NEURAL_NODE_COUNT: usize = INTERNAL_COUNT + MOTOR_SLOT_COUNT;
 
-/// Entradas dos slots 0–22 do cérebro.
+/// Entradas dos slots 0–25 do cérebro.
 #[derive(Clone, Copy)]
 pub struct SensorInput {
-    pub food_left: f32,
-    pub food_right: f32,
-    pub food_up: f32,
-    pub food_down: f32,
+    /// Visão genérica por cone: sinal positivo significa que há uma entidade
+    /// visível; ela não classifica a entidade como alimento.
+    pub vision_left: f32,
+    pub vision_right: f32,
+    pub vision_up: f32,
+    pub vision_down: f32,
     pub current_x: f32,
     pub current_y: f32,
     pub energy: f32,
@@ -42,6 +44,11 @@ pub struct SensorInput {
     pub p3_intensity: f32,
     pub p3_gradient_x: f32,
     pub p3_gradient_y: f32,
+    /// Feromônio ambiental do fitoplâncton: intensidade e direção da maior
+    /// concentração. Não depende do genoma do receptor.
+    pub food_pheromone_intensity: f32,
+    pub food_pheromone_gradient_x: f32,
+    pub food_pheromone_gradient_y: f32,
     /// Força de interação celular recebida no tick físico anterior,
     /// normalizada no intervalo [-1, 1]. Corrente ambiental tem sensores
     /// próprios e não entra aqui.
@@ -52,10 +59,10 @@ pub struct SensorInput {
 impl Default for SensorInput {
     fn default() -> Self {
         Self {
-            food_left: 0.0,
-            food_right: 0.0,
-            food_up: 0.0,
-            food_down: 0.0,
+            vision_left: 0.0,
+            vision_right: 0.0,
+            vision_up: 0.0,
+            vision_down: 0.0,
             current_x: 0.0,
             current_y: 0.0,
             energy: 0.0,
@@ -73,6 +80,9 @@ impl Default for SensorInput {
             p3_intensity: 0.0,
             p3_gradient_x: 0.0,
             p3_gradient_y: 0.0,
+            food_pheromone_intensity: 0.0,
+            food_pheromone_gradient_x: 0.0,
+            food_pheromone_gradient_y: 0.0,
             force_x: 0.0,
             force_y: 0.0,
         }
@@ -82,10 +92,10 @@ impl Default for SensorInput {
 impl SensorInput {
     fn slot_values(self) -> [f32; EXTERNAL_SLOT_COUNT] {
         [
-            self.food_left,
-            self.food_right,
-            self.food_up,
-            self.food_down,
+            self.vision_left,
+            self.vision_right,
+            self.vision_up,
+            self.vision_down,
             self.current_x,
             self.current_y,
             self.energy,
@@ -105,11 +115,14 @@ impl SensorInput {
             self.p3_gradient_y,
             self.force_x,
             self.force_y,
+            self.food_pheromone_intensity,
+            self.food_pheromone_gradient_x,
+            self.food_pheromone_gradient_y,
         ]
     }
 }
 
-/// Saídas dos slots 42–52. Cada uma é limitada ao intervalo [0, 1].
+/// Saídas dos slots 45–55. Cada uma é limitada ao intervalo [0, 1].
 #[derive(Clone, Copy, Default)]
 pub struct MotorOutput {
     pub left: f32,

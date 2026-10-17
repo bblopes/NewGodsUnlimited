@@ -20,6 +20,9 @@ pub const PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES: usize = 153;
 pub const GENOME_BYTES: usize = 157;
 pub const LEGACY_V1_GENOME_BYTES: usize = 136;
 pub const MUTATION_DENOMINATOR: u32 = 1_024;
+/// Último slot válido antes de PF abrir três entradas externas na V19.
+const PRE_FOOD_PHEROMONE_SLOT_COUNT: usize = 53;
+const PRE_FOOD_PHEROMONE_INTERNAL_START: usize = 23;
 const NEURAL_GENOME_BITS: usize = PRE_FOOD_SENSOR_RANGE_GENOME_BYTES * 8;
 const FOOD_SENSOR_ALLELE_BITS: usize = 5;
 const NEURAL_NODE_ACTIVITY_BITS: usize = NEURAL_NODE_COUNT;
@@ -84,21 +87,73 @@ impl Genome {
 
     /// Variante usada apenas na população inicial do modo "Motor Mínima".
     /// O resto do genoma permanece aleatório; quatro registros são reservados
-    /// para garantir o caminho direto sensor de alimento -> motor direcional.
+    /// para garantir o caminho direto visão -> motor direcional.
     /// Os pesos continuam aleatórios (inclusive o sinal), como no restante da
     /// população. Filhos não passam por este construtor: mutam normalmente.
     pub fn random_with_motor_minimum(random_state: &mut u64) -> Self {
         let mut genome = Self::random(random_state);
         let direct_paths = [
-            (0, MOTOR_START),     // alimento à esquerda -> nadar à esquerda
-            (1, MOTOR_START + 1), // alimento à direita -> nadar à direita
-            (2, MOTOR_START + 2), // alimento acima -> nadar acima
-            (3, MOTOR_START + 3), // alimento abaixo -> nadar abaixo
+            (0, MOTOR_START),     // visão à esquerda -> nadar à esquerda
+            (1, MOTOR_START + 1), // visão à direita -> nadar à direita
+            (2, MOTOR_START + 2), // visão acima -> nadar acima
+            (3, MOTOR_START + 3), // visão abaixo -> nadar abaixo
         ];
 
         for (record_index, (source, destination)) in direct_paths.into_iter().enumerate() {
             let weight_steps = (next_u32(random_state) % 17) as i8 - 8;
             genome.write_record(record_index, source, destination, weight_steps, true);
+        }
+        genome.enable_directional_motor_group();
+        genome
+    }
+
+    /// Fundador de exercício para a nova fisiologia alimentar. Quatro
+    /// internos transformam PFx/PFy em sinais direcionais; as conexões
+    /// inibitórias cruzadas fazem o eixo mais forte vencer. Assim, se os dois
+    /// gradientes estiverem ativos, ele escolhe X ou Y em vez de nadar na
+    /// diagonal. Empates exatos ficam parados, uma decisão estável e visível.
+    pub fn food_gradient_ideal() -> Self {
+        const PF_X: usize = 24;
+        const PF_Y: usize = 25;
+        let mut genome = Self::empty_with_default_sensor();
+        let x_positive = INTERNAL_START;
+        let x_negative = INTERNAL_START + 1;
+        let y_positive = INTERNAL_START + 2;
+        let y_negative = INTERNAL_START + 3;
+        let paths = [
+            (PF_X, x_positive, 8),
+            (PF_X, x_negative, -8),
+            (PF_Y, y_positive, 8),
+            (PF_Y, y_negative, -8),
+            // Três fibras idênticas fortalecem cada direção vencedora.
+            (PF_X, MOTOR_START + 1, 8),
+            (PF_X, MOTOR_START + 1, 8),
+            (PF_X, MOTOR_START + 1, 8),
+            (PF_X, MOTOR_START, -8),
+            (PF_X, MOTOR_START, -8),
+            (PF_X, MOTOR_START, -8),
+            (PF_Y, MOTOR_START + 2, 8),
+            (PF_Y, MOTOR_START + 2, 8),
+            (PF_Y, MOTOR_START + 2, 8),
+            (PF_Y, MOTOR_START + 3, -8),
+            (PF_Y, MOTOR_START + 3, -8),
+            (PF_Y, MOTOR_START + 3, -8),
+            // tanh(PF) - tanh(-PF) mede |PF|. A inibição cruzada abaixo
+            // retira o eixo menor antes de os motores aplicarem o limiar 0.
+            (y_positive, MOTOR_START, -8),
+            (y_negative, MOTOR_START, 8),
+            (y_positive, MOTOR_START + 1, -8),
+            (y_negative, MOTOR_START + 1, 8),
+            (x_positive, MOTOR_START + 2, -8),
+            (x_negative, MOTOR_START + 2, 8),
+            (x_positive, MOTOR_START + 3, -8),
+            (x_negative, MOTOR_START + 3, 8),
+        ];
+        for (record, (source, destination, weight)) in paths.into_iter().enumerate() {
+            genome.write_record(record, source, destination, weight, true);
+        }
+        for slot in [x_positive, x_negative, y_positive, y_negative] {
+            genome.set_neural_slot_active(slot, true);
         }
         genome.enable_directional_motor_group();
         genome
@@ -198,6 +253,34 @@ impl Genome {
     /// Reconstrói um genoma salvo sem reinterpretar ou mutar seus bits.
     pub fn from_bytes(bits: [u8; GENOME_BYTES]) -> Self {
         Self { bits }
+    }
+
+    /// Migra a topologia V18 (53 slots) para a V19 (56 slots). As quatro
+    /// entradas antigas de alimento passam a ser visão, e os novos PF/PFx/PFy
+    /// ocupam 23–25. Internos e motores são deslocados em três posições sem
+    /// mudar sua identidade funcional.
+    pub fn from_pre_food_pheromone_bytes(bits: [u8; GENOME_BYTES]) -> Self {
+        let mut genome = Self { bits };
+        for record_index in 0..CONNECTION_RECORDS {
+            let (source, destination, weight, active) = genome.read_record(record_index);
+            let valid = source < PRE_FOOD_PHEROMONE_SLOT_COUNT
+                && destination < PRE_FOOD_PHEROMONE_SLOT_COUNT;
+            let remap = |slot: usize| {
+                if slot >= PRE_FOOD_PHEROMONE_INTERNAL_START {
+                    slot + 3
+                } else {
+                    slot
+                }
+            };
+            genome.write_record(
+                record_index,
+                remap(source),
+                remap(destination),
+                weight,
+                active && valid,
+            );
+        }
+        genome
     }
 
     /// Migra a V16: todos os nós começam ligados, preservando exatamente a
@@ -700,5 +783,19 @@ mod tests {
                 .into_iter()
                 .all(|active| active)
         );
+    }
+
+    #[test]
+    fn v18_migration_opens_pf_slots_without_rewiring_old_internal_paths() {
+        let mut state = 7;
+        let mut old = Genome::random(&mut state);
+        // V18: I0 era 23 e o motor esquerdo era 42.
+        old.write_record(0, 23, 42, 8, true);
+        let migrated = Genome::from_pre_food_pheromone_bytes(*old.bytes());
+        assert!(migrated.decode_connections().iter().any(|connection| {
+            connection.source == INTERNAL_START
+                && connection.destination == MOTOR_START
+                && connection.weight == 1.0
+        }));
     }
 }

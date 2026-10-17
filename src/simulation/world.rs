@@ -275,6 +275,7 @@ pub enum InitialNeuralConfiguration {
     MotorMinimum,
     ValidatedV1,
     ValidatedV2,
+    FoodGradient,
 }
 
 impl InitialNeuralConfiguration {
@@ -284,6 +285,7 @@ impl InitialNeuralConfiguration {
             Self::MotorMinimum => "Motor",
             Self::ValidatedV1 => "Val 1.0",
             Self::ValidatedV2 => "Val 2.0",
+            Self::FoodGradient => "PF guia",
         }
     }
 }
@@ -306,6 +308,9 @@ enum CheckpointFormat {
     PreFoodSensorRange,
     /// V16 antes dos bits hereditários de atividade neural.
     PreNeuralNodeActivity,
+    /// V18: sensores de alimento por cone e topologia de 53 slots, antes da
+    /// visão genérica e dos três sensores PF.
+    PreFoodPheromone,
     Current,
 }
 
@@ -758,7 +763,8 @@ impl World {
         // dos motores decididos no tick anterior. Assim, não há persistência
         // química, mas existe uma defasagem causal de um tick.
         observer.begin(TickPhase::Pheromones);
-        self.pheromones.rebuild(&self.organisms, &self.map);
+        self.pheromones
+            .rebuild(&self.organisms, &self.food, &self.map);
         observer.end(TickPhase::Pheromones);
 
         // ── Etapas 4 e 5: perceber e decidir ─────────────────────────────
@@ -984,10 +990,10 @@ impl World {
                 write_f32(writer, motor)?;
             }
             for sensor in [
-                organism.sensors.food_left,
-                organism.sensors.food_right,
-                organism.sensors.food_up,
-                organism.sensors.food_down,
+                organism.sensors.vision_left,
+                organism.sensors.vision_right,
+                organism.sensors.vision_up,
+                organism.sensors.vision_down,
                 organism.sensors.current_x,
                 organism.sensors.current_y,
                 organism.sensors.energy,
@@ -1007,6 +1013,9 @@ impl World {
                 organism.sensors.p3_gradient_y,
                 organism.sensors.force_x,
                 organism.sensors.force_y,
+                organism.sensors.food_pheromone_intensity,
+                organism.sensors.food_pheromone_gradient_x,
+                organism.sensors.food_pheromone_gradient_y,
             ] {
                 write_f32(writer, sensor)?;
             }
@@ -1020,6 +1029,12 @@ impl World {
 
     pub fn read_checkpoint(reader: &mut impl Read) -> io::Result<Self> {
         Self::read_checkpoint_with_format(reader, CheckpointFormat::Current)
+    }
+
+    /// Restaura a V18 e desloca internos/motores para abrir os três slots
+    /// externos PF, preservando a fiação herdada já salva.
+    pub fn read_checkpoint_pre_food_pheromone(reader: &mut impl Read) -> io::Result<Self> {
+        Self::read_checkpoint_with_format(reader, CheckpointFormat::PreFoodPheromone)
     }
 
     /// Restaura runs 6–9: elas tinham mapa e força física, mas ainda usavam
@@ -1100,6 +1115,7 @@ impl World {
         ) = match checkpoint_format {
             CheckpointFormat::PreFoodSensorRange
             | CheckpointFormat::PreNeuralNodeActivity
+            | CheckpointFormat::PreFoodPheromone
             | CheckpointFormat::Current => (
                 read_u64(reader)?,
                 read_u64(reader)?,
@@ -1129,6 +1145,7 @@ impl World {
                 | CheckpointFormat::PreAgeCounters
                 | CheckpointFormat::PreFoodSensorRange
                 | CheckpointFormat::PreNeuralNodeActivity
+                | CheckpointFormat::PreFoodPheromone
                 | CheckpointFormat::Current
         ) {
             read_f32(reader)?
@@ -1142,6 +1159,7 @@ impl World {
                 | CheckpointFormat::PreAgeCounters
                 | CheckpointFormat::PreFoodSensorRange
                 | CheckpointFormat::PreNeuralNodeActivity
+                | CheckpointFormat::PreFoodPheromone
                 | CheckpointFormat::Current
         ) {
             MapDefinition::read_from(reader)?
@@ -1174,6 +1192,7 @@ impl World {
                             | CheckpointFormat::PreAgeCounters
                             | CheckpointFormat::PreFoodSensorRange
                             | CheckpointFormat::PreNeuralNodeActivity
+                            | CheckpointFormat::PreFoodPheromone
                             | CheckpointFormat::Current
                     ) {
                         1.0
@@ -1195,6 +1214,7 @@ impl World {
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
+                        | CheckpointFormat::PreFoodPheromone
                         | CheckpointFormat::Current
                 ) {
                     1.0
@@ -1209,6 +1229,7 @@ impl World {
                     | CheckpointFormat::PreAgeCounters
                     | CheckpointFormat::PreFoodSensorRange
                     | CheckpointFormat::PreNeuralNodeActivity
+                    | CheckpointFormat::PreFoodPheromone
                     | CheckpointFormat::Current
             ) {
                 LongevityGene::from_allele(read_u16(reader)?)
@@ -1229,6 +1250,7 @@ impl World {
                     | CheckpointFormat::PreAgeCounters
                     | CheckpointFormat::PreFoodSensorRange
                     | CheckpointFormat::PreNeuralNodeActivity
+                    | CheckpointFormat::PreFoodPheromone
                     | CheckpointFormat::Current
             ) {
                 vec2(read_f32(reader)?, read_f32(reader)?)
@@ -1252,6 +1274,7 @@ impl World {
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
+                        | CheckpointFormat::PreFoodPheromone
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1267,6 +1290,7 @@ impl World {
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
+                        | CheckpointFormat::PreFoodPheromone
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1282,6 +1306,7 @@ impl World {
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
+                        | CheckpointFormat::PreFoodPheromone
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1297,6 +1322,7 @@ impl World {
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
+                        | CheckpointFormat::PreFoodPheromone
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1312,6 +1338,7 @@ impl World {
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
+                        | CheckpointFormat::PreFoodPheromone
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1325,6 +1352,7 @@ impl World {
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
+                        | CheckpointFormat::PreFoodPheromone
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1341,6 +1369,10 @@ impl World {
                 let mut bits = [0u8; crate::simulation::genome::GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
                 Genome::from_bytes(bits)
+            } else if checkpoint_format == CheckpointFormat::PreFoodPheromone {
+                let mut bits = [0u8; crate::simulation::genome::GENOME_BYTES];
+                reader.read_exact(&mut bits)?;
+                Genome::from_pre_food_pheromone_bytes(bits)
             } else if checkpoint_format == CheckpointFormat::PreNeuralNodeActivity {
                 let mut bits = [0u8; PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
@@ -1490,15 +1522,21 @@ impl World {
     }
 
     fn update_sensors(&mut self, flow: &FlowField, reproduction_limit: f32) {
-        // A grade espacial limita cada consulta aos alimentos próximos. Depois
-        // de encontrados, cada alimento é classificado em um único cone de
-        // 90°: esquerda, direita, cima ou baixo.
-        let mut food_grid: HashMap<(i32, i32), Vec<Vec2>> = HashMap::new();
+        // A visão responde a qualquer entidade visível, não a uma categoria
+        // de alimento. A grade limita a busca ao alcance anatômico e junta
+        // fitoplâncton e outras células no mesmo retrato espacial.
+        let mut visible_grid: HashMap<(i32, i32), Vec<Vec2>> = HashMap::new();
         for particle in &self.food {
-            food_grid
+            visible_grid
                 .entry(sensor_grid_cell(particle.position))
                 .or_default()
                 .push(particle.position);
+        }
+        for organism in &self.organisms {
+            visible_grid
+                .entry(sensor_grid_cell(organism.position))
+                .or_default()
+                .push(organism.position);
         }
         // A mesma grade que acelera o anti-cramming encontra contatos físicos
         // sem comparar toda a população. O retrato é calculado antes de
@@ -1509,15 +1547,15 @@ impl World {
             .collect();
         for (index, organism) in self.organisms.iter_mut().enumerate() {
             let current = flow.sample_with_map(organism.position, Some(&self.map)) / MAX_FLOW_SPEED;
-            let food_sensor_range = organism.food_sensor_range();
+            let vision_range = organism.food_sensor_range();
             let nearest =
-                nearest_food_in_cones(&food_grid, organism.position, food_sensor_range, &self.map);
+                nearest_visible_in_cones(&visible_grid, organism.position, vision_range, &self.map);
             let chemical = self.pheromones.sensors_for(organism);
             organism.sensors = SensorInput {
-                food_left: cone_signal(nearest[0], food_sensor_range),
-                food_right: cone_signal(nearest[1], food_sensor_range),
-                food_up: cone_signal(nearest[2], food_sensor_range),
-                food_down: cone_signal(nearest[3], food_sensor_range),
+                vision_left: cone_signal(nearest[0], vision_range),
+                vision_right: cone_signal(nearest[1], vision_range),
+                vision_up: cone_signal(nearest[2], vision_range),
+                vision_down: cone_signal(nearest[3], vision_range),
                 current_x: current.x,
                 current_y: current.y,
                 // A célula percebe a fração da energia que falta para a
@@ -1541,6 +1579,9 @@ impl World {
                     .clamp(-1.0, 1.0),
                 force_y: (organism.external_force.y / FORCE_SENSOR_DISPLACEMENT_SCALE)
                     .clamp(-1.0, 1.0),
+                food_pheromone_intensity: chemical[4].intensity,
+                food_pheromone_gradient_x: chemical[4].gradient_x,
+                food_pheromone_gradient_y: chemical[4].gradient_y,
             };
         }
     }
@@ -2200,6 +2241,7 @@ impl World {
             InitialNeuralConfiguration::MotorMinimum => {
                 Genome::random_with_motor_minimum(&mut self.random_state)
             }
+            InitialNeuralConfiguration::FoodGradient => Genome::food_gradient_ideal(),
             // Sem uma run válida, manter o modo funcional e explícito: ele
             // cai no clássico, nunca em um genoma incompleto.
             InitialNeuralConfiguration::ValidatedV1 | InitialNeuralConfiguration::ValidatedV2 => {
@@ -2209,9 +2251,9 @@ impl World {
         match initial_neural_configuration {
             InitialNeuralConfiguration::ValidatedV1 => genome.with_validated_v1_motor_group(),
             InitialNeuralConfiguration::ValidatedV2 => genome.with_validated_v2_cooperation(),
-            InitialNeuralConfiguration::Classic | InitialNeuralConfiguration::MotorMinimum => {
-                genome
-            }
+            InitialNeuralConfiguration::Classic
+            | InitialNeuralConfiguration::MotorMinimum
+            | InitialNeuralConfiguration::FoodGradient => genome,
         }
     }
 
@@ -2274,22 +2316,12 @@ fn read_sensors(
     reader: &mut impl Read,
     checkpoint_format: CheckpointFormat,
 ) -> io::Result<SensorInput> {
-    if matches!(
-        checkpoint_format,
-        CheckpointFormat::PreDonation
-            | CheckpointFormat::PreWorldExpansion
-            | CheckpointFormat::PreLongevity
-            | CheckpointFormat::PreEventCounters
-            | CheckpointFormat::PreAgeCounters
-            | CheckpointFormat::PreFoodSensorRange
-            | CheckpointFormat::PreNeuralNodeActivity
-            | CheckpointFormat::Current
-    ) {
+    if checkpoint_format == CheckpointFormat::Current {
         return Ok(SensorInput {
-            food_left: read_f32(reader)?,
-            food_right: read_f32(reader)?,
-            food_up: read_f32(reader)?,
-            food_down: read_f32(reader)?,
+            vision_left: read_f32(reader)?,
+            vision_right: read_f32(reader)?,
+            vision_up: read_f32(reader)?,
+            vision_down: read_f32(reader)?,
             current_x: read_f32(reader)?,
             current_y: read_f32(reader)?,
             energy: read_f32(reader)?,
@@ -2309,6 +2341,49 @@ fn read_sensors(
             p3_gradient_y: read_f32(reader)?,
             force_x: read_f32(reader)?,
             force_y: read_f32(reader)?,
+            food_pheromone_intensity: read_f32(reader)?,
+            food_pheromone_gradient_x: read_f32(reader)?,
+            food_pheromone_gradient_y: read_f32(reader)?,
+        });
+    }
+    if matches!(
+        checkpoint_format,
+        CheckpointFormat::PreDonation
+            | CheckpointFormat::PreWorldExpansion
+            | CheckpointFormat::PreLongevity
+            | CheckpointFormat::PreEventCounters
+            | CheckpointFormat::PreAgeCounters
+            | CheckpointFormat::PreFoodSensorRange
+            | CheckpointFormat::PreNeuralNodeActivity
+            | CheckpointFormat::PreFoodPheromone
+    ) {
+        return Ok(SensorInput {
+            vision_left: read_f32(reader)?,
+            vision_right: read_f32(reader)?,
+            vision_up: read_f32(reader)?,
+            vision_down: read_f32(reader)?,
+            current_x: read_f32(reader)?,
+            current_y: read_f32(reader)?,
+            energy: read_f32(reader)?,
+            constant: read_f32(reader)?,
+            cell_contact: read_f32(reader)?,
+            pg_intensity: read_f32(reader)?,
+            pg_gradient_x: read_f32(reader)?,
+            pg_gradient_y: read_f32(reader)?,
+            p1_intensity: read_f32(reader)?,
+            p1_gradient_x: read_f32(reader)?,
+            p1_gradient_y: read_f32(reader)?,
+            p2_intensity: read_f32(reader)?,
+            p2_gradient_x: read_f32(reader)?,
+            p2_gradient_y: read_f32(reader)?,
+            p3_intensity: read_f32(reader)?,
+            p3_gradient_x: read_f32(reader)?,
+            p3_gradient_y: read_f32(reader)?,
+            force_x: read_f32(reader)?,
+            force_y: read_f32(reader)?,
+            food_pheromone_intensity: 0.0,
+            food_pheromone_gradient_x: 0.0,
+            food_pheromone_gradient_y: 0.0,
         });
     }
     if checkpoint_format == CheckpointFormat::V2 {
@@ -2318,10 +2393,10 @@ fn read_sensors(
         let cell_contact = read_f32(reader)?;
         let contact_similarity = read_f32(reader)?;
         return Ok(SensorInput {
-            food_left: read_f32(reader)?,
-            food_right: read_f32(reader)?,
-            food_up: read_f32(reader)?,
-            food_down: read_f32(reader)?,
+            vision_left: read_f32(reader)?,
+            vision_right: read_f32(reader)?,
+            vision_up: read_f32(reader)?,
+            vision_down: read_f32(reader)?,
             current_x: read_f32(reader)?,
             current_y: read_f32(reader)?,
             energy: read_f32(reader)?,
@@ -2335,10 +2410,10 @@ fn read_sensors(
     }
 
     let mut sensors = SensorInput {
-        food_left: read_f32(reader)?,
-        food_right: read_f32(reader)?,
-        food_up: read_f32(reader)?,
-        food_down: read_f32(reader)?,
+        vision_left: read_f32(reader)?,
+        vision_right: read_f32(reader)?,
+        vision_up: read_f32(reader)?,
+        vision_down: read_f32(reader)?,
         current_x: read_f32(reader)?,
         current_y: read_f32(reader)?,
         energy: read_f32(reader)?,
@@ -2360,7 +2435,7 @@ fn read_sensors(
             | CheckpointFormat::PreAgeCounters
             | CheckpointFormat::PreFoodSensorRange
             | CheckpointFormat::PreNeuralNodeActivity
-            | CheckpointFormat::Current
+            | CheckpointFormat::PreFoodPheromone
     ) {
         sensors.force_x = read_f32(reader)?;
         sensors.force_y = read_f32(reader)?;
@@ -2472,10 +2547,10 @@ fn phytoplankton_density_cell(position: Vec2) -> (i32, i32) {
     )
 }
 
-/// Distância ao alimento mais próximo em cada cone, na ordem
+/// Distância à entidade visível mais próxima em cada cone, na ordem
 /// esquerda, direita, cima e baixo. O empate diagonal pertence ao cone
-/// horizontal; assim, nenhum alimento ativa dois sensores no mesmo tick.
-fn nearest_food_in_cones(
+/// horizontal; assim, nenhuma entidade ativa dois sensores no mesmo tick.
+fn nearest_visible_in_cones(
     grid: &HashMap<(i32, i32), Vec<Vec2>>,
     origin: Vec2,
     range: f32,
@@ -2491,15 +2566,15 @@ fn nearest_food_in_cones(
     let grid_radius = (range / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).ceil() as i32;
     for grid_y in base.1 - grid_radius..=base.1 + grid_radius {
         for grid_x in base.0 - grid_radius..=base.0 + grid_radius {
-            let Some(food_positions) = grid.get(&(grid_x, grid_y)) else {
+            let Some(visible_positions) = grid.get(&(grid_x, grid_y)) else {
                 continue;
             };
-            for &food_position in food_positions {
-                let relative = food_position - origin;
+            for &visible_position in visible_positions {
+                let relative = visible_position - origin;
                 let distance_squared = relative.length_squared();
                 if distance_squared > range_squared
                     || distance_squared == 0.0
-                    || !map.has_clear_line(origin, food_position)
+                    || !map.has_clear_line(origin, visible_position)
                 {
                     continue;
                 }
@@ -2632,7 +2707,7 @@ mod tests {
     }
 
     #[test]
-    fn food_is_reported_by_one_directional_cone_only() {
+    fn visible_entity_is_reported_by_one_directional_cone_only() {
         let origin = vec2(1_000.0, 1_000.0);
         let mut grid = HashMap::new();
         // Esquerda e levemente acima: a componente horizontal domina.
@@ -2641,7 +2716,7 @@ mod tests {
             .or_insert_with(Vec::new)
             .push(food);
 
-        let nearest = nearest_food_in_cones(
+        let nearest = nearest_visible_in_cones(
             &grid,
             origin,
             DEFAULT_FOOD_SENSOR_RANGE,
@@ -2655,7 +2730,7 @@ mod tests {
     }
 
     #[test]
-    fn wall_blocks_food_sensor_line_of_sight() {
+    fn wall_blocks_vision_line_of_sight() {
         let origin = vec2(1_000.0, 1_000.0);
         let food = origin + vec2(120.0, 0.0);
         let mut grid = HashMap::new();
@@ -2665,13 +2740,13 @@ mod tests {
         let mut map = MapDefinition::empty();
         map.paint_wall(origin + vec2(60.0, 0.0), true);
 
-        let nearest = nearest_food_in_cones(&grid, origin, DEFAULT_FOOD_SENSOR_RANGE, &map);
+        let nearest = nearest_visible_in_cones(&grid, origin, DEFAULT_FOOD_SENSOR_RANGE, &map);
 
         assert_eq!(nearest, [None; 4]);
     }
 
     #[test]
-    fn longer_food_sensor_reaches_food_outside_the_default_range() {
+    fn longer_vision_reaches_entity_outside_the_default_range() {
         let origin = vec2(1_000.0, 1_000.0);
         let food = origin + vec2(360.0, 0.0);
         let mut grid = HashMap::new();
@@ -2679,13 +2754,13 @@ mod tests {
             .or_insert_with(Vec::new)
             .push(food);
 
-        let default_range = nearest_food_in_cones(
+        let default_range = nearest_visible_in_cones(
             &grid,
             origin,
             DEFAULT_FOOD_SENSOR_RANGE,
             &MapDefinition::empty(),
         );
-        let long_range = nearest_food_in_cones(&grid, origin, 400.0, &MapDefinition::empty());
+        let long_range = nearest_visible_in_cones(&grid, origin, 400.0, &MapDefinition::empty());
 
         assert_eq!(default_range, [None; 4]);
         assert_eq!(long_range[1], Some(360.0));
@@ -2767,7 +2842,9 @@ mod tests {
         world.organisms[1].genome = world.organisms[0].genome.clone();
         let still_water = FlowField::new(17).with_intensity(0.0);
 
-        world.pheromones.rebuild(&world.organisms, &world.map);
+        world
+            .pheromones
+            .rebuild(&world.organisms, &world.food, &world.map);
         world.update_sensors(&still_water, MAX_ENERGY);
 
         for organism in &world.organisms {
@@ -2889,6 +2966,27 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn food_gradient_founder_chooses_the_stronger_axis_without_diagonal_swim() {
+        let genome = Genome::food_gradient_ideal();
+        let mut brain = Brain::default();
+        brain.configure_network(genome.decode_connections(), genome.neural_node_activity());
+        let sensors = SensorInput {
+            food_pheromone_gradient_x: 0.8,
+            food_pheromone_gradient_y: 0.25,
+            ..SensorInput::default()
+        };
+        // Os internos tornam explícita a comparação de eixos e introduzem
+        // uma defasagem neuronal de um tick, como o resto da rede.
+        brain.tick(sensors);
+        let motors = brain.tick(sensors);
+
+        assert!(motors.right > 0.5);
+        assert_eq!(motors.left, 0.0);
+        assert_eq!(motors.up, 0.0);
+        assert_eq!(motors.down, 0.0);
     }
 
     #[test]

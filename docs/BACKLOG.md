@@ -79,23 +79,21 @@ genoma e topologia neural. Este item foi explicitamente adiado nesta subida.
 
 ### Visão de alimento e quimiorrecepção
 
-Refatorar os quatro sensores atualmente chamados de alimento para que passem a
-ser **visão direcional genérica**: cada direção produz sinal positivo ao detectar
-qualquer entidade visível, não apenas fitoplâncton. A iluminação local limitará
-o alcance dessa visão.
+**Implementado na build experimental de PF (ainda fora da produção):** os quatro
+sensores passam a ser **visão direcional genérica**. Cada direção produz sinal
+positivo ao detectar qualquer entidade visível, não apenas fitoplâncton. A
+iluminação local limitará o alcance dessa visão numa etapa posterior.
 
 A identificação e a navegação até alimento deixam de depender da visão. O
-fitoplâncton deverá emitir um feromônio/campo químico alimentar próprio, e novos
-sensores neurais deverão expor à célula a concentração e os vetores de gradiente
-desse campo. Assim, ela poderá seguir o gradiente até a comida inclusive no
-escuro, enquanto a visão continuará servindo para perceber presença e direção
-de entidades no ambiente.
+fitoplâncton passou a emitir o campo químico alimentar **PF**, com os novos
+sensores neurais `PF`, `PFx` e `PFy`. Assim, a célula pode seguir o gradiente
+até a comida inclusive no escuro, enquanto a visão continua percebendo presença
+e direção de entidades no ambiente.
 
-Antes de implementar, é preciso definir os novos slots neurais, custos de
-emissão e leitura, intensidade/difusão/decaimento do campo, a regra para
-combinar concentração com vetor gradiente e a migração dos genomas existentes.
-A especificação de iluminação correlata permanece em
-[Luz solar e fitoplâncton](LUZ_SOLAR_E_FITOPLANCTON.md#backlog-visão-de-alimento-e-quimiorrecepção).
+O PF inicial é instantâneo e agregado por grade para manter custo limitado. A
+persistência, difusão, decaimento e interação com iluminação continuam no
+backlog. A especificação completa está em
+[PG, visão e canal de alimento](PG_E_CANAL_DE_ALIMENTO.md).
 
 ### Iluminação contínua, temperatura e correntes
 

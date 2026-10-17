@@ -1314,8 +1314,8 @@ fn mental_cost_from_display(display_value: f32) -> f32 {
 }
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
-/// V18 adiciona a taxa configurável de multiplicação do fitoplâncton sob luz.
-const RUN_FORMAT_VERSION: u32 = 18;
+/// V19 adiciona visão genérica, PF/PFx/PFy e a topologia neural de 56 slots.
+const RUN_FORMAT_VERSION: u32 = 19;
 /// Unidade humana do controle de custo mental. O motor continua guardando o
 /// valor físico pequeno para preservar runs e presets; na interface, 100
 /// unidades equivalem ao custo-padrão de 0,0025 por conexão/tick.
@@ -1784,6 +1784,7 @@ fn load_run_file(path: &Path) -> io::Result<LoadedRun> {
         14 => World::read_checkpoint_pre_age_counters(&mut reader)?,
         15 => World::read_checkpoint_pre_food_sensor_range(&mut reader)?,
         16 => World::read_checkpoint_pre_neural_node_activity(&mut reader)?,
+        17 | 18 => World::read_checkpoint_pre_food_pheromone(&mut reader)?,
         _ => World::read_checkpoint(&mut reader)?,
     };
     // O limiar vem da configuração de sessão, não precisa alterar o formato
@@ -1897,8 +1898,10 @@ fn read_engine_settings(reader: &mut impl Read, version: u32) -> io::Result<Engi
         reproduction_limit: read_f32_run(reader)?,
         initial_cells: read_u64_run(reader)? as usize,
         initial_neural_configuration,
-        validated_genomes: if version >= 17 {
+        validated_genomes: if version >= 19 {
             read_validated_genomes(reader)?
+        } else if version >= 17 {
+            read_validated_genomes_pre_food_pheromone(reader)?
         } else if version >= 16 {
             read_validated_genomes_pre_neural_node_activity(reader)?
         } else if version >= 10 {
@@ -2063,6 +2066,7 @@ fn write_initial_neural_configuration(
             InitialNeuralConfiguration::MotorMinimum => 1,
             InitialNeuralConfiguration::ValidatedV1 => 2,
             InitialNeuralConfiguration::ValidatedV2 => 3,
+            InitialNeuralConfiguration::FoodGradient => 4,
         },
     )
 }
@@ -2116,6 +2120,7 @@ fn read_initial_neural_configuration(
         1 => Ok(InitialNeuralConfiguration::MotorMinimum),
         2 => Ok(InitialNeuralConfiguration::ValidatedV1),
         3 => Ok(InitialNeuralConfiguration::ValidatedV2),
+        4 => Ok(InitialNeuralConfiguration::FoodGradient),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "configuração neural inicial inválida",
@@ -2140,6 +2145,17 @@ fn read_validated_genomes(reader: &mut impl Read) -> io::Result<Vec<Genome>> {
         let mut bits = [0; GENOME_BYTES];
         reader.read_exact(&mut bits)?;
         genomes.push(Genome::from_bytes(bits));
+    }
+    Ok(genomes)
+}
+
+fn read_validated_genomes_pre_food_pheromone(reader: &mut impl Read) -> io::Result<Vec<Genome>> {
+    let count = read_count_run(reader, MAX_VALIDATED_GENOMES)?;
+    let mut genomes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut bits = [0; GENOME_BYTES];
+        reader.read_exact(&mut bits)?;
+        genomes.push(Genome::from_pre_food_pheromone_bytes(bits));
     }
     Ok(genomes)
 }
@@ -3689,7 +3705,8 @@ fn draw_visibility_tab(left: f32, width: f32, session: &mut SessionUi) {
     // Um menu aberto consome integralmente o clique. Sem este bloqueio, o
     // mesmo `mouse_pressed` chegava ao controle logo abaixo do popup.
     if session.pheromone_menu_open && is_mouse_button_pressed(MouseButton::Left) {
-        let options: Vec<PheromoneDisplay> = std::iter::once(PheromoneDisplay::Pg)
+        let options: Vec<PheromoneDisplay> = [PheromoneDisplay::Pg, PheromoneDisplay::Food]
+            .into_iter()
             .chain((0..8).map(PheromoneDisplay::Generic))
             .chain(std::iter::once(PheromoneDisplay::All))
             .collect();
@@ -3756,7 +3773,8 @@ fn draw_visibility_tab(left: f32, width: f32, session: &mut SessionUi) {
         session.pheromone_menu_open = !session.pheromone_menu_open;
     }
     if session.pheromone_menu_open {
-        let options: Vec<PheromoneDisplay> = std::iter::once(PheromoneDisplay::Pg)
+        let options: Vec<PheromoneDisplay> = [PheromoneDisplay::Pg, PheromoneDisplay::Food]
+            .into_iter()
             .chain((0..8).map(PheromoneDisplay::Generic))
             .chain(std::iter::once(PheromoneDisplay::All))
             .collect();
@@ -3888,7 +3906,7 @@ fn draw_session_tab(
         begin_editing(session, EditingField::InitialCells);
     }
     draw_text("Configuração neural", left, y(244.0), 13.0, MUTED);
-    let neural_button_width = (width - 12.0) / 4.0;
+    let neural_button_width = (width - 16.0) / 5.0;
     if button_dirty(
         Rect::new(left, y(251.0), neural_button_width, 32.0),
         "Clássica",
@@ -3942,6 +3960,19 @@ fn draw_session_tab(
     {
         session.initial_neural_configuration = InitialNeuralConfiguration::ValidatedV2;
     }
+    if button_dirty(
+        Rect::new(
+            left + (neural_button_width + 4.0) * 4.0,
+            y(251.0),
+            neural_button_width,
+            32.0,
+        ),
+        "PF guia",
+        session.initial_neural_configuration == InitialNeuralConfiguration::FoodGradient,
+        session.initial_neural_configuration_is_dirty(),
+    ) {
+        session.initial_neural_configuration = InitialNeuralConfiguration::FoodGradient;
+    }
     let neural_description = match session.initial_neural_configuration {
         InitialNeuralConfiguration::Classic => "Genomas iniciais totalmente aleatórios.".to_owned(),
         InitialNeuralConfiguration::MotorMinimum => {
@@ -3970,6 +4001,9 @@ fn draw_session_tab(
                 )
             })
             .unwrap_or_else(|| "Salve ou carregue uma run para ativar Val 2.0.".to_owned()),
+        InitialNeuralConfiguration::FoodGradient => {
+            "Fundador experimental: PFx/PFy escolhem o eixo de gradiente mais forte.".to_owned()
+        }
     };
     draw_text(&neural_description, left, y(298.0), 11.0, MUTED);
     update_numeric_input(session);
@@ -4621,7 +4655,7 @@ fn draw_session_tab_compact(
         begin_editing(session, EditingField::InitialCells);
     }
     draw_text("Configuração neural", left, y(286.0), 13.0, MUTED);
-    let neural_button_width = (width - 12.0) / 4.0;
+    let neural_button_width = (width - 16.0) / 5.0;
     let has_validated_population = session
         .validated_population
         .as_ref()
@@ -4631,8 +4665,9 @@ fn draw_session_tab_compact(
         (1, InitialNeuralConfiguration::MotorMinimum, "Motor"),
         (2, InitialNeuralConfiguration::ValidatedV1, "Val 1.0"),
         (3, InitialNeuralConfiguration::ValidatedV2, "Val 2.0"),
+        (4, InitialNeuralConfiguration::FoodGradient, "PF guia"),
     ] {
-        let allowed = index < 2 || has_validated_population;
+        let allowed = index < 2 || index == 4 || has_validated_population;
         if button_dirty(
             Rect::new(
                 left + index as f32 * (neural_button_width + 4.0),
@@ -4651,11 +4686,14 @@ fn draw_session_tab_compact(
     let neural_description = match session.initial_neural_configuration {
         InitialNeuralConfiguration::Classic => "Genomas iniciais totalmente aleatórios.".to_owned(),
         InitialNeuralConfiguration::MotorMinimum => {
-            "4 caminhos diretos alimento → motor; resto aleatório.".to_owned()
+            "4 caminhos diretos visão → motor; resto aleatório.".to_owned()
         }
         InitialNeuralConfiguration::ValidatedV1 => "Pool validado salvo na última run.".to_owned(),
         InitialNeuralConfiguration::ValidatedV2 => {
-            "Pool validado: alimento → motor + Ct + PG → Doar.".to_owned()
+            "Pool validado: visão → motor + Ct + PG → Doar.".to_owned()
+        }
+        InitialNeuralConfiguration::FoodGradient => {
+            "Fundador experimental: escolhe PFx ou PFy dominante, sem diagonal.".to_owned()
         }
     };
     draw_text(&neural_description, left, y(340.0), 11.0, MUTED);
@@ -5393,7 +5431,7 @@ fn draw_individual_cells_view(left: f32, width: f32, session: &mut SessionUi, wo
         left,
         338.0,
         width,
-        "Alcance alimento",
+        "Alcance visual",
         &format!("{sensor_range:.0} · custo {sensor_cost:.4}/tick"),
     );
     let similarity = world
@@ -6846,19 +6884,19 @@ fn signal_curve(start: Vec2, end: Vec2, key: usize, color: Color, width: f32) {
 
 fn slot_label(slot: usize) -> &'static str {
     [
-        "F<", "F>", "F^", "Fv", "Cx", "Cy", "En", "+1", "Ct", "PG", "PGx", "PGy", "P1", "P1x",
-        "P1y", "P2", "P2x", "P2y", "P3", "P3x", "P3y", "Fx", "Fy", "I0", "I1", "I2", "I3", "I4",
-        "I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13", "I14", "I15", "T1", "T2", "T3",
-        "L", "R", "U", "D", "Re", "Fa", "EPG", "EP1", "EP2", "EP3", "Do",
+        "V<", "V>", "V^", "Vv", "Cx", "Cy", "En", "+1", "Ct", "PG", "PGx", "PGy", "P1", "P1x",
+        "P1y", "P2", "P2x", "P2y", "P3", "P3x", "P3y", "Fx", "Fy", "PF", "PFx", "PFy", "I0", "I1",
+        "I2", "I3", "I4", "I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13", "I14", "I15",
+        "T1", "T2", "T3", "L", "R", "U", "D", "Re", "Fa", "EPG", "EP1", "EP2", "EP3", "Do",
     ][slot]
 }
 
 fn neuron_name(slot: usize) -> String {
     match slot {
-        0 => "Sensor · alimento à esquerda".to_owned(),
-        1 => "Sensor · alimento à direita".to_owned(),
-        2 => "Sensor · alimento acima".to_owned(),
-        3 => "Sensor · alimento abaixo".to_owned(),
+        0 => "Visão · entidade à esquerda".to_owned(),
+        1 => "Visão · entidade à direita".to_owned(),
+        2 => "Visão · entidade acima".to_owned(),
+        3 => "Visão · entidade abaixo".to_owned(),
         4 => "Sensor · corrente no eixo X".to_owned(),
         5 => "Sensor · corrente no eixo Y".to_owned(),
         6 => "Sensor · energia relativa".to_owned(),
@@ -6878,19 +6916,22 @@ fn neuron_name(slot: usize) -> String {
         20 => "Sensor · gradiente Y de P3".to_owned(),
         21 => "Sensor · força externa no eixo X".to_owned(),
         22 => "Sensor · força externa no eixo Y".to_owned(),
-        23..=38 => format!("Neurônio interno rápido I{}", slot - INTERNAL_START),
-        39..=41 => format!("Neurônio temporizador T{}", slot - 38),
-        42 => "Motor · nadar à esquerda".to_owned(),
-        43 => "Motor · nadar à direita".to_owned(),
-        44 => "Motor · nadar acima".to_owned(),
-        45 => "Motor · nadar abaixo".to_owned(),
-        46 => "Motor · reproduzir".to_owned(),
-        47 => "Motor · fagocitar".to_owned(),
-        48 => "Motor · reforçar emissão de PG".to_owned(),
-        49 => "Motor · emitir P1".to_owned(),
-        50 => "Motor · emitir P2".to_owned(),
-        51 => "Motor · emitir P3".to_owned(),
-        52 => "Motor · doar energia à célula em contato".to_owned(),
+        23 => "Sensor · intensidade de PF (fitoplâncton)".to_owned(),
+        24 => "Sensor · gradiente X de PF".to_owned(),
+        25 => "Sensor · gradiente Y de PF".to_owned(),
+        26..=41 => format!("Neurônio interno rápido I{}", slot - INTERNAL_START),
+        42..=44 => format!("Neurônio temporizador T{}", slot - 41),
+        45 => "Motor · nadar à esquerda".to_owned(),
+        46 => "Motor · nadar à direita".to_owned(),
+        47 => "Motor · nadar acima".to_owned(),
+        48 => "Motor · nadar abaixo".to_owned(),
+        49 => "Motor · reproduzir".to_owned(),
+        50 => "Motor · fagocitar".to_owned(),
+        51 => "Motor · reforçar emissão de PG".to_owned(),
+        52 => "Motor · emitir P1".to_owned(),
+        53 => "Motor · emitir P2".to_owned(),
+        54 => "Motor · emitir P3".to_owned(),
+        55 => "Motor · doar energia à célula em contato".to_owned(),
         _ => "Neurônio desconhecido".to_owned(),
     }
 }

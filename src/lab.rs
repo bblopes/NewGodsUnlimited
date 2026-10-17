@@ -1022,6 +1022,7 @@ fn initial_neural_configuration_from_wire(value: u32) -> io::Result<InitialNeura
         1 => Ok(InitialNeuralConfiguration::MotorMinimum),
         2 => Ok(InitialNeuralConfiguration::ValidatedV1),
         3 => Ok(InitialNeuralConfiguration::ValidatedV2),
+        4 => Ok(InitialNeuralConfiguration::FoodGradient),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "configuração neural inválida",
@@ -1319,6 +1320,7 @@ fn initial_neural_configuration_to_wire(configuration: InitialNeuralConfiguratio
         InitialNeuralConfiguration::MotorMinimum => 1,
         InitialNeuralConfiguration::ValidatedV1 => 2,
         InitialNeuralConfiguration::ValidatedV2 => 3,
+        InitialNeuralConfiguration::FoodGradient => 4,
     }
 }
 

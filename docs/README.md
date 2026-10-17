@@ -14,6 +14,7 @@ as propostas que ainda aguardam aprovação.
 | [Energia e sensores hereditários](RELATORIO_ENERGIA_E_SENSORES_HEREDITARIOS.md) | inventário dos custos atuais e proposta de alcance sensorial evolutivo |
 | [Fisiologia neural e tamanho](FISIOLOGIA_NEURAL_E_TAMANHO.md) | nós neurais hereditários, custos e vantagens/limites de corpos grandes |
 | [Luz solar e fitoplâncton](LUZ_SOLAR_E_FITOPLANCTON.md) | máscara solar, reprodução local e envelhecimento do alimento |
+| [PG, visão e canal de alimento](PG_E_CANAL_DE_ALIMENTO.md) | assinatura genética PG, visão por cone e gradiente PF de fitoplâncton |
 | [Telemetria demográfica](PROPOSTA_TELEMETRIA_DEMOGRAFICA.md) | proposta de referência de reprodução e marcos de mudanças nos gráficos |
 | [Sessão reproduzível](ESPECIFICACAO_SESSAO_REPRODUZIVEL.md) | telemetria, salvar e restaurar uma execução |
 | [Laboratório](DOCUMENTACAO_LABORATORIO.md) | campanhas, cenários e execuções em lote |

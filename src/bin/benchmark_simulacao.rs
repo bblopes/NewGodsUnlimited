@@ -30,7 +30,7 @@ use new_gods_unlimited::{
 };
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
-const MAX_RUN_FORMAT_VERSION: u32 = 17;
+const MAX_RUN_FORMAT_VERSION: u32 = 19;
 const MAX_VALIDATED_GENOMES: usize = 20_000;
 
 #[derive(Clone, Copy, Debug)]
@@ -482,7 +482,12 @@ fn skip_engine_settings(reader: &mut impl Read, version: u32) -> io::Result<()> 
     if version >= 4 {
         skip_exact(reader, 4)?; // emissão da área fértil
     }
-    skip_exact(reader, 4 + 4 + 4 + 4 + 8)?;
+    // vida e energia do fito; V18 acrescentou multiplicação sob luz.
+    skip_exact(reader, 4 + 4)?;
+    if version >= 18 {
+        skip_exact(reader, 4)?;
+    }
+    skip_exact(reader, 4 + 4 + 8)?;
     if version >= 9 {
         let count = read_u32(reader)? as usize;
         if count > MAX_VALIDATED_GENOMES {
@@ -519,7 +524,8 @@ fn read_world_for_run_version(reader: &mut impl Read, version: u32) -> io::Resul
         14 => World::read_checkpoint_pre_age_counters(reader),
         15 => World::read_checkpoint_pre_food_sensor_range(reader),
         16 => World::read_checkpoint_pre_neural_node_activity(reader),
-        17 => World::read_checkpoint(reader),
+        17 | 18 => World::read_checkpoint_pre_food_pheromone(reader),
+        19 => World::read_checkpoint(reader),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "versão de checkpoint desconhecida",
