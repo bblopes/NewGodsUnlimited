@@ -8,6 +8,7 @@ as propostas que ainda aguardam aprovação.
 |---|---|
 | [Documentação preliminar](DOCUMENTACAO_PRELIMINAR.md) | visão do ecossistema e cérebro evolutivo |
 | [Estrutura de arquivos](ESTRUTURA_DE_ARQUIVOS_PROPOSTA.md) | responsabilidades dos módulos Rust |
+| [Estrutura do repositório](ESTRUTURA_DO_REPOSITORIO.md) | finalidade de cada pasta e regra de organização |
 | [Sessão reproduzível](ESPECIFICACAO_SESSAO_REPRODUZIVEL.md) | telemetria, salvar e restaurar uma execução |
 | [Laboratório](DOCUMENTACAO_LABORATORIO.md) | campanhas, cenários e execuções em lote |
 | [Análise genética](DOCUMENTACAO_ANALISE_GENETICA.md) | cor, similaridade, linhagens e KPIs |
