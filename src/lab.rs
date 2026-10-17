@@ -17,7 +17,7 @@ use crate::{
         map::{MAP_GRID_HEIGHT, MAP_GRID_WIDTH, MapDefinition},
     },
     simulation::{
-        genome::{GENOME_BYTES, Genome},
+        genome::{GENOME_BYTES, Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES},
         world::{
             AntiCrammingConfig, DEFAULT_MENTAL_ENERGY_COST, FOOD_ENERGY,
             InitialNeuralConfiguration, MAX_ENERGY, World,
@@ -36,7 +36,7 @@ const MAX_SNAPSHOTS: u64 = 120;
 const MAX_CAPTURED_CELLS: usize = 3_500;
 const MAX_CAPTURED_FOOD: usize = 2_500;
 const PRESET_MAGIC: [u8; 8] = *b"ECOPRE01";
-const PRESET_FORMAT_VERSION: u32 = 1;
+const PRESET_FORMAT_VERSION: u32 = 2;
 const MAX_PRESET_GENOMES: usize = 20_000;
 static SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -813,7 +813,7 @@ fn import_session_preset(target_name: &str) -> io::Result<CampaignConfig> {
     let mut magic = [0; PRESET_MAGIC.len()];
     reader.read_exact(&mut magic)?;
     let version = read_u32_preset(&mut reader)?;
-    if magic != PRESET_MAGIC || version != PRESET_FORMAT_VERSION {
+    if magic != PRESET_MAGIC || !(1..=PRESET_FORMAT_VERSION).contains(&version) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "formato de preset incompatível",
@@ -829,7 +829,7 @@ fn import_session_preset(target_name: &str) -> io::Result<CampaignConfig> {
 
     for _ in 0..preset_count {
         let name = read_preset_string(&mut reader, 80)?;
-        let settings = read_session_preset_settings(&mut reader)?;
+        let settings = read_session_preset_settings(&mut reader, version)?;
         let map = MapDefinition::read_from(&mut reader)?;
         if name.eq_ignore_ascii_case(target_name) {
             return Ok(CampaignConfig {
@@ -899,7 +899,10 @@ struct SessionPresetSettings {
     validated_genomes: Vec<Genome>,
 }
 
-fn read_session_preset_settings(reader: &mut impl Read) -> io::Result<SessionPresetSettings> {
+fn read_session_preset_settings(
+    reader: &mut impl Read,
+    preset_version: u32,
+) -> io::Result<SessionPresetSettings> {
     let seed = read_u64_preset(reader)?;
     let amadeus_mode = read_bool_preset(reader)?;
     let initial_neural_configuration =
@@ -928,9 +931,15 @@ fn read_session_preset_settings(reader: &mut impl Read) -> io::Result<SessionPre
     }
     let mut validated_genomes = Vec::with_capacity(genome_count);
     for _ in 0..genome_count {
-        let mut bits = [0; GENOME_BYTES];
-        reader.read_exact(&mut bits)?;
-        validated_genomes.push(Genome::from_bytes(bits));
+        if preset_version >= 2 {
+            let mut bits = [0; GENOME_BYTES];
+            reader.read_exact(&mut bits)?;
+            validated_genomes.push(Genome::from_bytes(bits));
+        } else {
+            let mut bits = [0; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES];
+            reader.read_exact(&mut bits)?;
+            validated_genomes.push(Genome::from_pre_food_sensor_range_bytes(bits));
+        }
     }
     Ok(SessionPresetSettings {
         seed,
@@ -1021,7 +1030,7 @@ fn initial_neural_configuration_from_wire(value: u32) -> io::Result<InitialNeura
 }
 
 fn encode_campaign(campaign: &StoredCampaign) -> Vec<u8> {
-    let mut bytes = b"ECOSLAB5".to_vec();
+    let mut bytes = b"ECOSLAB6".to_vec();
     push_string(&mut bytes, &campaign.name);
     push_u64(&mut bytes, campaign.saved_at);
     let config = &campaign.config;
@@ -1122,7 +1131,8 @@ fn encode_campaign(campaign: &StoredCampaign) -> Vec<u8> {
 fn decode_campaign(bytes: &[u8]) -> Option<StoredCampaign> {
     let mut reader = ByteReader::new(bytes);
     let magic = reader.take_exact(8)?;
-    let current_format = magic == b"ECOSLAB5";
+    let newest_format = magic == b"ECOSLAB6";
+    let current_format = newest_format || magic == b"ECOSLAB5";
     let has_extended_settings = current_format || magic == b"ECOSLAB4";
     (has_extended_settings || magic == b"ECOSLAB3").then_some(())?;
     let name = reader.string()?;
@@ -1181,8 +1191,18 @@ fn decode_campaign(bytes: &[u8]) -> Option<StoredCampaign> {
         }
         config.validated_genomes = Vec::with_capacity(genome_count);
         for _ in 0..genome_count {
-            let bits: [u8; GENOME_BYTES] = reader.take_exact(GENOME_BYTES)?.try_into().ok()?;
-            config.validated_genomes.push(Genome::from_bytes(bits));
+            if newest_format {
+                let bits: [u8; GENOME_BYTES] = reader.take_exact(GENOME_BYTES)?.try_into().ok()?;
+                config.validated_genomes.push(Genome::from_bytes(bits));
+            } else {
+                let bits: [u8; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES] = reader
+                    .take_exact(PRE_FOOD_SENSOR_RANGE_GENOME_BYTES)?
+                    .try_into()
+                    .ok()?;
+                config
+                    .validated_genomes
+                    .push(Genome::from_pre_food_sensor_range_bytes(bits));
+            }
         }
         let map_bytes = reader.take_exact(MAP_GRID_WIDTH * MAP_GRID_HEIGHT * 2)?;
         let mut map_reader = Cursor::new(map_bytes);

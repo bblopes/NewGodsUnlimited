@@ -7,13 +7,15 @@ use std::{
 use macroquad::prelude::*;
 
 use crate::{
-    config::{MAX_FLOW_SPEED, SENSOR_RANGE, WORLD_HEIGHT, WORLD_WIDTH},
+    config::{
+        DEFAULT_FOOD_SENSOR_RANGE, MAX_FLOW_SPEED, MAX_FOOD_SENSOR_RANGE, WORLD_HEIGHT, WORLD_WIDTH,
+    },
     environment::{
         flow::FlowField,
         map::{MapDefinition, Terrain},
     },
     simulation::brain::{Brain, MotorOutput, SensorInput},
-    simulation::genome::Genome,
+    simulation::genome::{Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES},
     simulation::pheromone::{PheromoneField, pheromone_energy_cost},
 };
 
@@ -32,6 +34,9 @@ pub const FOOD_ENERGY: f32 = 50.0;
 pub const BASAL_ENERGY_COST: f32 = 0.03;
 pub const MAX_MOTOR_ENERGY_COST: f32 = 0.20;
 pub const DEFAULT_MENTAL_ENERGY_COST: f32 = 0.0025;
+/// Manter o sensor de alimento padrão (240 unidades) ativo custa 0,006 por
+/// tick. Alcances hereditários maiores escalam pelo quadrado da distância.
+pub const DEFAULT_FOOD_SENSOR_ENERGY_COST: f32 = 0.006;
 /// A longevidade é herdável, mas fica fora dos bits de fiação neural para não
 /// contaminar cor, similaridade ou assinatura química de parentesco.
 /// Janela curta para tornar a pressão de envelhecimento observável numa run.
@@ -265,6 +270,8 @@ enum CheckpointFormat {
     PreEventCounters,
     /// V14 antes do contador separado de morte por idade.
     PreAgeCounters,
+    /// V15 antes do alelo hereditário de alcance do sensor de alimento.
+    PreFoodSensorRange,
     Current,
 }
 
@@ -331,6 +338,15 @@ impl Organism {
     fn physical_area_scale(&self) -> f32 {
         let radius_ratio = self.physical_radius() / CELL_RADIUS;
         radius_ratio.powf(BODY_COST_RADIUS_EXPONENT)
+    }
+
+    pub fn food_sensor_range(&self) -> f32 {
+        self.genome.food_sensor_range()
+    }
+
+    fn food_sensor_energy_cost(&self) -> f32 {
+        let relative_range = self.food_sensor_range() / DEFAULT_FOOD_SENSOR_RANGE;
+        DEFAULT_FOOD_SENSOR_ENERGY_COST * relative_range * relative_range
     }
 }
 
@@ -773,7 +789,8 @@ impl World {
                 + organism.motors.energy_cost(MAX_MOTOR_ENERGY_COST))
                 * body_cost_scale
                 + organism.brain.mental_energy_cost(mental_energy_cost)
-                + pheromone_energy_cost(organism))
+                + pheromone_energy_cost(organism)
+                + organism.food_sensor_energy_cost())
                 * organism.energy_cost_multiplier();
         }
         observer.end(TickPhase::Energy);
@@ -978,6 +995,11 @@ impl World {
         Self::read_checkpoint_with_format(reader, CheckpointFormat::PreAgeCounters)
     }
 
+    /// Restaura a V15, cujo genoma ainda tinha 1.216 bits e alcance fixo.
+    pub fn read_checkpoint_pre_food_sensor_range(reader: &mut impl Read) -> io::Result<Self> {
+        Self::read_checkpoint_with_format(reader, CheckpointFormat::PreFoodSensorRange)
+    }
+
     /// Restaura sessões gravadas antes de fagocitose e sensores de força.
     pub fn read_checkpoint_v2(reader: &mut impl Read) -> io::Result<Self> {
         Self::read_checkpoint_with_format(reader, CheckpointFormat::V2)
@@ -1011,7 +1033,7 @@ impl World {
             deaths_by_phagocytosis_total,
             deaths_by_age_total,
         ) = match checkpoint_format {
-            CheckpointFormat::Current => (
+            CheckpointFormat::PreFoodSensorRange | CheckpointFormat::Current => (
                 read_u64(reader)?,
                 read_u64(reader)?,
                 read_u64(reader)?,
@@ -1038,6 +1060,7 @@ impl World {
                 | CheckpointFormat::PreLongevity
                 | CheckpointFormat::PreEventCounters
                 | CheckpointFormat::PreAgeCounters
+                | CheckpointFormat::PreFoodSensorRange
                 | CheckpointFormat::Current
         ) {
             read_f32(reader)?
@@ -1049,6 +1072,7 @@ impl World {
             CheckpointFormat::PreLongevity
                 | CheckpointFormat::PreEventCounters
                 | CheckpointFormat::PreAgeCounters
+                | CheckpointFormat::PreFoodSensorRange
                 | CheckpointFormat::Current
         ) {
             MapDefinition::read_from(reader)?
@@ -1079,6 +1103,7 @@ impl World {
                         CheckpointFormat::PreLongevity
                             | CheckpointFormat::PreEventCounters
                             | CheckpointFormat::PreAgeCounters
+                            | CheckpointFormat::PreFoodSensorRange
                             | CheckpointFormat::Current
                     ) {
                         1.0
@@ -1098,6 +1123,7 @@ impl World {
                     CheckpointFormat::PreLongevity
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
+                        | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::Current
                 ) {
                     1.0
@@ -1110,6 +1136,7 @@ impl World {
                 checkpoint_format,
                 CheckpointFormat::PreEventCounters
                     | CheckpointFormat::PreAgeCounters
+                    | CheckpointFormat::PreFoodSensorRange
                     | CheckpointFormat::Current
             ) {
                 LongevityGene::from_allele(read_u16(reader)?)
@@ -1128,6 +1155,7 @@ impl World {
                     | CheckpointFormat::PreLongevity
                     | CheckpointFormat::PreEventCounters
                     | CheckpointFormat::PreAgeCounters
+                    | CheckpointFormat::PreFoodSensorRange
                     | CheckpointFormat::Current
             ) {
                 vec2(read_f32(reader)?, read_f32(reader)?)
@@ -1149,6 +1177,7 @@ impl World {
                         | CheckpointFormat::PreLongevity
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
+                        | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1162,6 +1191,7 @@ impl World {
                         | CheckpointFormat::PreLongevity
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
+                        | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1175,6 +1205,7 @@ impl World {
                         | CheckpointFormat::PreLongevity
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
+                        | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1188,6 +1219,7 @@ impl World {
                         | CheckpointFormat::PreLongevity
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
+                        | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1201,6 +1233,7 @@ impl World {
                         | CheckpointFormat::PreLongevity
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
+                        | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1212,6 +1245,7 @@ impl World {
                     CheckpointFormat::PreLongevity
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
+                        | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1224,8 +1258,12 @@ impl World {
                 let mut bits = [0u8; crate::simulation::genome::LEGACY_V1_GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
                 Genome::from_legacy_v1_bytes(bits)
-            } else {
+            } else if checkpoint_format == CheckpointFormat::Current {
                 let mut bits = [0u8; crate::simulation::genome::GENOME_BYTES];
+                reader.read_exact(&mut bits)?;
+                Genome::from_bytes(bits)
+            } else {
+                let mut bits = [0u8; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
                 if checkpoint_format == CheckpointFormat::V2 {
                     Genome::from_legacy_v2_bytes(bits)
@@ -1236,8 +1274,10 @@ impl World {
                     CheckpointFormat::PreDonation | CheckpointFormat::PreWorldExpansion
                 ) {
                     Genome::from_pre_donation_bytes(bits)
+                } else if checkpoint_format == CheckpointFormat::PreFoodSensorRange {
+                    Genome::from_pre_food_sensor_range_bytes(bits)
                 } else {
-                    Genome::from_bytes(bits)
+                    Genome::from_pre_food_sensor_range_bytes(bits)
                 }
             };
             let mut internal_state = [0.0; crate::simulation::brain::INTERNAL_COUNT];
@@ -1378,13 +1418,15 @@ impl World {
             .collect();
         for (index, organism) in self.organisms.iter_mut().enumerate() {
             let current = flow.sample_with_map(organism.position, Some(&self.map)) / MAX_FLOW_SPEED;
-            let nearest = nearest_food_in_cones(&food_grid, organism.position, &self.map);
+            let food_sensor_range = organism.food_sensor_range();
+            let nearest =
+                nearest_food_in_cones(&food_grid, organism.position, food_sensor_range, &self.map);
             let chemical = self.pheromones.sensors_for(organism);
             organism.sensors = SensorInput {
-                food_left: cone_signal(nearest[0]),
-                food_right: cone_signal(nearest[1]),
-                food_up: cone_signal(nearest[2]),
-                food_down: cone_signal(nearest[3]),
+                food_left: cone_signal(nearest[0], food_sensor_range),
+                food_right: cone_signal(nearest[1], food_sensor_range),
+                food_up: cone_signal(nearest[2], food_sensor_range),
+                food_down: cone_signal(nearest[3], food_sensor_range),
                 current_x: current.x,
                 current_y: current.y,
                 // A célula percebe a fração da energia que falta para a
@@ -2060,6 +2102,7 @@ fn read_sensors(
             | CheckpointFormat::PreLongevity
             | CheckpointFormat::PreEventCounters
             | CheckpointFormat::PreAgeCounters
+            | CheckpointFormat::PreFoodSensorRange
             | CheckpointFormat::Current
     ) {
         return Ok(SensorInput {
@@ -2135,6 +2178,7 @@ fn read_sensors(
             | CheckpointFormat::PreLongevity
             | CheckpointFormat::PreEventCounters
             | CheckpointFormat::PreAgeCounters
+            | CheckpointFormat::PreFoodSensorRange
             | CheckpointFormat::Current
     ) {
         sensors.force_x = read_f32(reader)?;
@@ -2221,8 +2265,8 @@ fn spread_direction(id: u64) -> Vec2 {
 
 fn sensor_grid_cell(position: Vec2) -> (i32, i32) {
     (
-        (position.x / SENSOR_RANGE).floor() as i32,
-        (position.y / SENSOR_RANGE).floor() as i32,
+        (position.x / MAX_FOOD_SENSOR_RANGE).floor() as i32,
+        (position.y / MAX_FOOD_SENSOR_RANGE).floor() as i32,
     )
 }
 
@@ -2232,13 +2276,16 @@ fn sensor_grid_cell(position: Vec2) -> (i32, i32) {
 fn nearest_food_in_cones(
     grid: &HashMap<(i32, i32), Vec<Vec2>>,
     origin: Vec2,
+    range: f32,
     map: &MapDefinition,
 ) -> [Option<f32>; 4] {
     let mut nearest = [None; 4];
     let base = sensor_grid_cell(origin);
-    let range_squared = SENSOR_RANGE * SENSOR_RANGE;
-    for grid_y in base.1 - 1..=base.1 + 1 {
-        for grid_x in base.0 - 1..=base.0 + 1 {
+    let range = range.clamp(0.0, MAX_FOOD_SENSOR_RANGE);
+    let range_squared = range * range;
+    let grid_radius = (range / MAX_FOOD_SENSOR_RANGE).ceil() as i32;
+    for grid_y in base.1 - grid_radius..=base.1 + grid_radius {
+        for grid_x in base.0 - grid_radius..=base.0 + grid_radius {
             let Some(food_positions) = grid.get(&(grid_x, grid_y)) else {
                 continue;
             };
@@ -2268,9 +2315,9 @@ fn nearest_food_in_cones(
     nearest
 }
 
-fn cone_signal(distance: Option<f32>) -> f32 {
+fn cone_signal(distance: Option<f32>, range: f32) -> f32 {
     distance
-        .map(|distance| 1.0 - distance / SENSOR_RANGE)
+        .map(|distance| 1.0 - distance / range.max(f32::EPSILON))
         .unwrap_or(0.0)
 }
 
@@ -2389,7 +2436,12 @@ mod tests {
             .or_insert_with(Vec::new)
             .push(food);
 
-        let nearest = nearest_food_in_cones(&grid, origin, &MapDefinition::empty());
+        let nearest = nearest_food_in_cones(
+            &grid,
+            origin,
+            DEFAULT_FOOD_SENSOR_RANGE,
+            &MapDefinition::empty(),
+        );
 
         assert!(nearest[0].is_some());
         assert!(nearest[1].is_none());
@@ -2408,9 +2460,43 @@ mod tests {
         let mut map = MapDefinition::empty();
         map.paint_wall(origin + vec2(60.0, 0.0), true);
 
-        let nearest = nearest_food_in_cones(&grid, origin, &map);
+        let nearest = nearest_food_in_cones(&grid, origin, DEFAULT_FOOD_SENSOR_RANGE, &map);
 
         assert_eq!(nearest, [None; 4]);
+    }
+
+    #[test]
+    fn longer_food_sensor_reaches_food_outside_the_default_range() {
+        let origin = vec2(1_000.0, 1_000.0);
+        let food = origin + vec2(360.0, 0.0);
+        let mut grid = HashMap::new();
+        grid.entry(sensor_grid_cell(food))
+            .or_insert_with(Vec::new)
+            .push(food);
+
+        let default_range = nearest_food_in_cones(
+            &grid,
+            origin,
+            DEFAULT_FOOD_SENSOR_RANGE,
+            &MapDefinition::empty(),
+        );
+        let long_range = nearest_food_in_cones(&grid, origin, 400.0, &MapDefinition::empty());
+
+        assert_eq!(default_range, [None; 4]);
+        assert_eq!(long_range[1], Some(360.0));
+    }
+
+    #[test]
+    fn longer_food_sensor_has_a_quadratically_higher_upkeep() {
+        let mut world = World::new(2_021, 1);
+        let organism = &mut world.organisms[0];
+        let default_cost = organism.food_sensor_energy_cost();
+        let mut bits = *organism.genome.bytes();
+        bits[crate::simulation::genome::GENOME_BYTES - 1] = 0b1111_1000;
+        organism.genome = Genome::from_bytes(bits);
+
+        assert!(organism.food_sensor_range() > DEFAULT_FOOD_SENSOR_RANGE);
+        assert!(organism.food_sensor_energy_cost() > default_cost * 3.5);
     }
 
     #[test]

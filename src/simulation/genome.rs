@@ -1,15 +1,29 @@
 use macroquad::prelude::*;
 
-use crate::simulation::brain::{DecodedConnection, INTERNAL_START, MOTOR_START, SLOT_COUNT};
+use crate::{
+    config::{DEFAULT_FOOD_SENSOR_RANGE, MAX_FOOD_SENSOR_RANGE, MIN_FOOD_SENSOR_RANGE},
+    simulation::brain::{DecodedConnection, INTERNAL_START, MOTOR_START, SLOT_COUNT},
+};
 
 pub const CONNECTION_RECORDS: usize = 64;
 pub const BITS_PER_RECORD: usize = 19;
-pub const GENOME_BYTES: usize = 152;
+/// Bytes gravados por versões anteriores ao gene de alcance sensorial.
+pub const PRE_FOOD_SENSOR_RANGE_GENOME_BYTES: usize = 152;
+/// Cinco bits extras carregam o alcance do sensor de alimento. Os três bits
+/// baixos do último byte são reserva e não entram em mutação/similaridade.
+pub const GENOME_BYTES: usize = 153;
 pub const LEGACY_V1_GENOME_BYTES: usize = 136;
 pub const MUTATION_DENOMINATOR: u32 = 1_024;
+const NEURAL_GENOME_BITS: usize = PRE_FOOD_SENSOR_RANGE_GENOME_BYTES * 8;
+const FOOD_SENSOR_ALLELE_BITS: usize = 5;
+pub const GENOME_BIT_COUNT: usize = NEURAL_GENOME_BITS + FOOD_SENSOR_ALLELE_BITS;
+const PHEROMONE_CHANNEL_OFFSET: usize = NEURAL_GENOME_BITS - 9;
+const FOOD_SENSOR_ALLELE_OFFSET: usize = NEURAL_GENOME_BITS;
+const DEFAULT_FOOD_SENSOR_ALLELE: u32 = 16;
 
-/// Genoma compacto: 64 registros `[origem:6][destino:6][peso:6][ativo:1]`.
-/// O estado neural não está aqui; somente a fiação hereditária.
+/// Genoma compacto: 64 registros `[origem:6][destino:6][peso:6][ativo:1]`
+/// mais um alelo sensorial. O estado neural não está aqui; somente informação
+/// hereditária, cuja projeção também define cor, similaridade e PG.
 #[derive(Clone)]
 pub struct Genome {
     bits: [u8; GENOME_BYTES],
@@ -50,6 +64,11 @@ impl Genome {
                 false,
             );
         }
+        genome.write_bits(
+            FOOD_SENSOR_ALLELE_OFFSET,
+            FOOD_SENSOR_ALLELE_BITS,
+            DEFAULT_FOOD_SENSOR_ALLELE,
+        );
         genome
     }
 
@@ -103,8 +122,8 @@ impl Genome {
     /// influenciaram o cérebro. Ao abrir a run na topologia de 53 slots, eles
     /// precisam continuar inativos para não virarem, por acidente, o motor
     /// novo `Doar`.
-    pub fn from_pre_donation_bytes(bits: [u8; GENOME_BYTES]) -> Self {
-        let mut genome = Self { bits };
+    pub fn from_pre_donation_bytes(bits: [u8; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES]) -> Self {
+        let mut genome = Self::from_pre_food_sensor_range_bytes(bits);
         for record_index in 0..CONNECTION_RECORDS {
             let (source, destination, weight, active) = genome.read_record(record_index);
             if active && (source >= SLOT_COUNT - 1 || destination >= SLOT_COUNT - 1) {
@@ -116,7 +135,7 @@ impl Genome {
 
     pub fn mutated_from(parent: &Self, random_state: &mut u64) -> Self {
         let mut child = parent.clone();
-        for bit_index in 0..GENOME_BYTES * 8 {
+        for bit_index in 0..GENOME_BIT_COUNT {
             if next_u32(random_state) % MUTATION_DENOMINATOR == 0 {
                 child.flip_bit(bit_index);
             }
@@ -140,9 +159,9 @@ impl Genome {
     }
 
     pub fn binary_string(&self) -> String {
-        let mut binary = String::with_capacity(GENOME_BYTES * 8);
-        for byte in self.bits {
-            binary.push_str(&format!("{byte:08b}"));
+        let mut binary = String::with_capacity(GENOME_BIT_COUNT);
+        for bit_index in 0..GENOME_BIT_COUNT {
+            binary.push(if self.bit(bit_index) { '1' } else { '0' });
         }
         binary
     }
@@ -158,13 +177,37 @@ impl Genome {
         Self { bits }
     }
 
+    /// Migra o genoma de 1.216 bits: preserva a fiação e os canais químicos,
+    /// preenchendo o novo alelo com o alcance histórico de 240 unidades.
+    pub fn from_pre_food_sensor_range_bytes(
+        bits: [u8; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES],
+    ) -> Self {
+        let mut genome = Self::empty_with_default_sensor();
+        genome.bits[..PRE_FOOD_SENSOR_RANGE_GENOME_BYTES].copy_from_slice(&bits);
+        genome.write_bits(
+            FOOD_SENSOR_ALLELE_OFFSET,
+            FOOD_SENSOR_ALLELE_BITS,
+            DEFAULT_FOOD_SENSOR_ALLELE,
+        );
+        genome
+    }
+
+    /// Fenótipo hereditário do alcance de alimento. A curva logarítmica deixa
+    /// aumentos e reduções proporcionais comparáveis e mantém o alelo padrão
+    /// exatamente no alcance histórico de 240 unidades.
+    pub fn food_sensor_range(&self) -> f32 {
+        let allele = self.read_bits(FOOD_SENSOR_ALLELE_OFFSET, FOOD_SENSOR_ALLELE_BITS) as f32;
+        let exponent =
+            (allele - DEFAULT_FOOD_SENSOR_ALLELE as f32) / DEFAULT_FOOD_SENSOR_ALLELE as f32;
+        (DEFAULT_FOOD_SENSOR_RANGE * 2.0_f32.powf(exponent))
+            .clamp(MIN_FOOD_SENSOR_RANGE, MAX_FOOD_SENSOR_RANGE)
+    }
+
     /// Migra genomas gravados antes da expansão química. A topologia antiga
     /// é preservada: Sm passa a ler PG; Fx/Fy e todos internos/motores são
     /// deslocados para seus slots novos.
-    pub fn from_pre_pheromone_bytes(bits: [u8; GENOME_BYTES]) -> Self {
-        let mut genome = Self {
-            bits: [0; GENOME_BYTES],
-        };
+    pub fn from_pre_pheromone_bytes(bits: [u8; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES]) -> Self {
+        let mut genome = Self::empty_with_default_sensor();
         for record_index in 0..CONNECTION_RECORDS {
             let offset = record_index * BITS_PER_RECORD;
             let source = read_bits_from(&bits, offset, 6) as usize;
@@ -191,10 +234,8 @@ impl Genome {
     /// os dois sensores de força e o motor de fagocitose atuais. Os bits da
     /// conexão são preservados; apenas os índices de slots posteriores aos
     /// sensores antigos são deslocados em dois posições.
-    pub fn from_legacy_v2_bytes(bits: [u8; GENOME_BYTES]) -> Self {
-        let mut genome = Self {
-            bits: [0; GENOME_BYTES],
-        };
+    pub fn from_legacy_v2_bytes(bits: [u8; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES]) -> Self {
+        let mut genome = Self::empty_with_default_sensor();
         for record_index in 0..CONNECTION_RECORDS {
             let offset = record_index * BITS_PER_RECORD;
             let source = read_bits_from(&bits, offset, 6) as usize;
@@ -221,9 +262,7 @@ impl Genome {
     /// internos e motores antigos são deslocados em dois índices, sem mudar
     /// a topologia funcional herdada.
     pub fn from_legacy_v1_bytes(bits: [u8; LEGACY_V1_GENOME_BYTES]) -> Self {
-        let mut genome = Self {
-            bits: [0; GENOME_BYTES],
-        };
+        let mut genome = Self::empty_with_default_sensor();
         for record_index in 0..CONNECTION_RECORDS {
             let offset = record_index * 17;
             let source = read_bits_from(&bits, offset, 5) as usize;
@@ -248,16 +287,13 @@ impl Genome {
 
     /// Similaridade exata de Hamming entre dois genomas, no intervalo [0, 1].
     pub fn similarity_to(&self, other: &Self) -> f32 {
-        let different_bits: u32 = self
-            .bits
-            .iter()
-            .zip(other.bits.iter())
-            .map(|(left, right)| (left ^ right).count_ones())
-            .sum();
-        1.0 - different_bits as f32 / (GENOME_BYTES * 8) as f32
+        let different_bits = (0..GENOME_BIT_COUNT)
+            .filter(|&bit_index| self.bit(bit_index) != other.bit(bit_index))
+            .count();
+        1.0 - different_bits as f32 / GENOME_BIT_COUNT as f32
     }
 
-    /// Cor de linhagem derivada continuamente dos 1.088 bits. Não é uma hash:
+    /// Cor de linhagem derivada continuamente de todos os bits hereditários.
     /// cada bit tem influência pequena, portanto mutações leves preservam a cor.
     pub fn genetic_rgb(&self) -> [u8; 3] {
         let projection_x = self.color_projection(0xA24B_AED4_963E_E407);
@@ -279,15 +315,14 @@ impl Genome {
         format!("#{red:02X}{green:02X}{blue:02X}")
     }
 
-    /// Três IDs químicos globais escolhidos pelo próprio genoma. Os nove
-    /// bits finais agem como uma pequena região regulatória; colisões são
-    /// normalizadas para que P1/P2/P3 sempre apontem a canais distintos.
+    /// Três IDs químicos globais escolhidos por uma região regulatória do
+    /// genoma. Colisões são normalizadas para que P1/P2/P3 sempre apontem a
+    /// canais distintos.
     pub fn pheromone_channels(&self) -> [u8; 3] {
-        let total_bits = GENOME_BYTES * 8;
         let mut channels = [
-            self.read_bits(total_bits - 9, 3) as u8,
-            self.read_bits(total_bits - 6, 3) as u8,
-            self.read_bits(total_bits - 3, 3) as u8,
+            self.read_bits(PHEROMONE_CHANNEL_OFFSET, 3) as u8,
+            self.read_bits(PHEROMONE_CHANNEL_OFFSET + 3, 3) as u8,
+            self.read_bits(PHEROMONE_CHANNEL_OFFSET + 6, 3) as u8,
         ];
         for index in 1..channels.len() {
             while channels[..index].contains(&channels[index]) {
@@ -314,7 +349,7 @@ impl Genome {
 
     fn color_projection(&self, salt: u64) -> f32 {
         let mut sum = 0i32;
-        for bit_index in 0..GENOME_BYTES * 8 {
+        for bit_index in 0..GENOME_BIT_COUNT {
             let gene_sign = if self.bit(bit_index) { 1 } else { -1 };
             let weight_sign = if mix_bit(bit_index as u64 ^ salt) & 1 == 0 {
                 1
@@ -323,7 +358,19 @@ impl Genome {
             };
             sum += gene_sign * weight_sign;
         }
-        sum as f32 / (GENOME_BYTES * 8) as f32
+        sum as f32 / GENOME_BIT_COUNT as f32
+    }
+
+    fn empty_with_default_sensor() -> Self {
+        let mut genome = Self {
+            bits: [0; GENOME_BYTES],
+        };
+        genome.write_bits(
+            FOOD_SENSOR_ALLELE_OFFSET,
+            FOOD_SENSOR_ALLELE_BITS,
+            DEFAULT_FOOD_SENSOR_ALLELE,
+        );
+        genome
     }
 
     fn read_record(&self, record_index: usize) -> (usize, usize, i8, bool) {
@@ -491,5 +538,36 @@ mod tests {
                 connection.source == source && connection.destination == destination
             }));
         }
+    }
+
+    #[test]
+    fn food_sensor_allele_is_hereditary_and_changes_genetic_readings() {
+        let mut state = 911;
+        let baseline = Genome::random(&mut state);
+        let mut short_range = baseline.clone();
+        let mut long_range = baseline.clone();
+        short_range.write_bits(FOOD_SENSOR_ALLELE_OFFSET, FOOD_SENSOR_ALLELE_BITS, 0);
+        long_range.write_bits(FOOD_SENSOR_ALLELE_OFFSET, FOOD_SENSOR_ALLELE_BITS, 31);
+
+        assert!((baseline.food_sensor_range() - DEFAULT_FOOD_SENSOR_RANGE).abs() < 0.001);
+        assert!(short_range.food_sensor_range() < DEFAULT_FOOD_SENSOR_RANGE);
+        assert!(long_range.food_sensor_range() > DEFAULT_FOOD_SENSOR_RANGE);
+        assert!(short_range.similarity_to(&long_range) < 1.0);
+        assert_ne!(
+            short_range.pheromone_signature(),
+            long_range.pheromone_signature()
+        );
+    }
+
+    #[test]
+    fn old_genome_migrates_to_the_historical_sensor_range() {
+        let legacy = [0b1010_0101; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES];
+        let migrated = Genome::from_pre_food_sensor_range_bytes(legacy);
+
+        assert_eq!(
+            &migrated.bytes()[..PRE_FOOD_SENSOR_RANGE_GENOME_BYTES],
+            &legacy
+        );
+        assert!((migrated.food_sensor_range() - DEFAULT_FOOD_SENSOR_RANGE).abs() < 0.001);
     }
 }

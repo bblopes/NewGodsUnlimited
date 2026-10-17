@@ -1,21 +1,19 @@
 # Relatório de energia e proposta de sensores hereditários
 
-**Estado: diagnóstico do código atual + proposta.** Nenhuma regra energética é
-alterada por este documento.
+**Estado: implementado/publicado.** O alcance hereditário de alimento e seu
+custo energético entraram na versão do executável de 17 de outubro de 2026.
 
 ## Resumo executivo
 
 Hoje a energia é cobrada por manutenção do corpo, nado, processamento neural,
-emissão de feromônios, fagocitose e perda operacional de doação. Os sensores
-— alimento, corrente, energia própria, contato, química e força — têm alcance
-fixo onde aplicável e **não têm custo energético próprio**.
+sensor de alimento, emissão de feromônios, fagocitose e perda operacional de
+doação. Corrente, energia própria, contato, química e força continuam sem
+custo energético próprio.
 
-Isso abre uma melhoria evolutiva coerente: o alcance do sensor de alimento
-pode ser uma característica hereditária e custar energia continuamente. Uma
-célula que enxerga mais longe terá vantagem informacional, mas precisará pagar
-por uma área de percepção maior. A recomendação é introduzir primeiro só o
-sensor de alimento; os sensores químicos têm um campo e alcance próprios e
-merecem uma decisão separada.
+O alcance do sensor de alimento é hereditário e custa energia continuamente.
+Uma célula que enxerga mais longe tem vantagem informacional, mas paga por uma
+área de percepção maior. O primeiro recorte afeta só alimento; sensores
+químicos têm um campo e alcance próprios e continuam uma decisão separada.
 
 ## Fluxo energético atual por tick
 
@@ -41,6 +39,7 @@ naquele tick.
 | Manutenção basal | todo tick | `0,03 × escala do corpo` | escala corporal | multiplicada pela senescência |
 | Nado | todo tick, conforme os quatro motores direcionais | `0,20 × (esq² + dir² + cima² + baixo²) × escala do corpo` | escala corporal | multiplicada pela senescência |
 | Cérebro | todo tick | `conexões ativas × custo mental` | nenhuma | multiplicada pela senescência |
+| Sensor de alimento | todo tick | `0,006 × (alcance / 240)²` | não escala com corpo | multiplicada pela senescência |
 | PG basal e emissão química | todo tick; PG basal sempre, canais extras conforme motores | `(0,0004 × (1 + PG) + 0,001 × (P1 + P2 + P3)) × área relativa` | área relativa direta | multiplicada pela senescência |
 | Fagocitose | há um alvo no alcance de interação e o motor está ativo | `0,04 × ativação` | nenhuma | multiplicada pela senescência |
 | Doação: energia enviada | há receptor em contato, reserva e espaço no receptor | até `4,0 × ativação` sai do doador e vai ao receptor | nenhuma | a transferência não é multiplicada |
@@ -64,7 +63,6 @@ Detalhes relevantes:
 
 | Processo | Efeito atual | Observação |
 |---|---|---|
-| Sensoriamento de alimento | quatro cones, alcance fixo de `240` | custo energético zero |
 | Sensoriamento químico | intensidade e gradientes de PG/P1/P2/P3 | custo energético zero; o alcance do campo é `500` |
 | Sensores de corrente, energia, contato e força | leitura do estado físico | custo energético zero |
 | Corrente ambiental | desloca a célula | deslocamento passivo, sem custo |
@@ -86,25 +84,26 @@ acompanha a área completa e chega a **4×**. Cérebro, fagocitose e operação 
 doação não recebem fator de tamanho.
 
 Isso significa que, para uma célula grande, a emissão química é hoje o custo
-que mais cresce geometricamente; o cérebro e os sensores não ficam mais caros.
+que mais cresce geometricamente; cérebro e sensor de alimento não ficam mais
+caros apenas por tamanho, mas este último pode ficar mais caro pela mutação de
+alcance.
 Em compensação, o raio maior aumenta a área que pode conter alimento e ajuda na
 vantagem geométrica da fagocitose. O limite obrigatório de energia padrão da
 interface é `5.000`, então células grandes são possíveis enquanto a rede não
 decidir se reproduzir antes desse teto.
 
-## Proposta: gene de alcance do sensor de alimento
+## Implementação: gene de alcance do sensor de alimento
 
-### Regra biológica proposta
+### Regra biológica implementada
 
-Cada célula teria um alelo de alcance visual/quimiorreceptor de alimento. O
-valor padrão continua equivalente ao alcance atual de `240`; mutações podem
-encurtar ou ampliar esse alcance. O custo é pago em todo tick, haja ou não
-alimento no cone, pois manter o órgão sensorial ativo é o que consome energia.
+Cada célula tem um alelo de alcance visual/quimiorreceptor de alimento. O
+valor padrão é `240`; mutações encurtam ou ampliam esse alcance para cerca de
+`120` a `460`. O custo é pago em todo tick, haja ou não alimento no cone.
 
-Fórmula inicial recomendada:
+Fórmula implementada:
 
 ```text
-custo_sensor = CUSTO_SENSOR_BASE × (alcance / 240)²
+custo_sensor = 0,006 × (alcance / 240)²
 ```
 
 O expoente 2 cobra pela área observada: dobrar o alcance cobre aproximadamente
@@ -114,10 +113,10 @@ tem manutenção/nado/emissão escalados separadamente. Como os outros custos
 metabólicos, ele entra antes do multiplicador de envelhecimento e, portanto,
 envelhece junto com a célula.
 
-O valor de `CUSTO_SENSOR_BASE` não deve ser escolhido no escuro: a primeira
-implementação deve medi-lo contra a renda média de alimento e rodar campanhas
-com a mesma seed. Um bom experimento inicial testa valores que façam o alcance
-padrão ser perceptível, mas menor que o custo basal de `0,03` por tick.
+O valor-base escolhido é `0,006`: o sensor padrão custa 20% da manutenção
+basal de `0,03`, e o maior alcance possível custa aproximadamente `0,022`
+antes da senescência. Esse é um primeiro equilíbrio a ser medido em campanhas
+reproduzíveis, não um valor biológico definitivo.
 
 ### Herança e assinatura genética
 
@@ -126,46 +125,44 @@ Isso atende à regra do projeto: uma mutação de capacidade sensorial também
 altera similaridade genética, cor de linhagem e assinatura química de
 parentesco. Hoje essas três leituras já projetam todos os bits de `Genome`.
 
-Desenho sugerido:
+Desenho implementado:
 
-1. Preservar os atuais 1.216 bits do genoma, inclusive os 9 bits finais hoje
+1. Preserva os atuais 1.216 bits do genoma, inclusive os 9 bits finais hoje
    usados como região regulatória de canais químicos.
-2. Acrescentar uma região de 5 bits para o alelo de alcance sensorial, com
+2. Acrescenta uma região de 5 bits para o alelo de alcance sensorial, com
    valor padrão que decodifica exatamente para `240`.
-3. Fazer a mutação padrão de `Genome::mutated_from()` atingir essa região; não
+3. Faz a mutação padrão de `Genome::mutated_from()` atingir essa região; não
    criar um mutador paralelo.
-4. Fixar explicitamente o deslocamento dos 9 bits de canais químicos, em vez
+4. Fixa explicitamente o deslocamento dos 9 bits de canais químicos, em vez
    de continuar calculando-os como "os nove últimos", para que ampliar o
    genoma não mude silenciosamente os canais existentes.
-5. Migrar checkpoints antigos preenchendo o novo alelo com o valor-padrão.
-   Checkpoints novos passam a guardar o `Genome` ampliado e recebem uma versão
-   de formato nova.
+5. Migra checkpoints, presets e campanhas antigos preenchendo o novo alelo
+   com o valor-padrão. Checkpoints novos passam a guardar o `Genome` ampliado
+   em uma versão de formato nova.
 
 Cinco bits fornecem 32 degraus. Uma curva logarítmica centrada em `240` é uma
 boa candidata, pois torna aumentos e reduções proporcionais comparáveis. O
 intervalo exato (por exemplo, aproximadamente `120` a `460`) deve ser decidido
 junto com o custo e validado por campanha, não definido pela interface.
 
-### Alteração técnica necessária
+### Alteração técnica entregue
 
-1. Criar em `Genome` um decodificador público, por exemplo
-   `food_sensor_range() -> f32`, e uma constante para o alcance-base.
-2. Trocar o `SENSOR_RANGE` único nas funções de grade, busca e normalização
+1. `Genome::food_sensor_range()` decodifica o alelo e conserva `240` para
+   genomas migrados.
+2. Substituição do `SENSOR_RANGE` único nas funções de grade, busca e normalização
    pelo alcance da célula consultada. A grade espacial deve usar células do
    maior alcance possível, e a busca deve visitar todos os quadrados que cabem
    no alcance individual; a busca atual assume exatamente 3×3 quadrados porque
    todos usam `240`.
-3. Adicionar `sensor_energy_cost(organism)` à fase de metabolismo e incluí-lo
-   no futuro livro-caixa de energia abaixo.
-4. Mostrar o alcance individual no painel da célula selecionada e desenhar os
+3. O custo de sensor é cobrado na fase de metabolismo.
+4. O alcance individual aparece no painel da célula selecionada e desenha os
    cones usando o valor da própria célula, não uma constante global.
-5. Atualizar serialização, leitores de versões antigas, hashes/reprodução de
-   benchmarks e testes de determinismo.
+5. Serialização, leitores de versões antigas, benchmark e testes foram
+   atualizados.
 
-O primeiro recorte deve afetar somente os quatro sensores de alimento. O
-alcance do campo de feromônios e seus sensores precisa ser escolhido depois:
-alterá-lo envolve a malha química, custo de emissão e a própria comunicação,
-não apenas a visão de alimento.
+O recorte afeta somente os quatro sensores de alimento. O alcance do campo de
+feromônios e seus sensores fica para depois: alterá-lo envolve a malha química,
+custo de emissão e a própria comunicação, não apenas a visão de alimento.
 
 ## Instrumentação recomendada antes de recalibrar custos
 
@@ -187,15 +184,15 @@ cada categoria. Os marcos de mudança de parâmetros propostos em
 uma alteração de custo pode ser relacionada ao momento exato e não apenas à
 população final.
 
-## Ordem de implementação sugerida
+## Próximos passos recomendados
 
 1. Implementar o livro-caixa e validar que o balanço de energia fecha em uma
    run controlada.
 2. Publicar a visualização demográfica dos gastos, ainda sem mudar regras.
-3. Acrescentar o alelo de alcance com valor-padrão de `240` e custo-base zero;
-   verificar que checkpoints migrados mantêm o mesmo comportamento.
-4. Ligar o custo-base em campanhas reproduzíveis, testar várias sementes e
-   comparar sobrevivência, tamanho corporal, alimento capturado e reprodução.
+3. Rodar campanhas com o alelo já ativo, várias seeds e cenários, comparando
+   genomas migrados de alcance `240` aos descendentes mutados.
+4. Recalibrar o custo-base em campanhas reproduzíveis, comparando
+   sobrevivência, tamanho corporal, alimento capturado e reprodução.
 5. Só então escolher a curva e o valor de produção, e avaliar um segundo gene
    para percepção química.
 

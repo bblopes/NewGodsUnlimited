@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    config::{MAX_FLOW_SPEED, SENSOR_RANGE, WORLD_HEIGHT, WORLD_WIDTH},
+    config::{DEFAULT_FOOD_SENSOR_RANGE, WORLD_HEIGHT, WORLD_WIDTH},
     environment::{
         flow::{FlowField, FlowPreset},
         map::{MAP_GRID_HEIGHT, MAP_GRID_WIDTH, MapDefinition},
@@ -20,15 +20,19 @@ use crate::{
         brain::{
             EXTERNAL_SLOT_COUNT, INTERNAL_START, MOTOR_START, SLOT_COUNT, TIMER_INTERNAL_START,
         },
-        genome::{CONNECTION_RECORDS, GENOME_BYTES, Genome},
+        genome::{
+            CONNECTION_RECORDS, GENOME_BIT_COUNT, GENOME_BYTES, Genome,
+            PRE_FOOD_SENSOR_RANGE_GENOME_BYTES,
+        },
         pheromone::{
             FIELD_HEIGHT as PHEROMONE_FIELD_HEIGHT, FIELD_WIDTH as PHEROMONE_FIELD_WIDTH,
             PheromoneDisplay,
         },
         world::{
-            AntiCrammingConfig, CELL_RADIUS, DEFAULT_MENTAL_ENERGY_COST, FOOD_ENERGY, FOOD_RADIUS,
-            InitialNeuralConfiguration, MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MIN_EXCLUSION_DISTANCE,
-            Organism, Phytoplankton, World,
+            AntiCrammingConfig, CELL_RADIUS, DEFAULT_FOOD_SENSOR_ENERGY_COST,
+            DEFAULT_MENTAL_ENERGY_COST, FOOD_ENERGY, FOOD_RADIUS, InitialNeuralConfiguration,
+            MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MIN_EXCLUSION_DISTANCE, Organism, Phytoplankton,
+            World,
         },
     },
 };
@@ -50,7 +54,7 @@ const GENETIC_GROUP_SIMILARITY: f32 = 0.985;
 const ENERGY_HISTOGRAM_BUCKETS: usize = 12;
 const SESSION_CONTENT_BOTTOM: f32 = 1_460.0;
 const PRESET_MAGIC: [u8; 8] = *b"ECOPRE01";
-const PRESET_FORMAT_VERSION: u32 = 1;
+const PRESET_FORMAT_VERSION: u32 = 2;
 const MAP_PRESET_MAGIC: [u8; 8] = *b"ECOMAP01";
 const MAP_PRESET_FORMAT_VERSION: u32 = 1;
 const MAX_MAP_PRESETS: usize = 24;
@@ -1137,13 +1141,16 @@ fn target_publish_hz(ui_fps: f32, speed: usize) -> f32 {
 fn capture_telemetry(world: &World) -> TelemetrySample {
     let population = world.organisms.len();
     let mut max_generation = 0;
-    let mut ones_per_bit = [0u32; GENOME_BYTES * 8];
+    let mut ones_per_bit = [0u32; GENOME_BIT_COUNT];
     for organism in &world.organisms {
         max_generation = max_generation.max(organism.generation);
         for (byte_index, byte) in organism.genome.bytes().iter().enumerate() {
             for bit_in_byte in 0..8 {
-                ones_per_bit[byte_index * 8 + bit_in_byte] +=
-                    ((byte >> (7 - bit_in_byte)) & 1) as u32;
+                let bit_index = byte_index * 8 + bit_in_byte;
+                if bit_index >= GENOME_BIT_COUNT {
+                    continue;
+                }
+                ones_per_bit[bit_index] += ((byte >> (7 - bit_in_byte)) & 1) as u32;
             }
         }
     }
@@ -1200,8 +1207,8 @@ fn format_emission_display(emission_per_tick: f32) -> String {
 }
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
-/// V15 adiciona a causa hereditária de morte por idade à telemetria.
-const RUN_FORMAT_VERSION: u32 = 15;
+/// V16 adiciona o alelo hereditário de alcance do sensor de alimento.
+const RUN_FORMAT_VERSION: u32 = 16;
 
 /// Raiz portátil: os dados de uma cópia compartilhada ficam ao lado do .exe,
 /// e não dependem da estrutura `target/release` usada no desenvolvimento.
@@ -1397,7 +1404,7 @@ fn read_session_presets_from_reader(mut reader: &mut impl Read) -> io::Result<Ve
     let mut magic = [0; PRESET_MAGIC.len()];
     reader.read_exact(&mut magic)?;
     let version = read_u32_run(&mut reader)?;
-    if magic != PRESET_MAGIC || version != PRESET_FORMAT_VERSION {
+    if magic != PRESET_MAGIC || !(1..=PRESET_FORMAT_VERSION).contains(&version) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "formato de preset incompatível",
@@ -1407,7 +1414,10 @@ fn read_session_presets_from_reader(mut reader: &mut impl Read) -> io::Result<Ve
     let mut presets = Vec::with_capacity(count);
     for _ in 0..count {
         let name = read_string(&mut reader, 80)?;
-        let mut settings = read_engine_settings(&mut reader, RUN_FORMAT_VERSION)?;
+        let mut settings = read_engine_settings(
+            &mut reader,
+            if version == 1 { 15 } else { RUN_FORMAT_VERSION },
+        )?;
         settings.map = MapDefinition::read_from(&mut reader)?;
         presets.push(SessionPreset { name, settings });
     }
@@ -1653,6 +1663,7 @@ fn load_run_file(path: &Path) -> io::Result<LoadedRun> {
         12 => World::read_checkpoint_pre_longevity(&mut reader)?,
         13 => World::read_checkpoint_pre_event_counters(&mut reader)?,
         14 => World::read_checkpoint_pre_age_counters(&mut reader)?,
+        15 => World::read_checkpoint_pre_food_sensor_range(&mut reader)?,
         _ => World::read_checkpoint(&mut reader)?,
     };
     let telemetry_count = read_count_run(&mut reader, MAX_TELEMETRY_SAMPLES)?;
@@ -1757,8 +1768,10 @@ fn read_engine_settings(reader: &mut impl Read, version: u32) -> io::Result<Engi
         reproduction_limit: read_f32_run(reader)?,
         initial_cells: read_u64_run(reader)? as usize,
         initial_neural_configuration,
-        validated_genomes: if version >= 10 {
+        validated_genomes: if version >= 16 {
             read_validated_genomes(reader)?
+        } else if version >= 10 {
+            read_validated_genomes_pre_food_sensor_range(reader)?
         } else if version >= 9 {
             read_validated_genomes_pre_pheromone(reader)?
         } else {
@@ -1994,11 +2007,22 @@ fn read_validated_genomes(reader: &mut impl Read) -> io::Result<Vec<Genome>> {
     Ok(genomes)
 }
 
+fn read_validated_genomes_pre_food_sensor_range(reader: &mut impl Read) -> io::Result<Vec<Genome>> {
+    let count = read_count_run(reader, MAX_VALIDATED_GENOMES)?;
+    let mut genomes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut bits = [0; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES];
+        reader.read_exact(&mut bits)?;
+        genomes.push(Genome::from_pre_food_sensor_range_bytes(bits));
+    }
+    Ok(genomes)
+}
+
 fn read_validated_genomes_pre_pheromone(reader: &mut impl Read) -> io::Result<Vec<Genome>> {
     let count = read_count_run(reader, MAX_VALIDATED_GENOMES)?;
     let mut genomes = Vec::with_capacity(count);
     for _ in 0..count {
-        let mut bits = [0; GENOME_BYTES];
+        let mut bits = [0; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES];
         reader.read_exact(&mut bits)?;
         genomes.push(Genome::from_pre_pheromone_bytes(bits));
     }
@@ -2791,7 +2815,7 @@ fn draw_organisms(
         let [red, green, blue] = organism.genome.genetic_rgb();
         let genetic_color = Color::from_rgba(red, green, blue, 255);
         if show_sensor_reach {
-            draw_sensor_reach(arena, center);
+            draw_sensor_reach(arena, center, organism.food_sensor_range());
         }
         draw_circle(
             center.x,
@@ -2855,8 +2879,8 @@ fn draw_organisms(
 }
 
 /// Mostra os quatro cones exclusivos de 90° usados pelos sensores.
-fn draw_sensor_reach(arena: Rect, center: Vec2) {
-    let radius = SENSOR_RANGE / WORLD_WIDTH * arena.w;
+fn draw_sensor_reach(arena: Rect, center: Vec2, sensor_range: f32) {
+    let radius = sensor_range / WORLD_WIDTH * arena.w;
     let colors = [
         Color::new(0.30, 0.40, 0.96, 0.11),
         Color::new(0.25, 0.72, 0.94, 0.11),
@@ -4971,12 +4995,22 @@ fn draw_individual_cells_view(left: f32, width: f32, session: &mut SessionUi, wo
             selected.maximum_age_ticks()
         ),
     );
+    let sensor_range = selected.food_sensor_range();
+    let sensor_cost =
+        DEFAULT_FOOD_SENSOR_ENERGY_COST * (sensor_range / DEFAULT_FOOD_SENSOR_RANGE).powi(2);
+    draw_value_row(
+        left,
+        338.0,
+        width,
+        "Alcance alimento",
+        &format!("{sensor_range:.0} · custo {sensor_cost:.4}/tick"),
+    );
     let similarity = world
         .most_similar_living_cell(selected.id)
         .map(|(id, value)| format!("mais parecida: #{} · {:.1}%", id, value * 100.0))
         .unwrap_or_else(|| "sem outra célula para comparar".to_owned());
-    draw_text(&similarity, left + 4.0, 344.0, 12.0, MUTED);
-    let genome_button_y = 352.0;
+    draw_text(&similarity, left + 4.0, 384.0, 12.0, MUTED);
+    let genome_button_y = 392.0;
     let genome_label = if session.show_genome {
         "Código genético  ▲"
     } else {
@@ -4990,10 +5024,10 @@ fn draw_individual_cells_view(left: f32, width: f32, session: &mut SessionUi, wo
         session.show_genome = !session.show_genome;
     }
 
-    let neural_title_y = if session.show_genome { 624.0 } else { 422.0 };
+    let neural_title_y = if session.show_genome { 664.0 } else { 462.0 };
     if session.show_genome {
         draw_binary_genome(
-            Rect::new(left, 394.0, width, 210.0),
+            Rect::new(left, 434.0, width, 210.0),
             &selected.genome.binary_string(),
         );
     }
@@ -5092,7 +5126,7 @@ fn build_genetics_report(world: &World) -> GeneticsReport {
         organism_cluster[organism_index] = cluster_index;
     }
 
-    let mut ones_per_bit = [0u32; GENOME_BYTES * 8];
+    let mut ones_per_bit = [0u32; GENOME_BIT_COUNT];
     let mut connection_totals = vec![ConnectionAggregate::default(); SLOT_COUNT * SLOT_COUNT];
     let mut groups_per_connection = HashSet::new();
     let mut used_by = [0usize; SLOT_COUNT];
@@ -5101,8 +5135,11 @@ fn build_genetics_report(world: &World) -> GeneticsReport {
     for (organism_index, organism) in world.organisms.iter().enumerate() {
         for (byte_index, byte) in organism.genome.bytes().iter().enumerate() {
             for bit_in_byte in 0..8 {
-                ones_per_bit[byte_index * 8 + bit_in_byte] +=
-                    ((byte >> (7 - bit_in_byte)) & 1) as u32;
+                let bit_index = byte_index * 8 + bit_in_byte;
+                if bit_index >= GENOME_BIT_COUNT {
+                    continue;
+                }
+                ones_per_bit[bit_index] += ((byte >> (7 - bit_in_byte)) & 1) as u32;
             }
         }
         let mut seen_pairs = [false; SLOT_COUNT * SLOT_COUNT];
@@ -6143,8 +6180,7 @@ fn draw_binary_genome(rect: Rect, binary: &str) {
     draw_text(
         &format!(
             "{} bits · {} registros neurais",
-            GENOME_BYTES * 8,
-            CONNECTION_RECORDS
+            GENOME_BIT_COUNT, CONNECTION_RECORDS
         ),
         rect.x + 10.0,
         rect.y + 17.0,
