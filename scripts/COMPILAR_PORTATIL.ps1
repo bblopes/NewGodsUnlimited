@@ -19,6 +19,14 @@ try {
     $publishedDelivery = $delivery
     try {
         Copy-Item -LiteralPath $source -Destination $delivery -Force
+        # Uma compilação anterior pode ter precisado do nome alternativo por
+        # o EXE principal estar aberto. Se a entrega canônica voltou a ser
+        # gravável, a cópia de contingência não deve ficar confundindo quem
+        # vai executar ou distribuir o programa.
+        $fallbackDelivery = Join-Path $deliveryDirectory 'NewGodsUnlimited-atualizado.exe'
+        if (Test-Path -LiteralPath $fallbackDelivery) {
+            Remove-Item -LiteralPath $fallbackDelivery -Force
+        }
     }
     catch {
         $publishedDelivery = Join-Path $deliveryDirectory 'NewGodsUnlimited-atualizado.exe'
