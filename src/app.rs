@@ -33,7 +33,7 @@ use crate::{
             DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK, FOOD_ENERGY, FOOD_RADIUS,
             InitialNeuralConfiguration, MAX_ENERGY, MAX_EXCLUSION_DISTANCE,
             MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK, MIN_EXCLUSION_DISTANCE, Organism,
-            Phytoplankton, World,
+            Phytoplankton, STARTING_ENERGY, SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER, World,
         },
     },
 };
@@ -107,6 +107,13 @@ enum EngineCommand {
     /// Mantém a simulação viva, mas interrompe a cópia de snapshots para a
     /// interface. O painel headless continua recebendo apenas métricas leves.
     SetHeadless(bool),
+    /// Mantém sistema e monitor acordados enquanto há cálculo em andamento.
+    SetKeepAwake(bool),
+    InsertOrganism {
+        position: Vec2,
+        configuration: InitialNeuralConfiguration,
+        validated_genomes: Vec<Genome>,
+    },
     SetFlowIntensity(f32),
     SetFlowPreset(FlowPreset),
     SetDesertEmission(f32),
@@ -137,6 +144,35 @@ struct EngineMetrics {
     population: usize,
     headless: bool,
 }
+
+/// Faz um pedido temporário ao gerenciador de energia do Windows. A chamada
+/// pertence ao worker da simulação, porque o Windows associa esse estado à
+/// thread que a solicitou. Não altera configurações do sistema e é liberada
+/// quando a thread/processo termina.
+#[cfg(target_os = "windows")]
+fn set_windows_keep_awake(enabled: bool) {
+    const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+    const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
+    const ES_CONTINUOUS: u32 = 0x8000_0000;
+
+    unsafe extern "system" {
+        fn SetThreadExecutionState(execution_state: u32) -> u32;
+    }
+
+    let execution_state = if enabled {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    // Uma falha apenas significa que este Windows não aceitou o pedido; a
+    // simulação continua normalmente, sem trocar nenhuma configuração global.
+    unsafe {
+        let _ = SetThreadExecutionState(execution_state);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_windows_keep_awake(_: bool) {}
 
 #[derive(Clone, Copy)]
 struct TelemetrySample {
@@ -270,6 +306,7 @@ struct PanelAction {
     load_map_preset: Option<usize>,
     delete_map_preset: Option<usize>,
     open_headless_modal: bool,
+    open_saved_runs_modal: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -368,6 +405,11 @@ struct SessionUi {
     /// o worker deixa de copiar o mundo para desenho.
     headless: bool,
     headless_modal_open: bool,
+    /// Pedido temporário ao Windows; não altera o plano de energia do usuário.
+    keep_awake: bool,
+    saved_runs_modal_open: bool,
+    cell_insertion_armed: bool,
+    insertion_configuration: InitialNeuralConfiguration,
     /// Um popup consumiu o clique atual. Enquanto o botão do mouse continua
     /// pressionado, controles sob ele (especialmente sliders) não reagem.
     pointer_captured_until_release: bool,
@@ -476,6 +518,10 @@ impl Default for SessionUi {
             speed_menu_open: false,
             headless: false,
             headless_modal_open: false,
+            keep_awake: true,
+            saved_runs_modal_open: false,
+            cell_insertion_armed: false,
+            insertion_configuration: InitialNeuralConfiguration::Classic,
             pointer_captured_until_release: false,
             // Vetores são uma camada de leitura. A corrente física continua
             // ativa conforme a configuração, mas a tela começa limpa.
@@ -894,6 +940,8 @@ fn simulation_worker(
         .with_preset(settings.flow_preset)
         .with_intensity(settings.flow_intensity);
     let mut paused = false;
+    let mut keep_awake = true;
+    set_windows_keep_awake(keep_awake && !paused);
     let mut headless = false;
     let mut speed = 0usize;
     let mut ui_fps = 60.0;
@@ -907,9 +955,16 @@ fn simulation_worker(
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
-                EngineCommand::Pause(value) => paused = value,
+                EngineCommand::Pause(value) => {
+                    paused = value;
+                    set_windows_keep_awake(keep_awake && !paused);
+                }
                 EngineCommand::Speed(value) => speed = value.min(SPEED_MULTIPLIERS.len() - 1),
                 EngineCommand::UiFps(value) => ui_fps = value.max(1.0),
+                EngineCommand::SetKeepAwake(value) => {
+                    keep_awake = value;
+                    set_windows_keep_awake(keep_awake && !paused);
+                }
                 EngineCommand::SetHeadless(value) => {
                     headless = value;
                     // Ao sair, a primeira fotografia já é publicada para que
@@ -991,6 +1046,24 @@ fn simulation_worker(
                 EngineCommand::SetMap(map) => {
                     settings.map = map.clone();
                     world.map = map;
+                }
+                EngineCommand::InsertOrganism {
+                    position,
+                    configuration,
+                    validated_genomes,
+                } => {
+                    if world.insert_organism_at(position, configuration, &validated_genomes) {
+                        publish_snapshot(
+                            &world,
+                            &latest,
+                            &metrics,
+                            estimated_tps,
+                            target_publish_hz(ui_fps, speed),
+                            settings.desert_emission,
+                            settings.fertile_emission,
+                        );
+                        last_publish = Instant::now();
+                    }
                 }
                 EngineCommand::Restart(new_settings) => {
                     settings = new_settings;
@@ -2130,6 +2203,7 @@ pub async fn run() {
     }
     let engine = SimulationEngine::new(EngineSettings::from(&session));
     let mut sent_paused = session.paused;
+    let mut sent_keep_awake = session.keep_awake;
     let mut sent_speed = session.speed;
     let mut sent_flow_intensity = session.effective_flow_intensity();
     let mut sent_flow_preset = session.flow_preset;
@@ -2146,6 +2220,10 @@ pub async fn run() {
     let mut last_ui_feedback = 0.0f64;
 
     loop {
+        if session.keep_awake != sent_keep_awake {
+            engine.send(EngineCommand::SetKeepAwake(session.keep_awake));
+            sent_keep_awake = session.keep_awake;
+        }
         if session.headless {
             // Neste ramo não pedimos `engine.snapshot()`: além de não desenhar
             // a arena, evitamos a cópia completa do mundo que alimentaria a UI.
@@ -2244,7 +2322,20 @@ pub async fn run() {
         clear_background(BACKGROUND);
         let panel_x = (screen_width() - PANEL_WIDTH).max(820.0);
         let arena = arena_rect(panel_x);
-        handle_map_editor(&mut session, arena);
+        if let Some((position, configuration)) = handle_cell_insertion(&mut session, arena) {
+            let validated_genomes = session
+                .validated_population
+                .as_ref()
+                .map(|population| population.genomes.clone())
+                .unwrap_or_default();
+            engine.send(EngineCommand::InsertOrganism {
+                position,
+                configuration,
+                validated_genomes,
+            });
+        } else {
+            handle_map_editor(&mut session, arena);
+        }
         draw_top_bar(panel_x);
         draw_arena(
             arena,
@@ -2268,6 +2359,7 @@ pub async fn run() {
                 .then_some(session.selected_cell_id)
                 .flatten(),
         );
+        draw_cell_insertion_overlay(arena, &session);
         if session.tab == PanelTab::Settings {
             draw_map_editor_overlay(arena, &session);
         }
@@ -2282,6 +2374,9 @@ pub async fn run() {
             let action = draw_panel(panel_x, &mut session, &world, engine.metrics());
             if action.open_headless_modal {
                 session.headless_modal_open = true;
+            }
+            if action.open_saved_runs_modal {
+                session.saved_runs_modal_open = true;
             }
             action
         };
@@ -3108,6 +3203,58 @@ fn screen_to_world(arena: Rect, position: Vec2) -> Vec2 {
     )
 }
 
+fn handle_cell_insertion(
+    session: &mut SessionUi,
+    arena: Rect,
+) -> Option<(Vec2, InitialNeuralConfiguration)> {
+    if !session.cell_insertion_armed {
+        return None;
+    }
+    if is_key_pressed(KeyCode::Escape) || is_mouse_button_pressed(MouseButton::Right) {
+        session.cell_insertion_armed = false;
+        session.save_status = Some("Inserção de célula cancelada.".to_owned());
+        return None;
+    }
+    let mouse = vec2(mouse_position().0, mouse_position().1);
+    if is_mouse_button_pressed(MouseButton::Left) && arena.contains(mouse) {
+        session.cell_insertion_armed = false;
+        // A escolha neural acabou de ser usada para criar um indivíduo na run
+        // atual; ela não deve ficar marcada como uma alteração pendente que
+        // impediria salvar imediatamente o checkpoint resultante.
+        session.applied.initial_neural_configuration = session.insertion_configuration;
+        session.save_status = Some("Inserção enviada; o mundo validará a posição.".to_owned());
+        return Some((
+            screen_to_world(arena, mouse),
+            session.insertion_configuration,
+        ));
+    }
+    None
+}
+
+fn draw_cell_insertion_overlay(arena: Rect, session: &SessionUi) {
+    if !session.cell_insertion_armed {
+        return;
+    }
+    let label = format!(
+        "Inserir {} · clique no mapa · Esc cancela",
+        session.insertion_configuration.label()
+    );
+    draw_rectangle(arena.x + 12.0, arena.y + 12.0, 286.0, 30.0, SURFACE);
+    draw_rectangle_lines(arena.x + 12.0, arena.y + 12.0, 286.0, 30.0, 1.0, ACCENT);
+    draw_text(&label, arena.x + 20.0, arena.y + 33.0, 14.0, TEXT);
+    let mouse = vec2(mouse_position().0, mouse_position().1);
+    if arena.contains(mouse) {
+        let radius = CELL_RADIUS * (1.0 + 3.0 * STARTING_ENERGY / 2_000.0).sqrt();
+        draw_circle_lines(
+            mouse.x,
+            mouse.y,
+            radius / WORLD_WIDTH * arena.w,
+            2.0,
+            ACCENT,
+        );
+    }
+}
+
 fn handle_map_editor(session: &mut SessionUi, arena: Rect) {
     if session.tab != PanelTab::Settings || session.map_tool == MapTool::None {
         return;
@@ -3442,6 +3589,11 @@ fn draw_panel(
                 (session.session_scroll - wheel_y * 32.0).clamp(0.0, maximum_scroll);
         }
     }
+    if session.saved_runs_modal_open {
+        let mut action = PanelAction::default();
+        draw_saved_runs_modal(session, &mut action);
+        return action;
+    }
     match session.tab {
         PanelTab::Session => draw_session_tab_compact(left, width, session, world, metrics),
         PanelTab::Cells => {
@@ -3453,6 +3605,83 @@ fn draw_panel(
             draw_visibility_tab(left, width, session);
             PanelAction::default()
         }
+    }
+}
+
+fn draw_saved_runs_modal(session: &mut SessionUi, action: &mut PanelAction) {
+    let width = 500.0;
+    let height = 420.0;
+    let x = (screen_width() - width) * 0.5;
+    let y = (screen_height() - height) * 0.5;
+    draw_rectangle(x - 8.0, y - 8.0, width + 16.0, height + 16.0, BACKGROUND);
+    draw_rectangle(x, y, width, height, SURFACE);
+    draw_rectangle_lines(x, y, width, height, 1.0, ACCENT);
+    draw_text("Estado da sessão", x + 20.0, y + 34.0, 23.0, TEXT);
+    draw_text(
+        "Checkpoints preservam o mundo, configurações e telemetria.",
+        x + 20.0,
+        y + 57.0,
+        13.0,
+        MUTED,
+    );
+    if button(
+        Rect::new(x + 20.0, y + 76.0, 220.0, 34.0),
+        "Salvar estado atual",
+        false,
+    ) {
+        action.save_run = true;
+    }
+    if button(
+        Rect::new(x + 248.0, y + 76.0, width - 268.0, 34.0),
+        "Atualizar lista",
+        false,
+    ) {
+        action.refresh_saved_runs = true;
+    }
+    if let Some(status) = &session.save_status {
+        draw_text(status, x + 20.0, y + 130.0, 13.0, MUTED);
+    }
+    let listed = session.saved_runs.iter().take(5);
+    let mut row_y = y + 152.0;
+    if session.saved_runs.is_empty() {
+        draw_text(
+            "Nenhuma sessão salva nesta pasta.",
+            x + 20.0,
+            row_y,
+            14.0,
+            MUTED,
+        );
+    } else {
+        for run in listed {
+            draw_text(
+                &format!(
+                    "{} · tick {} · {} células",
+                    display_file_name(&run.path),
+                    run.tick,
+                    run.population
+                ),
+                x + 20.0,
+                row_y,
+                14.0,
+                TEXT,
+            );
+            if button(
+                Rect::new(x + width - 104.0, row_y - 22.0, 84.0, 28.0),
+                "Carregar",
+                false,
+            ) {
+                action.load_path = Some(run.path.clone());
+                session.saved_runs_modal_open = false;
+            }
+            row_y += 43.0;
+        }
+    }
+    if button(
+        Rect::new(x + width - 104.0, y + height - 46.0, 84.0, 28.0),
+        "Fechar",
+        false,
+    ) {
+        session.saved_runs_modal_open = false;
     }
 }
 
@@ -4318,7 +4547,7 @@ fn draw_session_tab_compact(
     // dela) termina aqui e não pode vazar para os campos da sessão abaixo.
     if session.speed_menu_open && is_mouse_button_pressed(MouseButton::Left) {
         let menu_x = left + 88.0;
-        let menu_y = y(453.0);
+        let menu_y = y(493.0);
         let menu_width = width - 88.0;
         let option_height = 30.0;
         let menu = Rect::new(
@@ -4430,18 +4659,44 @@ fn draw_session_tab_compact(
         }
     };
     draw_text(&neural_description, left, y(340.0), 11.0, MUTED);
+    let insertion_label = if session.cell_insertion_armed {
+        "Cancelar inserção de célula".to_owned()
+    } else {
+        format!(
+            "Inserir célula · {}",
+            session.initial_neural_configuration.label()
+        )
+    };
+    if button(
+        Rect::new(left, y(350.0), width, 28.0),
+        &insertion_label,
+        session.cell_insertion_armed,
+    ) {
+        if session.cell_insertion_armed {
+            session.cell_insertion_armed = false;
+            session.save_status = Some("Inserção de célula cancelada.".to_owned());
+        } else {
+            session.insertion_configuration = session.initial_neural_configuration;
+            session.cell_insertion_armed = true;
+            session.tab = PanelTab::Session;
+            session.save_status = Some(format!(
+                "Clique no mapa para inserir uma célula {}.",
+                session.insertion_configuration.label()
+            ));
+        }
+    }
     update_numeric_input(session);
 
-    section_title(left, y(365.0), "Execução");
+    section_title(left, y(402.0), "Execução");
     if button(
-        Rect::new(left, y(379.0), 72.0, 32.0),
+        Rect::new(left, y(416.0), 72.0, 32.0),
         if session.paused { "Iniciar" } else { "Pausar" },
         !session.paused,
     ) {
         session.paused = !session.paused;
     }
     if button_dirty(
-        Rect::new(left + 76.0, y(379.0), 64.0, 32.0),
+        Rect::new(left + 76.0, y(416.0), 64.0, 32.0),
         "Aplicar",
         false,
         session.has_pending_live_changes(),
@@ -4449,14 +4704,14 @@ fn draw_session_tab_compact(
         action.apply = true;
     }
     if button_enabled(
-        Rect::new(left + 144.0, y(379.0), 72.0, 32.0),
+        Rect::new(left + 144.0, y(416.0), 72.0, 32.0),
         "Reverter",
         session.has_pending_changes(),
     ) {
         action.revert = true;
     }
     if button_dirty(
-        Rect::new(left + 220.0, y(379.0), width - 220.0, 32.0),
+        Rect::new(left + 220.0, y(416.0), width - 220.0, 32.0),
         "Reiniciar",
         false,
         session.seed_is_dirty()
@@ -4466,9 +4721,9 @@ fn draw_session_tab_compact(
     ) {
         action.restart = true;
     }
-    draw_text("Velocidade", left, y(439.0), 15.0, MUTED);
+    draw_text("Velocidade", left, y(476.0), 15.0, MUTED);
     if button(
-        Rect::new(left + 88.0, y(418.0), width - 88.0, 32.0),
+        Rect::new(left + 88.0, y(455.0), width - 88.0, 32.0),
         speed_label(session.speed),
         session.speed_menu_open,
     ) {
@@ -4477,14 +4732,21 @@ fn draw_session_tab_compact(
         return action;
     }
     if button(
-        Rect::new(left, y(460.0), width, 32.0),
+        Rect::new(left, y(497.0), width, 32.0),
         "Modo headless · medir teto de cálculo",
         false,
     ) {
         action.open_headless_modal = true;
     }
+    if button(
+        Rect::new(left, y(537.0), width, 32.0),
+        "Salvar / carregar estado",
+        session.saved_runs_modal_open,
+    ) {
+        action.open_saved_runs_modal = true;
+    }
 
-    let mut cursor = 516.0;
+    let mut cursor = 593.0;
     collapsible_session_section(
         left,
         y(cursor),
@@ -4576,11 +4838,15 @@ fn draw_session_tab_compact(
             left,
             y(cursor),
             width,
-            "Vida fito",
+            "Vida-base sem sol",
             session.lifetime as f32,
             100.0,
             20_000.0,
-            &format!("{} ticks", session.lifetime),
+            &format!(
+                "{} ticks · sob sol: {} (1,5×)",
+                session.lifetime,
+                (session.lifetime as f32 * SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER).ceil()
+            ),
             session.lifetime != session.applied.lifetime,
         ) {
             session.lifetime = lifetime.round() as i32;
@@ -4733,7 +4999,7 @@ fn draw_session_tab_compact(
 
     if session.speed_menu_open {
         let menu_x = left + 88.0;
-        let menu_y = y(453.0);
+        let menu_y = y(493.0);
         let menu_width = width - 88.0;
         let option_height = 30.0;
         draw_rectangle(
@@ -4827,16 +5093,23 @@ fn draw_settings_tab(left: f32, width: f32, session: &mut SessionUi, world: &Wor
             "Amadeus desativado: reinicie para usar a população inicial.".to_owned()
         });
     }
+    if checkbox_row(
+        Rect::new(left, 190.0, width, 32.0),
+        "Manter Windows ativo durante simulação",
+        session.keep_awake,
+    ) {
+        session.keep_awake = !session.keep_awake;
+    }
     draw_text(
         "A linhagem inicial é única; descendentes ainda mutam.",
         left,
-        202.0,
+        242.0,
         12.0,
         MUTED,
     );
-    section_title(left, 228.0, "Editor de mapa");
+    section_title(left, 268.0, "Editor de mapa");
     if button(
-        Rect::new(left, 240.0, width, 32.0),
+        Rect::new(left, 280.0, width, 32.0),
         &format!(
             "Presets de mapa · {} salvos",
             session.saved_map_presets.len()
@@ -4847,7 +5120,7 @@ fn draw_settings_tab(left: f32, width: f32, session: &mut SessionUi, world: &Wor
     }
     let tool_width = (width - 8.0) / 3.0;
     if button(
-        Rect::new(left, 284.0, tool_width, 32.0),
+        Rect::new(left, 324.0, tool_width, 32.0),
         "Parede",
         session.map_tool == MapTool::Wall,
     ) {
@@ -4860,7 +5133,7 @@ fn draw_settings_tab(left: f32, width: f32, session: &mut SessionUi, world: &Wor
         session.last_brush_position = None;
     }
     if button(
-        Rect::new(left + tool_width + 4.0, 284.0, tool_width, 32.0),
+        Rect::new(left + tool_width + 4.0, 324.0, tool_width, 32.0),
         "Borracha",
         session.map_tool == MapTool::Eraser,
     ) {
@@ -4873,7 +5146,7 @@ fn draw_settings_tab(left: f32, width: f32, session: &mut SessionUi, world: &Wor
         session.last_brush_position = None;
     }
     if button(
-        Rect::new(left + (tool_width + 4.0) * 2.0, 284.0, tool_width, 32.0),
+        Rect::new(left + (tool_width + 4.0) * 2.0, 324.0, tool_width, 32.0),
         "Região ensolarada",
         session.map_tool == MapTool::SunlightLasso || session.edited_map.has_sunlight_area(),
     ) {
@@ -4887,7 +5160,7 @@ fn draw_settings_tab(left: f32, width: f32, session: &mut SessionUi, world: &Wor
         }
     }
     if button(
-        Rect::new(left, 328.0, width, 32.0),
+        Rect::new(left, 368.0, width, 32.0),
         if session.show_sunlight_area {
             "Ocultar iluminação"
         } else {
@@ -4898,13 +5171,13 @@ fn draw_settings_tab(left: f32, width: f32, session: &mut SessionUi, world: &Wor
         session.show_sunlight_area = !session.show_sunlight_area;
     }
     if button(
-        Rect::new(left, 372.0, width, 32.0),
+        Rect::new(left, 412.0, width, 32.0),
         &format!("Correnteza · {}", session.flow_preset.label()),
         session.flow_preset_modal_open,
     ) {
         session.flow_preset_modal_open = true;
     }
-    let mut editor_controls_y = 420.0;
+    let mut editor_controls_y = 460.0;
     if session.map_tool == MapTool::Wall || session.map_tool == MapTool::Eraser {
         if let Some(radius) = slider_row(
             left,

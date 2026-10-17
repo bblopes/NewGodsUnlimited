@@ -31,27 +31,33 @@ significado ecológico mudou.
 
 A consulta do mapa já é exposta como intensidade numérica. Hoje retorna apenas
 `0` ou `1`; no próximo passo, uma máscara contínua poderá regular diretamente
-a taxa de reprodução. Essa mesma luz alimentará a futura temperatura do mapa,
+a taxa de reprodução e interpolar o bônus de longevidade do fitoplâncton. Nesta
+primeira versão, o sol pleno aplica um multiplicador fixo de vida de `1,5×`, sem
+parar o envelhecimento. Essa mesma luz alimentará a futura temperatura do mapa,
 que então afetará metabolismo das células e, depois, as correntes.
 
 ## Backlog: visão de alimento e quimiorrecepção
 
 Esta é uma proposta registrada, **não implementada**. Os quatro slots hoje
-chamados de sensores de alimento passarão a representar **visão direcional de
-alimento**: esquerda, direita, cima e baixo. O alcance codificado no genoma
-continua sendo a capacidade anatômica máxima, mas a iluminação local deverá
-limitar seu raio efetivo. Sem luz, esses quatro sinais visuais devem chegar a
-zero, mesmo em uma célula com gene de visão de longo alcance.
+chamados de sensores de alimento passarão a representar **visão direcional
+genérica**: esquerda, direita, cima e baixo. Cada slot deve produzir sinal
+positivo ao detectar qualquer entidade visível, não somente fitoplâncton. O
+alcance codificado no genoma continua sendo a capacidade anatômica máxima, mas
+a iluminação local deverá limitar seu raio efetivo. Sem luz, esses quatro sinais
+visuais devem chegar a zero, mesmo em uma célula com gene de visão de longo
+alcance.
 
-Para que uma célula não fique sem qualquer forma de encontrar alimento no
-escuro, o fitoplâncton poderá depositar uma substância química alimentar em um
-campo de PPM próprio. Uma etapa posterior definirá sensores neurais separados
-para ler concentração e vetores de gradiente desse campo. Eles funcionariam
-com ou sem luz e criariam duas estratégias fisiológicas distintas:
+O fitoplâncton deverá depositar uma substância química alimentar em um campo de
+PPM próprio. Uma etapa posterior definirá sensores neurais separados para ler
+concentração e vetores de gradiente desse campo. Eles funcionariam com ou sem
+luz e serão a forma pela qual a célula identifica e segue a comida. Isso cria
+duas estratégias fisiológicas distintas:
 
-- **visão:** informação direcional direta, de alcance limitado pela luz;
-- **quimiorrecepção:** leitura de PPM/gradiente de alimento, disponível no
-  escuro, mas dependente de um campo químico e de novos slots sensoriais.
+- **visão:** presença direcional de qualquer entidade, de alcance limitado pela
+  luz;
+- **quimiorrecepção:** identificação de alimento por PPM e orientação pelo
+  vetor gradiente, disponível no escuro, mas dependente de um campo químico e
+  de novos slots sensoriais.
 
 Antes de implementar, será preciso decidir a curva que transforma luz em raio
 efetivo de visão, os custos energéticos dos novos receptores químicos, quantos

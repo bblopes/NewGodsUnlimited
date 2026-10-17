@@ -7,9 +7,7 @@ use std::{
 use macroquad::prelude::*;
 
 use crate::{
-    config::{
-        DEFAULT_FOOD_SENSOR_RANGE, MAX_FLOW_SPEED, MAX_FOOD_SENSOR_RANGE, WORLD_HEIGHT, WORLD_WIDTH,
-    },
+    config::{DEFAULT_FOOD_SENSOR_RANGE, MAX_FLOW_SPEED, WORLD_HEIGHT, WORLD_WIDTH},
     environment::{flow::FlowField, map::MapDefinition},
     simulation::brain::{Brain, MotorOutput, SensorInput},
     simulation::genome::{
@@ -39,6 +37,12 @@ pub const ACTIVE_NEURON_ENERGY_COST: f32 = 0.0015;
 /// Manter o sensor de alimento padrão (240 unidades) ativo custa 0,006 por
 /// tick. Alcances hereditários maiores escalam pelo quadrado da distância.
 pub const DEFAULT_FOOD_SENSOR_ENERGY_COST: f32 = 0.006;
+/// A capacidade bruta ainda recebe o ganho do gene e do volume corporal, mas
+/// o raio que chega aos sensores aproxima-se suavemente deste teto. Assim uma
+/// célula grande é melhor em perceber alimento sem passar a cobrir o mapa todo.
+pub const MAX_EFFECTIVE_FOOD_SENSOR_RANGE: f32 = 600.0;
+const FOOD_SENSOR_RANGE_KNEE: f32 = DEFAULT_FOOD_SENSOR_RANGE;
+const FOOD_SENSOR_RANGE_SOFTNESS: f32 = MAX_EFFECTIVE_FOOD_SENSOR_RANGE - FOOD_SENSOR_RANGE_KNEE;
 /// A longevidade é herdável, mas fica fora dos bits de fiação neural para não
 /// contaminar cor, similaridade ou assinatura química de parentesco.
 /// Janela curta para tornar a pressão de envelhecimento observável numa run.
@@ -65,6 +69,9 @@ pub const DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK: f32 = 0.002;
 /// a cada tick. O limite de densidade local continua evitando crescimento
 /// sem controle.
 pub const MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK: f32 = 0.02;
+/// A luz prolonga a vida, mas não congela o envelhecimento. A intensidade
+/// contínua futura poderá interpolar este bônus entre 1× e este valor.
+pub const SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER: f32 = 1.5;
 const PHYTOPLANKTON_REPRODUCTION_RADIUS: f32 = 70.0;
 const PHYTOPLANKTON_DENSITY_CELL_SIZE: f32 = 120.0;
 const MAX_PHYTOPLANKTON_PER_DENSITY_CELL: usize = 6;
@@ -270,6 +277,17 @@ pub enum InitialNeuralConfiguration {
     ValidatedV2,
 }
 
+impl InitialNeuralConfiguration {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Clássica",
+            Self::MotorMinimum => "Motor",
+            Self::ValidatedV1 => "Val 1.0",
+            Self::ValidatedV2 => "Val 2.0",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CheckpointFormat {
     V1,
@@ -363,7 +381,8 @@ impl Organism {
     }
 
     pub fn food_sensor_range(&self) -> f32 {
-        self.genome.food_sensor_range() * self.food_sensor_size_scale()
+        let raw_range = self.genome.food_sensor_range() * self.food_sensor_size_scale();
+        soften_food_sensor_range(raw_range)
     }
 
     /// O gene mais amplo cobra mais por órgão sensorial; crescer o corpo só
@@ -775,11 +794,9 @@ impl World {
             particle.position =
                 self.map
                     .constrain_to_walls(particle.position, previous_position, FOOD_RADIUS);
-            // Sob luz o cronômetro de morte fica suspenso. Fora dela, o fito
-            // envelhece até o limite configurado pela sessão.
-            if self.map.sunlight_intensity(particle.position) <= 0.0 {
-                particle.age_ticks = particle.age_ticks.saturating_add(1);
-            }
+            // A luz prolonga a vida, mas não suspende o envelhecimento: todo
+            // fitoplâncton eventualmente sai do ciclo, até sob sol pleno.
+            particle.age_ticks = particle.age_ticks.saturating_add(1);
         }
         self.reproduce_sunlit_phytoplankton();
         observer.end(TickPhase::FoodMovement);
@@ -882,10 +899,11 @@ impl World {
             .drain(..)
             .zip(winners)
             .filter_map(|(particle, winner)| {
-                (winner.is_none()
-                    && (self.map.sunlight_intensity(particle.position) > 0.0
-                        || particle.age_ticks < lifetime_ticks))
-                    .then_some(particle)
+                let sunlight = self.map.sunlight_intensity(particle.position);
+                let lifespan_multiplier =
+                    1.0 + (SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER - 1.0) * sunlight;
+                let lifetime = (lifetime_ticks as f32 * lifespan_multiplier).ceil() as u32;
+                (winner.is_none() && particle.age_ticks < lifetime).then_some(particle)
             })
             .collect();
         observer.end(TickPhase::FoodCleanup);
@@ -2117,6 +2135,46 @@ impl World {
         self.food.extend(births);
     }
 
+    /// Insere um fundador na posição indicada pela interface. A validação fica
+    /// no mundo para que uma ordem de UI nunca consiga atravessar paredes ou
+    /// sobrepor um organismo que se moveu entre a prévia e o próximo tick.
+    pub fn insert_organism_at(
+        &mut self,
+        position: Vec2,
+        initial_neural_configuration: InitialNeuralConfiguration,
+        validated_genomes: &[Genome],
+    ) -> bool {
+        let radius = physical_radius_for_energy(STARTING_ENERGY);
+        let inside_bounds = (radius..=WORLD_WIDTH - radius).contains(&position.x)
+            && (radius..=WORLD_HEIGHT - radius).contains(&position.y);
+        let overlaps_organism = self.organisms.iter().any(|organism| {
+            organism.position.distance(position) < organism.physical_radius() + radius
+        });
+        if !inside_bounds
+            || self.map.has_wall_within_distance(position, radius)
+            || overlaps_organism
+        {
+            return false;
+        }
+
+        let inherited_genome = if matches!(
+            initial_neural_configuration,
+            InitialNeuralConfiguration::ValidatedV1 | InitialNeuralConfiguration::ValidatedV2
+        ) && !validated_genomes.is_empty()
+        {
+            let index = (self.next_random_unit() * validated_genomes.len() as f32) as usize;
+            Some(validated_genomes[index.min(validated_genomes.len() - 1)].clone())
+        } else {
+            None
+        };
+        let genome = self.founder_genome(initial_neural_configuration, inherited_genome);
+        let longevity_gene =
+            LongevityGene::founder(self.next_random_unit(), initial_neural_configuration);
+        let organism = self.make_organism(position, genome, longevity_gene, 1, STARTING_ENERGY);
+        self.organisms.push(organism);
+        true
+    }
+
     fn spawn_organism(
         &mut self,
         initial_neural_configuration: InitialNeuralConfiguration,
@@ -2125,6 +2183,18 @@ impl World {
         let radius = physical_radius_for_energy(STARTING_ENERGY);
         let map = self.map.clone();
         let position = map.random_free_point(|| self.next_random_unit(), radius);
+        let genome = self.founder_genome(initial_neural_configuration, inherited_genome);
+        let longevity_gene =
+            LongevityGene::founder(self.next_random_unit(), initial_neural_configuration);
+        let organism = self.make_organism(position, genome, longevity_gene, 1, STARTING_ENERGY);
+        self.organisms.push(organism);
+    }
+
+    fn founder_genome(
+        &mut self,
+        initial_neural_configuration: InitialNeuralConfiguration,
+        inherited_genome: Option<Genome>,
+    ) -> Genome {
         let genome = inherited_genome.unwrap_or_else(|| match initial_neural_configuration {
             InitialNeuralConfiguration::Classic => Genome::random(&mut self.random_state),
             InitialNeuralConfiguration::MotorMinimum => {
@@ -2136,17 +2206,13 @@ impl World {
                 Genome::random(&mut self.random_state)
             }
         });
-        let genome = match initial_neural_configuration {
+        match initial_neural_configuration {
             InitialNeuralConfiguration::ValidatedV1 => genome.with_validated_v1_motor_group(),
             InitialNeuralConfiguration::ValidatedV2 => genome.with_validated_v2_cooperation(),
             InitialNeuralConfiguration::Classic | InitialNeuralConfiguration::MotorMinimum => {
                 genome
             }
-        };
-        let longevity_gene =
-            LongevityGene::founder(self.next_random_unit(), initial_neural_configuration);
-        let organism = self.make_organism(position, genome, longevity_gene, 1, STARTING_ENERGY);
-        self.organisms.push(organism);
+        }
     }
 
     fn make_organism(
@@ -2364,6 +2430,20 @@ fn physical_radius_for_energy(energy: f32) -> f32 {
     CELL_RADIUS * area_ratio.sqrt()
 }
 
+/// Mantém o alcance anatômico até o ponto-base e, depois, troca o crescimento
+/// ilimitado por retornos decrescentes. A curva nunca atinge exatamente 600,
+/// mas se aproxima dele de forma contínua.
+fn soften_food_sensor_range(raw_range: f32) -> f32 {
+    let raw_range = raw_range.max(0.0);
+    if raw_range <= FOOD_SENSOR_RANGE_KNEE {
+        raw_range
+    } else {
+        FOOD_SENSOR_RANGE_KNEE
+            + FOOD_SENSOR_RANGE_SOFTNESS
+                * (1.0 - (-(raw_range - FOOD_SENSOR_RANGE_KNEE) / FOOD_SENSOR_RANGE_SOFTNESS).exp())
+    }
+}
+
 fn clamp_coordinate_to_world(position: f32, radius: f32, dimension: f32) -> f32 {
     if radius * 2.0 >= dimension {
         dimension * 0.5
@@ -2380,8 +2460,8 @@ fn spread_direction(id: u64) -> Vec2 {
 
 fn sensor_grid_cell(position: Vec2) -> (i32, i32) {
     (
-        (position.x / MAX_FOOD_SENSOR_RANGE).floor() as i32,
-        (position.y / MAX_FOOD_SENSOR_RANGE).floor() as i32,
+        (position.x / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).floor() as i32,
+        (position.y / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).floor() as i32,
     )
 }
 
@@ -2405,10 +2485,10 @@ fn nearest_food_in_cones(
     let base = sensor_grid_cell(origin);
     // O alelo tem teto próprio, mas o corpo pode ampliar o alcance efetivo.
     // A grade calcula quantas células visitar, portanto não cortamos esse
-    // benefício geométrico no máximo genético de 480 unidades.
+    // benefício geométrico até o teto efetivo de 600 unidades.
     let range = range.max(0.0);
     let range_squared = range * range;
-    let grid_radius = (range / MAX_FOOD_SENSOR_RANGE).ceil() as i32;
+    let grid_radius = (range / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).ceil() as i32;
     for grid_y in base.1 - grid_radius..=base.1 + grid_radius {
         for grid_x in base.0 - grid_radius..=base.0 + grid_radius {
             let Some(food_positions) = grid.get(&(grid_x, grid_y)) else {
@@ -2634,7 +2714,9 @@ mod tests {
         organism.energy = SIZE_GROWTH_ENERGY;
 
         assert!((organism.physical_radius() / CELL_RADIUS - 2.0).abs() < 0.000_1);
-        assert!((organism.food_sensor_range() / base_range - 8.0).abs() < 0.000_1);
+        assert!(organism.food_sensor_range() > base_range * 2.0);
+        assert!(organism.food_sensor_range() > 590.0);
+        assert!(organism.food_sensor_range() < MAX_EFFECTIVE_FOOD_SENSOR_RANGE);
         assert!((organism.food_sensor_energy_cost() / base_cost - 4.0).abs() < 0.000_1);
         assert!(organism.maximum_swim_speed() < crate::config::MAX_SWIM_SPEED);
         assert!(
@@ -2962,7 +3044,24 @@ mod tests {
     }
 
     #[test]
-    fn sunlight_pauses_phytoplankton_aging_but_shadow_starts_it() {
+    fn manual_insertion_uses_the_selected_group_and_rejects_invalid_positions() {
+        let mut world = World::new_with_map(78, 0, MapDefinition::empty());
+        let position = vec2(1_000.0, 1_000.0);
+
+        assert!(world.insert_organism_at(position, InitialNeuralConfiguration::MotorMinimum, &[]));
+        assert_eq!(world.organisms.len(), 1);
+        assert!(!world.insert_organism_at(position, InitialNeuralConfiguration::Classic, &[]));
+
+        world.map.paint_wall(vec2(2_000.0, 2_000.0), true);
+        assert!(!world.insert_organism_at(
+            vec2(2_000.0, 2_000.0),
+            InitialNeuralConfiguration::Classic,
+            &[]
+        ));
+    }
+
+    #[test]
+    fn sunlight_extends_phytoplankton_life_without_making_it_immortal() {
         let mut map = MapDefinition::empty();
         map.set_sunlight_polygon(&[
             vec2(0.0, 0.0),
@@ -2995,7 +3094,20 @@ mod tests {
 
         assert_eq!(world.food.len(), 1);
         assert_eq!(world.food[0].position, vec2(1_000.0, 1_000.0));
-        assert_eq!(world.food[0].age_ticks, 0);
+        assert_eq!(world.food[0].age_ticks, 1);
+
+        world.tick(
+            &FlowField::new(79).with_intensity(0.0),
+            0.0,
+            0.0,
+            1,
+            FOOD_ENERGY,
+            DEFAULT_MENTAL_ENERGY_COST,
+            MAX_ENERGY,
+            MAX_ENERGY,
+        );
+
+        assert!(world.food.is_empty());
     }
 
     #[test]

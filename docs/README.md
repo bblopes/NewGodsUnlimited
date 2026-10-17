@@ -24,6 +24,7 @@ as propostas que ainda aguardam aprovação.
 | [Doação de energia e Val 2.0](PROPOSTA_DOACAO_ENERGIA_E_VAL_2.md) | proposta de transferência física de energia entre células em contato |
 | [Longevidade hereditária](LONGEVIDADE_HEREDITARIA.md) | alelo fisiológico de idade máxima e referência de 100 mil ticks |
 | [Distribuição portátil](DISTRIBUICAO_PORTATIL.md) | entrega de um único executável para Windows |
+| [Próxima subida e backlog](BACKLOG.md) | escopo aprovado, itens adiados e histórico relevante |
 
 ## Convenção de estado
 
