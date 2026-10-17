@@ -59,7 +59,12 @@ const FOOD_FLOW_COUPLING: f32 = 0.42;
 /// Probabilidade de cada fitoplâncton iluminado gerar uma cópia por tick.
 /// A luz binária atual entrega 0 ou 1; quando ela for contínua, multiplica
 /// diretamente esta taxa.
-const PHYTOPLANKTON_REPRODUCTION_PER_TICK: f32 = 0.002;
+/// Taxa-base usada por sessões antigas e por mundos sem configuração de UI.
+pub const DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK: f32 = 0.002;
+/// Teto da taxa regulável na interface: 2% de chance por partícula iluminada
+/// a cada tick. O limite de densidade local continua evitando crescimento
+/// sem controle.
+pub const MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK: f32 = 0.02;
 const PHYTOPLANKTON_REPRODUCTION_RADIUS: f32 = 70.0;
 const PHYTOPLANKTON_DENSITY_CELL_SIZE: f32 = 120.0;
 const MAX_PHYTOPLANKTON_PER_DENSITY_CELL: usize = 6;
@@ -466,6 +471,9 @@ pub struct World {
     /// Limiar atual para o motor neural poder reproduzir. É exposto para a
     /// demografia desenhar a referência correta de energia.
     pub reproduction_minimum: f32,
+    /// Probabilidade configurável de uma partícula iluminada se duplicar em
+    /// um tick. Fica no mundo porque é uma regra física viva, não apenas UI.
+    pub phytoplankton_reproduction_rate: f32,
     pub energy_capacity: f32,
     pub food: Vec<Phytoplankton>,
     pub organisms: Vec<Organism>,
@@ -529,6 +537,7 @@ impl World {
             deaths_by_phagocytosis_total: 0,
             deaths_by_age_total: 0,
             reproduction_minimum: MAX_ENERGY,
+            phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
             energy_capacity: MAX_ENERGY,
             food: Vec::new(),
             organisms: Vec::new(),
@@ -1369,6 +1378,7 @@ impl World {
             deaths_by_phagocytosis_total,
             deaths_by_age_total,
             reproduction_minimum: MAX_ENERGY,
+            phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
             energy_capacity,
             food,
             organisms,
@@ -1393,6 +1403,12 @@ impl World {
                 .sum::<f32>()
                 / self.organisms.len() as f32
         }
+    }
+
+    /// Atualiza a regra de reprodução do fitoplâncton sem reiniciar o mundo.
+    pub fn set_phytoplankton_reproduction_rate(&mut self, rate: f32) {
+        self.phytoplankton_reproduction_rate =
+            rate.clamp(0.0, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK);
     }
 
     pub fn energy_distribution(&self, bucket_count: usize) -> (Vec<usize>, f32) {
@@ -2074,7 +2090,7 @@ impl World {
             let parent_position = self.food[index].position;
             let sunlight = map.sunlight_intensity(parent_position);
             if sunlight <= 0.0
-                || self.next_random_unit() >= PHYTOPLANKTON_REPRODUCTION_PER_TICK * sunlight
+                || self.next_random_unit() >= self.phytoplankton_reproduction_rate * sunlight
             {
                 continue;
             }
@@ -3008,6 +3024,29 @@ mod tests {
                 .iter()
                 .all(|food| world.map.sunlight_intensity(food.position) > 0.0)
         );
+    }
+
+    #[test]
+    fn zero_phytoplankton_reproduction_rate_disables_sunlit_duplication() {
+        let mut map = MapDefinition::empty();
+        map.set_sunlight_polygon(&[
+            Vec2::ZERO,
+            vec2(WORLD_WIDTH, 0.0),
+            vec2(WORLD_WIDTH, WORLD_HEIGHT),
+            vec2(0.0, WORLD_HEIGHT),
+        ]);
+        let mut world = World::new_with_map(81, 0, map);
+        world.food = vec![Phytoplankton {
+            position: vec2(1_000.0, 1_000.0),
+            age_ticks: 0,
+        }];
+        world.set_phytoplankton_reproduction_rate(0.0);
+
+        for _ in 0..600 {
+            world.reproduce_sunlit_phytoplankton();
+        }
+
+        assert_eq!(world.food.len(), 1);
     }
 
     #[test]

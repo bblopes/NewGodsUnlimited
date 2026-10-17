@@ -9,9 +9,14 @@ significado ecológico mudou.
 
 ## Regras atuais
 
-- A emissão artificial é uniforme no mapa inteiro e tem um único controle.
-- O fitoplâncton iluminado não envelhece e possui `0,002 × luz` de chance de
-  duplicar por tick.
+- O **nascimento por abiogênese** é uniforme no mapa inteiro e pode ser
+  regulado de `0` a `1` partícula por tick. Em `0`, não surge fitoplâncton do
+  nada.
+- A **multiplicação sob luz** é regulável de `0` a `2%` por tick. O valor
+  padrão é `0,2%`: uma partícula iluminada possui
+  `taxa de multiplicação × luz` de chance de duplicar por tick.
+- A energia entregue por cada fitoplâncton também é um valor numérico livre na
+  sessão; não depende mais de passos fixos de cinco unidades.
 - A cópia nasce até 70 unidades da partícula-mãe, somente se também cair em
   luz e não atravessar parede.
 - Cada quadrado local de 120 unidades aceita no máximo seis partículas; isso

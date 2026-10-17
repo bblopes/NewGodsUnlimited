@@ -29,9 +29,11 @@ use crate::{
             PheromoneDisplay,
         },
         world::{
-            AntiCrammingConfig, CELL_RADIUS, DEFAULT_MENTAL_ENERGY_COST, FOOD_ENERGY, FOOD_RADIUS,
-            InitialNeuralConfiguration, MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MIN_EXCLUSION_DISTANCE,
-            Organism, Phytoplankton, World,
+            AntiCrammingConfig, CELL_RADIUS, DEFAULT_MENTAL_ENERGY_COST,
+            DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK, FOOD_ENERGY, FOOD_RADIUS,
+            InitialNeuralConfiguration, MAX_ENERGY, MAX_EXCLUSION_DISTANCE,
+            MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK, MIN_EXCLUSION_DISTANCE, Organism,
+            Phytoplankton, World,
         },
     },
 };
@@ -56,7 +58,7 @@ const GENETIC_GROUP_SIMILARITY: f32 = 0.985;
 const ENERGY_HISTOGRAM_BUCKETS: usize = 12;
 const SESSION_CONTENT_BOTTOM: f32 = 1_460.0;
 const PRESET_MAGIC: [u8; 8] = *b"ECOPRE01";
-const PRESET_FORMAT_VERSION: u32 = 2;
+const PRESET_FORMAT_VERSION: u32 = 3;
 const MAP_PRESET_MAGIC: [u8; 8] = *b"ECOMAP01";
 const MAP_PRESET_FORMAT_VERSION: u32 = 1;
 const MAX_MAP_PRESETS: usize = 24;
@@ -88,6 +90,7 @@ struct EngineSettings {
     fertile_emission: f32,
     lifetime: u32,
     food_energy: f32,
+    phytoplankton_reproduction_rate: f32,
     /// Energia mínima: acima dela o motor Reproduzir pode ser aceito.
     reproduction_energy: f32,
     /// Capacidade física: neste teto a divisão é obrigatória.
@@ -110,6 +113,7 @@ enum EngineCommand {
     SetFertileEmission(f32),
     SetFoodLifetime(u32),
     SetFoodEnergy(f32),
+    SetPhytoplanktonReproductionRate(f32),
     SetReproductionEnergy(f32),
     SetReproductionLimit(f32),
     SetMentalEnergyCost(f32),
@@ -283,7 +287,7 @@ enum EditingField {
     ReproductionEnergy,
     ReproductionLimit,
     DesertEmission,
-    FertileEmission,
+    FoodEnergy,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -400,6 +404,7 @@ struct SessionUi {
     fertile_emission: f32,
     lifetime: i32,
     food_energy: f32,
+    phytoplankton_reproduction_rate: f32,
     initial_cells: usize,
     initial_neural_configuration: InitialNeuralConfiguration,
     validated_population: Option<ValidatedPopulation>,
@@ -420,6 +425,7 @@ struct SessionUi {
     reproduction_limit_input: String,
     desert_emission_input: String,
     fertile_emission_input: String,
+    food_energy_input: String,
     editing_field: Option<EditingField>,
     session_scroll: f32,
     applied: AppliedSettings,
@@ -452,6 +458,7 @@ struct AppliedSettings {
     fertile_emission: f32,
     lifetime: i32,
     food_energy: f32,
+    phytoplankton_reproduction_rate: f32,
     flow_enabled: bool,
     flow_intensity: f32,
     flow_preset: FlowPreset,
@@ -505,6 +512,7 @@ impl Default for SessionUi {
             fertile_emission: 0.12,
             lifetime: 600,
             food_energy: FOOD_ENERGY,
+            phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
             initial_cells: 20,
             initial_neural_configuration: InitialNeuralConfiguration::Classic,
             validated_population: None,
@@ -525,6 +533,7 @@ impl Default for SessionUi {
             reproduction_limit_input: DEFAULT_REPRODUCTION_LIMIT.to_string(),
             desert_emission_input: "50".to_owned(),
             fertile_emission_input: "50".to_owned(),
+            food_energy_input: FOOD_ENERGY.to_string(),
             editing_field: None,
             session_scroll: 0.0,
             applied: AppliedSettings {
@@ -539,6 +548,7 @@ impl Default for SessionUi {
                 fertile_emission: 0.12,
                 lifetime: 600,
                 food_energy: FOOD_ENERGY,
+                phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
                 flow_enabled: true,
                 flow_intensity: 1.0,
                 flow_preset: FlowPreset::Classic,
@@ -594,6 +604,7 @@ impl SessionUi {
             fertile_emission: self.fertile_emission,
             lifetime: self.lifetime,
             food_energy: self.food_energy,
+            phytoplankton_reproduction_rate: self.phytoplankton_reproduction_rate,
             flow_enabled: self.flow_enabled,
             flow_intensity: self.flow_intensity,
             flow_preset: self.flow_preset,
@@ -617,6 +628,7 @@ impl SessionUi {
         self.applied.fertile_emission = current.fertile_emission;
         self.applied.lifetime = current.lifetime;
         self.applied.food_energy = current.food_energy;
+        self.applied.phytoplankton_reproduction_rate = current.phytoplankton_reproduction_rate;
         self.applied.flow_enabled = current.flow_enabled;
         self.applied.flow_intensity = current.flow_intensity;
         self.applied.flow_preset = current.flow_preset;
@@ -647,36 +659,27 @@ impl SessionUi {
             .map_or(true, |value| value != self.applied.reproduction_energy)
     }
 
-    fn desert_emission_is_dirty(&self) -> bool {
-        self.desert_emission_input
-            .parse::<f32>()
-            .map_or(true, |value| {
-                (emission_from_display(value) - self.applied.desert_emission).abs() > f32::EPSILON
-            })
-    }
-
-    fn fertile_emission_is_dirty(&self) -> bool {
-        self.fertile_emission_input
-            .parse::<f32>()
-            .map_or(true, |value| {
-                (emission_from_display(value) - self.applied.fertile_emission).abs() > f32::EPSILON
-            })
-    }
-
     fn reproduction_limit_is_dirty(&self) -> bool {
         self.reproduction_limit_input
             .parse::<f32>()
             .map_or(true, |value| value != self.applied.reproduction_limit)
     }
 
+    fn food_energy_is_dirty(&self) -> bool {
+        self.food_energy_input
+            .parse::<f32>()
+            .map_or(true, |value| value != self.applied.food_energy)
+    }
+
     fn has_pending_live_changes(&self) -> bool {
         self.reproduction_energy_is_dirty()
             || self.reproduction_limit_is_dirty()
-            || self.desert_emission_is_dirty()
-            || self.fertile_emission_is_dirty()
+            || self.desert_emission != self.applied.desert_emission
+            || self.fertile_emission != self.applied.fertile_emission
             || self.mental_energy_cost != self.applied.mental_energy_cost
             || self.lifetime != self.applied.lifetime
-            || self.food_energy != self.applied.food_energy
+            || self.food_energy_is_dirty()
+            || self.phytoplankton_reproduction_rate != self.applied.phytoplankton_reproduction_rate
             || self.flow_enabled != self.applied.flow_enabled
             || self.flow_intensity != self.applied.flow_intensity
             || self.flow_preset != self.applied.flow_preset
@@ -713,6 +716,8 @@ impl SessionUi {
         self.fertile_emission_input = format_emission_display(applied.fertile_emission);
         self.lifetime = applied.lifetime;
         self.food_energy = applied.food_energy;
+        self.food_energy_input = applied.food_energy.to_string();
+        self.phytoplankton_reproduction_rate = applied.phytoplankton_reproduction_rate;
         self.flow_enabled = applied.flow_enabled;
         self.flow_intensity = applied.flow_intensity;
         self.flow_preset = applied.flow_preset;
@@ -759,6 +764,8 @@ impl SessionUi {
         self.fertile_emission_input = format_emission_display(settings.fertile_emission);
         self.lifetime = settings.lifetime as i32;
         self.food_energy = settings.food_energy;
+        self.food_energy_input = settings.food_energy.to_string();
+        self.phytoplankton_reproduction_rate = settings.phytoplankton_reproduction_rate;
         self.reproduction_energy = settings.reproduction_energy;
         self.reproduction_energy_input = settings.reproduction_energy.to_string();
         self.reproduction_limit = settings.reproduction_limit;
@@ -784,6 +791,7 @@ impl From<&SessionUi> for EngineSettings {
             fertile_emission: session.fertile_emission,
             lifetime: session.lifetime as u32,
             food_energy: session.food_energy,
+            phytoplankton_reproduction_rate: session.phytoplankton_reproduction_rate,
             reproduction_energy: session.reproduction_energy,
             reproduction_limit: session.reproduction_limit,
             initial_cells: session.initial_cells,
@@ -853,7 +861,7 @@ impl SimulationEngine {
 }
 
 fn make_world(settings: &EngineSettings) -> World {
-    if settings.amadeus_mode {
+    let mut world = if settings.amadeus_mode {
         World::new_amadeus_with_initial_population(
             settings.seed,
             settings.map.clone(),
@@ -868,7 +876,9 @@ fn make_world(settings: &EngineSettings) -> World {
             settings.initial_neural_configuration,
             &settings.validated_genomes,
         )
-    }
+    };
+    world.set_phytoplankton_reproduction_rate(settings.phytoplankton_reproduction_rate);
+    world
 }
 
 fn simulation_worker(
@@ -954,6 +964,13 @@ fn simulation_worker(
                 EngineCommand::SetFoodEnergy(energy) => {
                     settings.food_energy = energy.max(0.0);
                 }
+                EngineCommand::SetPhytoplanktonReproductionRate(rate) => {
+                    settings.phytoplankton_reproduction_rate =
+                        rate.clamp(0.0, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK);
+                    world.set_phytoplankton_reproduction_rate(
+                        settings.phytoplankton_reproduction_rate,
+                    );
+                }
                 EngineCommand::SetReproductionEnergy(energy) => {
                     settings.reproduction_energy = energy.max(1.0);
                     settings.reproduction_limit = settings
@@ -1008,6 +1025,9 @@ fn simulation_worker(
                         .with_preset(settings.flow_preset)
                         .with_intensity(settings.flow_intensity);
                     world = loaded_world;
+                    world.set_phytoplankton_reproduction_rate(
+                        settings.phytoplankton_reproduction_rate,
+                    );
                     publish_snapshot(
                         &world,
                         &latest,
@@ -1221,8 +1241,8 @@ fn mental_cost_from_display(display_value: f32) -> f32 {
 }
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
-/// V17 adiciona os bits hereditários que habilitam nós internos e motores.
-const RUN_FORMAT_VERSION: u32 = 17;
+/// V18 adiciona a taxa configurável de multiplicação do fitoplâncton sob luz.
+const RUN_FORMAT_VERSION: u32 = 18;
 /// Unidade humana do controle de custo mental. O motor continua guardando o
 /// valor físico pequeno para preservar runs e presets; na interface, 100
 /// unidades equivalem ao custo-padrão de 0,0025 por conexão/tick.
@@ -1434,7 +1454,11 @@ fn read_session_presets_from_reader(mut reader: &mut impl Read) -> io::Result<Ve
         let name = read_string(&mut reader, 80)?;
         let mut settings = read_engine_settings(
             &mut reader,
-            if version == 1 { 15 } else { RUN_FORMAT_VERSION },
+            match version {
+                1 => 15,
+                2 => 17,
+                _ => RUN_FORMAT_VERSION,
+            },
         )?;
         settings.map = MapDefinition::read_from(&mut reader)?;
         presets.push(SessionPreset { name, settings });
@@ -1472,6 +1496,8 @@ fn apply_embedded_default_preset(session: &mut SessionUi) {
     session.fertile_emission_input = session.desert_emission_input.clone();
     session.lifetime = 3_511;
     session.food_energy = 85.0;
+    session.food_energy_input = session.food_energy.to_string();
+    session.phytoplankton_reproduction_rate = DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK;
     session.flow_enabled = true;
     session.flow_intensity = 0.06;
     session.flow_preset = FlowPreset::Classic;
@@ -1545,6 +1571,8 @@ fn apply_session_preset(session: &mut SessionUi, settings: &EngineSettings) {
     session.fertile_emission_input = format_emission_display(settings.fertile_emission);
     session.lifetime = settings.lifetime as i32;
     session.food_energy = settings.food_energy;
+    session.food_energy_input = settings.food_energy.to_string();
+    session.phytoplankton_reproduction_rate = settings.phytoplankton_reproduction_rate;
     session.reproduction_energy = settings.reproduction_energy;
     session.reproduction_energy_input = settings.reproduction_energy.to_string();
     session.reproduction_limit = settings.reproduction_limit;
@@ -1738,6 +1766,7 @@ fn write_engine_settings(writer: &mut impl Write, settings: &EngineSettings) -> 
     write_f32_run(writer, settings.fertile_emission)?;
     write_u32_run(writer, settings.lifetime)?;
     write_f32_run(writer, settings.food_energy)?;
+    write_f32_run(writer, settings.phytoplankton_reproduction_rate)?;
     write_f32_run(writer, settings.reproduction_energy)?;
     write_f32_run(writer, settings.reproduction_limit)?;
     write_u64_run(writer, settings.initial_cells as u64)?;
@@ -1786,6 +1815,11 @@ fn read_engine_settings(reader: &mut impl Read, version: u32) -> io::Result<Engi
         fertile_emission,
         lifetime: read_u32_run(reader)?,
         food_energy: read_f32_run(reader)?,
+        phytoplankton_reproduction_rate: if version >= 18 {
+            read_f32_run(reader)?
+        } else {
+            DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK
+        },
         reproduction_energy: read_f32_run(reader)?,
         reproduction_limit: read_f32_run(reader)?,
         initial_cells: read_u64_run(reader)? as usize,
@@ -1815,6 +1849,7 @@ fn write_applied_settings(writer: &mut impl Write, settings: AppliedSettings) ->
     write_f32_run(writer, settings.fertile_emission)?;
     write_u32_run(writer, settings.lifetime as u32)?;
     write_f32_run(writer, settings.food_energy)?;
+    write_f32_run(writer, settings.phytoplankton_reproduction_rate)?;
     write_bool_run(writer, settings.flow_enabled)?;
     write_f32_run(writer, settings.flow_intensity)?;
     write_flow_preset(writer, settings.flow_preset)?;
@@ -1846,6 +1881,11 @@ fn read_applied_settings(reader: &mut impl Read, version: u32) -> io::Result<App
         },
         lifetime: read_u32_run(reader)? as i32,
         food_energy: read_f32_run(reader)?,
+        phytoplankton_reproduction_rate: if version >= 18 {
+            read_f32_run(reader)?
+        } else {
+            DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK
+        },
         flow_enabled: read_bool_run(reader)?,
         flow_intensity: read_f32_run(reader)?,
         flow_preset: if version >= 7 {
@@ -2097,6 +2137,7 @@ pub async fn run() {
     let mut sent_fertile_emission = session.fertile_emission;
     let mut sent_lifetime = session.lifetime;
     let mut sent_food_energy = session.food_energy;
+    let mut sent_phytoplankton_reproduction_rate = session.phytoplankton_reproduction_rate;
     let mut sent_reproduction_energy = session.reproduction_energy;
     let mut sent_reproduction_limit = session.reproduction_limit;
     let mut sent_mental_energy_cost = session.mental_energy_cost;
@@ -2159,6 +2200,15 @@ pub async fn run() {
             if (session.food_energy - sent_food_energy).abs() > f32::EPSILON {
                 engine.send(EngineCommand::SetFoodEnergy(session.food_energy));
                 sent_food_energy = session.food_energy;
+            }
+            if (session.phytoplankton_reproduction_rate - sent_phytoplankton_reproduction_rate)
+                .abs()
+                > f32::EPSILON
+            {
+                engine.send(EngineCommand::SetPhytoplanktonReproductionRate(
+                    session.phytoplankton_reproduction_rate,
+                ));
+                sent_phytoplankton_reproduction_rate = session.phytoplankton_reproduction_rate;
             }
             if (session.reproduction_energy - sent_reproduction_energy).abs() > f32::EPSILON {
                 engine.send(EngineCommand::SetReproductionEnergy(
@@ -2343,6 +2393,7 @@ pub async fn run() {
             sent_fertile_emission = session.fertile_emission;
             sent_lifetime = session.lifetime;
             sent_food_energy = session.food_energy;
+            sent_phytoplankton_reproduction_rate = session.phytoplankton_reproduction_rate;
             sent_reproduction_energy = session.reproduction_energy;
             sent_reproduction_limit = session.reproduction_limit;
             sent_mental_energy_cost = session.mental_energy_cost;
@@ -2404,6 +2455,7 @@ pub async fn run() {
                     sent_fertile_emission = session.fertile_emission;
                     sent_lifetime = session.lifetime;
                     sent_food_energy = session.food_energy;
+                    sent_phytoplankton_reproduction_rate = session.phytoplankton_reproduction_rate;
                     sent_reproduction_energy = session.reproduction_energy;
                     sent_reproduction_limit = session.reproduction_limit;
                     sent_mental_energy_cost = session.mental_energy_cost;
@@ -3784,9 +3836,9 @@ fn draw_session_tab(
 
     section_title(left, y(661.0), "Fitoplâncton");
     let food_status = format!(
-        "emissão uniforme {} · {} no mapa",
-        format_emission_display(metrics.active_desert_emission),
-        world.food.len()
+        "{} no mapa · abiogênese {:.2}/tick",
+        world.food.len(),
+        metrics.active_desert_emission
     );
     let food_status_width = measure_text(&food_status, None, 11, 1.0).width;
     draw_text(
@@ -3796,14 +3848,19 @@ fn draw_session_tab(
         11.0,
         MUTED,
     );
-    if editable_number_row(
-        Rect::new(left, y(675.0), width, 38.0),
-        "Emissão uniforme",
-        &session.desert_emission_input,
-        session.editing_field == Some(EditingField::DesertEmission),
-        session.desert_emission_is_dirty(),
+    if let Some(rate) = slider_row(
+        left,
+        y(675.0),
+        width,
+        "Nascimento por abiogênese",
+        session.desert_emission,
+        0.0,
+        1.0,
+        &format!("{:.2} fito/tick", session.desert_emission),
+        session.desert_emission != session.applied.desert_emission,
     ) {
-        begin_editing(session, EditingField::DesertEmission);
+        session.desert_emission = rate;
+        session.fertile_emission = rate;
     }
     if let Some(lifetime) = slider_row(
         left,
@@ -3818,24 +3875,36 @@ fn draw_session_tab(
     ) {
         session.lifetime = lifetime.round() as i32;
     }
-    match stepper_row(
+    if let Some(rate) = slider_row(
         left,
         y(765.0),
         width,
-        "Energia",
-        &format!("{:.0}", session.food_energy),
-        None,
-        session.food_energy != session.applied.food_energy,
+        "Multiplicação sob luz",
+        session.phytoplankton_reproduction_rate,
+        0.0,
+        MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
+        &format!(
+            "{:.2}%/tick",
+            session.phytoplankton_reproduction_rate * 100.0
+        ),
+        session.phytoplankton_reproduction_rate != session.applied.phytoplankton_reproduction_rate,
     ) {
-        Some(-1) => session.food_energy = (session.food_energy - 5.0).max(0.0),
-        Some(1) => session.food_energy += 5.0,
-        _ => {}
+        session.phytoplankton_reproduction_rate = rate;
+    }
+    if editable_number_row(
+        Rect::new(left, y(810.0), width, 38.0),
+        "Energia por fito",
+        &session.food_energy_input,
+        session.editing_field == Some(EditingField::FoodEnergy),
+        session.food_energy_is_dirty(),
+    ) {
+        begin_editing(session, EditingField::FoodEnergy);
     }
 
-    section_title(left, y(860.0), "Corrente");
+    section_title(left, y(905.0), "Corrente");
     if let Some(intensity) = slider_row(
         left,
-        y(874.0),
+        y(919.0),
         width,
         "Intensidade",
         session.flow_intensity,
@@ -3847,7 +3916,7 @@ fn draw_session_tab(
         session.flow_intensity = intensity;
     }
     if button_dirty(
-        Rect::new(left, y(914.0), width, 34.0),
+        Rect::new(left, y(964.0), width, 34.0),
         if session.flow_enabled {
             "Corrente ligada"
         } else {
@@ -3858,7 +3927,7 @@ fn draw_session_tab(
     ) {
         session.flow_enabled = !session.flow_enabled;
     }
-    draw_text("Vetores: aba Filtros.", left, y(976.0), 12.0, MUTED);
+    draw_text("Vetores: aba Filtros.", left, y(1_026.0), 12.0, MUTED);
 
     let density_title = if !session.anti_cramming {
         "Densidade · desligada".to_owned()
@@ -3870,9 +3939,9 @@ fn draw_session_tab(
     } else {
         "Densidade · livre".to_owned()
     };
-    section_title(left, y(1_000.0), &density_title);
+    section_title(left, y(1_050.0), &density_title);
     if button_dirty(
-        Rect::new(left, y(1_014.0), width * 0.54 - 4.0, 34.0),
+        Rect::new(left, y(1_064.0), width * 0.54 - 4.0, 34.0),
         if session.anti_cramming {
             "Anti-cramming: on"
         } else {
@@ -3886,7 +3955,7 @@ fn draw_session_tab(
     if button(
         Rect::new(
             left + width * 0.54 + 4.0,
-            y(1_014.0),
+            y(1_064.0),
             width * 0.46 - 4.0,
             34.0,
         ),
@@ -3897,7 +3966,7 @@ fn draw_session_tab(
     }
     if let Some(force) = slider_row(
         left,
-        y(1_009.0),
+        y(1_059.0),
         width,
         "Força",
         session.anti_cramming_force,
@@ -3910,7 +3979,7 @@ fn draw_session_tab(
     }
     if let Some(distance) = slider_row(
         left,
-        y(1_054.0),
+        y(1_104.0),
         width,
         "Espaço",
         session.anti_cramming_distance,
@@ -4482,21 +4551,27 @@ fn draw_session_tab_compact(
     cursor += 40.0;
     if session.phytoplankton_section_open {
         let food_status = format!(
-            "emissão uniforme {} · {} no mapa",
-            format_emission_display(metrics.active_desert_emission),
-            world.food.len()
+            "{} no mapa · abiogênese {:.2}/tick",
+            world.food.len(),
+            metrics.active_desert_emission
         );
         draw_text(&food_status, left, y(cursor), 11.0, MUTED);
-        cursor += 12.0;
-        if editable_number_row(
-            Rect::new(left, y(cursor), width, 38.0),
-            "Emissão uniforme",
-            &session.desert_emission_input,
-            session.editing_field == Some(EditingField::DesertEmission),
-            session.desert_emission_is_dirty(),
+        cursor += 18.0;
+        if let Some(rate) = slider_row(
+            left,
+            y(cursor),
+            width,
+            "Nascimento por abiogênese",
+            session.desert_emission,
+            0.0,
+            1.0,
+            &format!("{:.2} fito/tick", session.desert_emission),
+            session.desert_emission != session.applied.desert_emission,
         ) {
-            begin_editing(session, EditingField::DesertEmission);
+            session.desert_emission = rate;
+            session.fertile_emission = rate;
         }
+        cursor += 45.0;
         if let Some(lifetime) = slider_row(
             left,
             y(cursor),
@@ -4511,18 +4586,32 @@ fn draw_session_tab_compact(
             session.lifetime = lifetime.round() as i32;
         }
         cursor += 45.0;
-        match stepper_row(
+        if let Some(rate) = slider_row(
             left,
             y(cursor),
             width,
-            "Energia",
-            &format!("{:.0}", session.food_energy),
-            None,
-            session.food_energy != session.applied.food_energy,
+            "Multiplicação sob luz",
+            session.phytoplankton_reproduction_rate,
+            0.0,
+            MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
+            &format!(
+                "{:.2}%/tick",
+                session.phytoplankton_reproduction_rate * 100.0
+            ),
+            session.phytoplankton_reproduction_rate
+                != session.applied.phytoplankton_reproduction_rate,
         ) {
-            Some(-1) => session.food_energy = (session.food_energy - 5.0).max(0.0),
-            Some(1) => session.food_energy += 5.0,
-            _ => {}
+            session.phytoplankton_reproduction_rate = rate;
+        }
+        cursor += 45.0;
+        if editable_number_row(
+            Rect::new(left, y(cursor), width, 38.0),
+            "Energia por fito",
+            &session.food_energy_input,
+            session.editing_field == Some(EditingField::FoodEnergy),
+            session.food_energy_is_dirty(),
+        ) {
+            begin_editing(session, EditingField::FoodEnergy);
         }
         cursor += 45.0;
     }
@@ -6697,7 +6786,7 @@ fn begin_editing(session: &mut SessionUi, field: EditingField) {
         EditingField::ReproductionEnergy => session.reproduction_energy_input.clear(),
         EditingField::ReproductionLimit => session.reproduction_limit_input.clear(),
         EditingField::DesertEmission => session.desert_emission_input.clear(),
-        EditingField::FertileEmission => session.fertile_emission_input.clear(),
+        EditingField::FoodEnergy => session.food_energy_input.clear(),
     }
 }
 
@@ -6711,7 +6800,7 @@ fn update_numeric_input(session: &mut SessionUi) {
         EditingField::ReproductionEnergy => &mut session.reproduction_energy_input,
         EditingField::ReproductionLimit => &mut session.reproduction_limit_input,
         EditingField::DesertEmission => &mut session.desert_emission_input,
-        EditingField::FertileEmission => &mut session.fertile_emission_input,
+        EditingField::FoodEnergy => &mut session.food_energy_input,
     };
     while let Some(character) = get_char_pressed() {
         let accepts_float = matches!(
@@ -6719,7 +6808,7 @@ fn update_numeric_input(session: &mut SessionUi) {
             EditingField::ReproductionEnergy
                 | EditingField::ReproductionLimit
                 | EditingField::DesertEmission
-                | EditingField::FertileEmission
+                | EditingField::FoodEnergy
         );
         let allowed = character.is_ascii_digit()
             || (accepts_float && matches!(character, '.' | 'e' | 'E' | '+' | '-'));
@@ -6788,12 +6877,11 @@ fn commit_field(session: &mut SessionUi, field: EditingField) -> bool {
             }
             false
         }
-        EditingField::FertileEmission => {
-            if let Ok(emission) = session.fertile_emission_input.parse::<f32>() {
-                if emission.is_finite() && emission >= 0.0 {
-                    session.fertile_emission = emission_from_display(emission);
-                    session.fertile_emission_input =
-                        format_emission_display(session.fertile_emission);
+        EditingField::FoodEnergy => {
+            if let Ok(energy) = session.food_energy_input.parse::<f32>() {
+                if energy.is_finite() && energy >= 0.0 {
+                    session.food_energy = energy;
+                    session.food_energy_input = energy.to_string();
                     return true;
                 }
             }
@@ -6808,69 +6896,12 @@ fn commit_all_numeric_inputs(session: &mut SessionUi) -> bool {
         EditingField::InitialCells,
         EditingField::ReproductionEnergy,
         EditingField::ReproductionLimit,
-        EditingField::DesertEmission,
-        EditingField::FertileEmission,
+        EditingField::FoodEnergy,
     ]
     .into_iter()
     .fold(false, |changed, field| {
         commit_field(session, field) || changed
     })
-}
-
-fn stepper_row(
-    x: f32,
-    y: f32,
-    width: f32,
-    label: &str,
-    value: &str,
-    slider_fraction: Option<f32>,
-    dirty: bool,
-) -> Option<i8> {
-    draw_rectangle(x, y, width, 38.0, SURFACE);
-    draw_text(
-        label,
-        x + 10.0,
-        y + 24.0,
-        15.0,
-        if dirty { RED } else { MUTED },
-    );
-    if let Some(fraction) = slider_fraction {
-        let track_x = x + 84.0;
-        let track_w = 54.0;
-        let fraction = fraction.clamp(0.0, 1.0);
-        draw_line(track_x, y + 21.0, track_x + track_w, y + 21.0, 3.0, BORDER);
-        draw_line(
-            track_x,
-            y + 21.0,
-            track_x + track_w * fraction,
-            y + 21.0,
-            3.0,
-            ACCENT,
-        );
-        draw_circle(track_x + track_w * fraction, y + 21.0, 4.0, ACCENT);
-        draw_text(
-            value,
-            x + 148.0,
-            y + 24.0,
-            14.0,
-            if dirty { RED } else { TEXT },
-        );
-    } else {
-        draw_text(
-            value,
-            x + 108.0,
-            y + 24.0,
-            14.0,
-            if dirty { RED } else { TEXT },
-        );
-    }
-    if button(Rect::new(x + width - 74.0, y + 4.0, 32.0, 30.0), "-", false) {
-        Some(-1)
-    } else if button(Rect::new(x + width - 36.0, y + 4.0, 32.0, 30.0), "+", false) {
-        Some(1)
-    } else {
-        None
-    }
 }
 
 fn slider_row(
@@ -7069,5 +7100,14 @@ mod tests {
         assert!(
             (session.desert_emission - 0.000_000_01 * EMISSION_DISPLAY_UNIT).abs() < f32::EPSILON
         );
+    }
+
+    #[test]
+    fn food_energy_field_accepts_a_precise_non_negative_value() {
+        let mut session = SessionUi::default();
+        session.food_energy_input = "73.25".to_owned();
+
+        assert!(commit_field(&mut session, EditingField::FoodEnergy));
+        assert_eq!(session.food_energy, 73.25);
     }
 }
