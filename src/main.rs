@@ -9,9 +9,9 @@ fn window_conf() -> Conf {
     let demographics_window = std::env::args().any(|argument| argument == "--demographics-window");
     Conf {
         window_title: if demographics_window {
-            "Demografia — Ecossistema Neural".to_owned()
+            "Demografia — New Gods Unlimited".to_owned()
         } else {
-            "Ecossistema Neural — Protótipo".to_owned()
+            "New Gods Unlimited".to_owned()
         },
         window_width: if demographics_window { 1280 } else { 1440 },
         window_height: if demographics_window { 860 } else { 900 },

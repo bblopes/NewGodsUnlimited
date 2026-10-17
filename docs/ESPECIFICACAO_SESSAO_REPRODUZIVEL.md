@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Uma sessão manual boa não pode virar apenas uma memória visual. Ao encerrar e salvar, o Ecossistema Neural deverá gerar um arquivo capaz de responder:
+Uma sessão manual boa não pode virar apenas uma memória visual. Ao encerrar e salvar, o New Gods Unlimited deverá gerar um arquivo capaz de responder:
 
 - com quais condições o mundo começou;
 - em qual tick cada ajuste foi efetivamente aplicado;

@@ -1,4 +1,4 @@
-use ecossistema_neural::lab;
+use new_gods_unlimited::lab;
 use macroquad::prelude::*;
 
 fn window_conf() -> Conf {

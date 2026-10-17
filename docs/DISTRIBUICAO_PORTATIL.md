@@ -2,7 +2,7 @@
 
 ## Entrega
 
-O arquivo `Ecossistema Neural.exe` é autônomo: basta copiá-lo para uma pasta
+O arquivo `NewGodsUnlimited.exe` é autônomo: basta copiá-lo para uma pasta
 gravável no computador ou HD externo e executá-lo. Não exige Rust, Cargo nem
 instalação.
 

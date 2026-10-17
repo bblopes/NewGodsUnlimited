@@ -28,7 +28,7 @@ Isso é o que permite rodar milhões de ticks sem renderizar. O `viewer` não co
 ## Árvore proposta
 
 ```text
-ECOSSYSTEM/
+NewGodsUnlimited/
 ├── Cargo.toml
 ├── docs/
 │   ├── DOCUMENTACAO_PRELIMINAR.md
