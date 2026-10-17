@@ -10,10 +10,7 @@ use crate::{
     config::{
         DEFAULT_FOOD_SENSOR_RANGE, MAX_FLOW_SPEED, MAX_FOOD_SENSOR_RANGE, WORLD_HEIGHT, WORLD_WIDTH,
     },
-    environment::{
-        flow::FlowField,
-        map::{MapDefinition, Terrain},
-    },
+    environment::{flow::FlowField, map::MapDefinition},
     simulation::brain::{Brain, MotorOutput, SensorInput},
     simulation::genome::{
         Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES, PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
@@ -59,6 +56,13 @@ const SENESCENCE_CURVATURE: f32 = 8.0;
 /// Acima deste nível a decisão da rede neural é convertida em reprodução.
 pub const REPRODUCTION_ACTIVATION_THRESHOLD: f32 = 0.60;
 const FOOD_FLOW_COUPLING: f32 = 0.42;
+/// Probabilidade de cada fitoplâncton iluminado gerar uma cópia por tick.
+/// A luz binária atual entrega 0 ou 1; quando ela for contínua, multiplica
+/// diretamente esta taxa.
+const PHYTOPLANKTON_REPRODUCTION_PER_TICK: f32 = 0.002;
+const PHYTOPLANKTON_REPRODUCTION_RADIUS: f32 = 70.0;
+const PHYTOPLANKTON_DENSITY_CELL_SIZE: f32 = 120.0;
+const MAX_PHYTOPLANKTON_PER_DENSITY_CELL: usize = 6;
 const CELL_FLOW_COUPLING: f32 = 1.0;
 /// Vantagem geométrica mínima para uma célula conseguir fagocitar outra.
 const PHAGOCYTOSIS_MIN_RADIUS_RATIO: f32 = 1.10;
@@ -459,6 +463,9 @@ pub struct World {
     pub deaths_by_phagocytosis_total: u64,
     /// Mortes ao alcançar o limite hereditário de longevidade.
     pub deaths_by_age_total: u64,
+    /// Limiar atual para o motor neural poder reproduzir. É exposto para a
+    /// demografia desenhar a referência correta de energia.
+    pub reproduction_minimum: f32,
     pub energy_capacity: f32,
     pub food: Vec<Phytoplankton>,
     pub organisms: Vec<Organism>,
@@ -521,6 +528,7 @@ impl World {
             deaths_by_starvation_total: 0,
             deaths_by_phagocytosis_total: 0,
             deaths_by_age_total: 0,
+            reproduction_minimum: MAX_ENERGY,
             energy_capacity: MAX_ENERGY,
             food: Vec::new(),
             organisms: Vec::new(),
@@ -552,13 +560,8 @@ impl World {
             };
             world.spawn_organism(initial_neural_configuration, inherited_genome);
         }
-        for index in 0..12 {
-            let terrain = if index < 8 && world.map.has_fertile_area() {
-                Terrain::Fertile
-            } else {
-                Terrain::Desert
-            };
-            world.spawn_food_in(terrain);
+        for _ in 0..12 {
+            world.spawn_food_anywhere();
         }
         world
     }
@@ -640,7 +643,7 @@ impl World {
         &mut self,
         flow: &FlowField,
         desert_emission_per_tick: f32,
-        fertile_emission_per_tick: f32,
+        _legacy_sunlight_emission_per_tick: f32,
         lifetime_ticks: u32,
         food_energy: f32,
         mental_energy_cost: f32,
@@ -651,7 +654,7 @@ impl World {
         self.tick_with_observer(
             flow,
             desert_emission_per_tick,
-            fertile_emission_per_tick,
+            _legacy_sunlight_emission_per_tick,
             lifetime_ticks,
             food_energy,
             mental_energy_cost,
@@ -668,7 +671,7 @@ impl World {
         &mut self,
         flow: &FlowField,
         desert_emission_per_tick: f32,
-        fertile_emission_per_tick: f32,
+        _legacy_sunlight_emission_per_tick: f32,
         lifetime_ticks: u32,
         food_energy: f32,
         mental_energy_cost: f32,
@@ -679,7 +682,7 @@ impl World {
         self.tick_with_observer(
             flow,
             desert_emission_per_tick,
-            fertile_emission_per_tick,
+            _legacy_sunlight_emission_per_tick,
             lifetime_ticks,
             food_energy,
             mental_energy_cost,
@@ -694,7 +697,7 @@ impl World {
         &mut self,
         flow: &FlowField,
         desert_emission_per_tick: f32,
-        fertile_emission_per_tick: f32,
+        _legacy_sunlight_emission_per_tick: f32,
         lifetime_ticks: u32,
         food_energy: f32,
         mental_energy_cost: f32,
@@ -707,25 +710,19 @@ impl World {
         self.tick += 1;
         let reproduction_minimum = reproduction_minimum.max(1.0);
         let reproduction_limit = reproduction_limit.max(reproduction_minimum);
+        self.reproduction_minimum = reproduction_minimum;
         self.energy_capacity = reproduction_limit;
         observer.end(TickPhase::Clock);
         // ── Etapa 2: emissão de fitoplâncton ─────────────────────────────
         observer.begin(TickPhase::FoodEmission);
-        // O crédito fracionário permite uma taxa média estável de emissão.
+        // A emissão artificial é uniforme: ela não escolhe região do mapa.
+        // A produtividade espacial agora vem da luz e da reprodução do fito.
         self.desert_spawn_credit += desert_emission_per_tick.max(0.0);
         while self.desert_spawn_credit >= 1.0 {
             self.desert_spawn_credit -= 1.0;
-            self.spawn_food_in(Terrain::Desert);
+            self.spawn_food_anywhere();
         }
-        if self.map.has_fertile_area() {
-            self.fertile_spawn_credit += fertile_emission_per_tick.max(0.0);
-            while self.fertile_spawn_credit >= 1.0 {
-                self.fertile_spawn_credit -= 1.0;
-                self.spawn_food_in(Terrain::Fertile);
-            }
-        } else {
-            self.fertile_spawn_credit = 0.0;
-        }
+        self.fertile_spawn_credit = 0.0;
         observer.end(TickPhase::FoodEmission);
 
         // ── Etapa 3: fotografia química ──────────────────────────────────
@@ -752,7 +749,7 @@ impl World {
         }
         observer.end(TickPhase::Brain);
 
-        // ── Etapa 6: deslocar e envelhecer o alimento ────────────────────
+        // ── Etapa 6: deslocar, iluminar e reproduzir o alimento ──────────
         observer.begin(TickPhase::FoodMovement);
         for particle in &mut self.food {
             let previous_position = particle.position;
@@ -769,8 +766,13 @@ impl World {
             particle.position =
                 self.map
                     .constrain_to_walls(particle.position, previous_position, FOOD_RADIUS);
-            particle.age_ticks += 1;
+            // Sob luz o cronômetro de morte fica suspenso. Fora dela, o fito
+            // envelhece até o limite configurado pela sessão.
+            if self.map.sunlight_intensity(particle.position) <= 0.0 {
+                particle.age_ticks = particle.age_ticks.saturating_add(1);
+            }
         }
+        self.reproduce_sunlit_phytoplankton();
         observer.end(TickPhase::FoodMovement);
 
         // ── Etapa 7: deslocar as células ─────────────────────────────────
@@ -871,7 +873,10 @@ impl World {
             .drain(..)
             .zip(winners)
             .filter_map(|(particle, winner)| {
-                (winner.is_none() && particle.age_ticks < lifetime_ticks).then_some(particle)
+                (winner.is_none()
+                    && (self.map.sunlight_intensity(particle.position) > 0.0
+                        || particle.age_ticks < lifetime_ticks))
+                    .then_some(particle)
             })
             .collect();
         observer.end(TickPhase::FoodCleanup);
@@ -1363,6 +1368,7 @@ impl World {
             deaths_by_starvation_total,
             deaths_by_phagocytosis_total,
             deaths_by_age_total,
+            reproduction_minimum: MAX_ENERGY,
             energy_capacity,
             food,
             organisms,
@@ -2043,18 +2049,56 @@ impl World {
         }
     }
 
-    fn spawn_food_in(&mut self, terrain: Terrain) -> bool {
+    fn spawn_food_anywhere(&mut self) -> bool {
         let map = self.map.clone();
-        let Some(position) =
-            map.random_point_in_terrain(|| self.next_random_unit(), terrain, FOOD_RADIUS)
-        else {
-            return false;
-        };
+        let position = map.random_free_point(|| self.next_random_unit(), FOOD_RADIUS);
         self.food.push(Phytoplankton {
             position,
             age_ticks: 0,
         });
         true
+    }
+
+    fn reproduce_sunlit_phytoplankton(&mut self) {
+        let map = self.map.clone();
+        let mut density: HashMap<(i32, i32), usize> = HashMap::new();
+        for particle in &self.food {
+            *density
+                .entry(phytoplankton_density_cell(particle.position))
+                .or_default() += 1;
+        }
+
+        let initial_count = self.food.len();
+        let mut births = Vec::new();
+        for index in 0..initial_count {
+            let parent_position = self.food[index].position;
+            let sunlight = map.sunlight_intensity(parent_position);
+            if sunlight <= 0.0
+                || self.next_random_unit() >= PHYTOPLANKTON_REPRODUCTION_PER_TICK * sunlight
+            {
+                continue;
+            }
+            let angle = self.next_random_unit() * std::f32::consts::TAU;
+            let distance =
+                PHYTOPLANKTON_REPRODUCTION_RADIUS * (0.35 + self.next_random_unit() * 0.65);
+            let mut position = parent_position + vec2(angle.cos(), angle.sin()) * distance;
+            position.x = position.x.clamp(FOOD_RADIUS, WORLD_WIDTH - FOOD_RADIUS);
+            position.y = position.y.clamp(FOOD_RADIUS, WORLD_HEIGHT - FOOD_RADIUS);
+            position = map.constrain_to_walls(position, parent_position, FOOD_RADIUS);
+            let cell = phytoplankton_density_cell(position);
+            if map.sunlight_intensity(position) <= 0.0
+                || density.get(&cell).copied().unwrap_or_default()
+                    >= MAX_PHYTOPLANKTON_PER_DENSITY_CELL
+            {
+                continue;
+            }
+            *density.entry(cell).or_default() += 1;
+            births.push(Phytoplankton {
+                position,
+                age_ticks: 0,
+            });
+        }
+        self.food.extend(births);
     }
 
     fn spawn_organism(
@@ -2063,15 +2107,8 @@ impl World {
         inherited_genome: Option<Genome>,
     ) {
         let radius = physical_radius_for_energy(STARTING_ENERGY);
-        let terrain = if self.map.has_fertile_area() && self.next_random_unit() < 0.5 {
-            Terrain::Fertile
-        } else {
-            Terrain::Desert
-        };
         let map = self.map.clone();
-        let position = map
-            .random_point_in_terrain(|| self.next_random_unit(), terrain, radius)
-            .unwrap_or_else(|| map.random_free_point(|| self.next_random_unit(), radius));
+        let position = map.random_free_point(|| self.next_random_unit(), radius);
         let genome = inherited_genome.unwrap_or_else(|| match initial_neural_configuration {
             InitialNeuralConfiguration::Classic => Genome::random(&mut self.random_state),
             InitialNeuralConfiguration::MotorMinimum => {
@@ -2329,6 +2366,13 @@ fn sensor_grid_cell(position: Vec2) -> (i32, i32) {
     (
         (position.x / MAX_FOOD_SENSOR_RANGE).floor() as i32,
         (position.y / MAX_FOOD_SENSOR_RANGE).floor() as i32,
+    )
+}
+
+fn phytoplankton_density_cell(position: Vec2) -> (i32, i32) {
+    (
+        (position.x / PHYTOPLANKTON_DENSITY_CELL_SIZE).floor() as i32,
+        (position.y / PHYTOPLANKTON_DENSITY_CELL_SIZE).floor() as i32,
     )
 }
 
@@ -2899,6 +2943,71 @@ mod tests {
 
         let positions_after: Vec<Vec2> = world.food.iter().map(|food| food.position).collect();
         assert_eq!(positions_before, positions_after);
+    }
+
+    #[test]
+    fn sunlight_pauses_phytoplankton_aging_but_shadow_starts_it() {
+        let mut map = MapDefinition::empty();
+        map.set_sunlight_polygon(&[
+            vec2(0.0, 0.0),
+            vec2(3_000.0, 0.0),
+            vec2(3_000.0, WORLD_HEIGHT),
+            vec2(0.0, WORLD_HEIGHT),
+        ]);
+        let mut world = World::new_with_map(79, 0, map);
+        world.food = vec![
+            Phytoplankton {
+                position: vec2(1_000.0, 1_000.0),
+                age_ticks: 0,
+            },
+            Phytoplankton {
+                position: vec2(6_000.0, 1_000.0),
+                age_ticks: 0,
+            },
+        ];
+
+        world.tick(
+            &FlowField::new(79).with_intensity(0.0),
+            0.0,
+            0.0,
+            1,
+            FOOD_ENERGY,
+            DEFAULT_MENTAL_ENERGY_COST,
+            MAX_ENERGY,
+            MAX_ENERGY,
+        );
+
+        assert_eq!(world.food.len(), 1);
+        assert_eq!(world.food[0].position, vec2(1_000.0, 1_000.0));
+        assert_eq!(world.food[0].age_ticks, 0);
+    }
+
+    #[test]
+    fn sunlit_phytoplankton_reproduces_with_a_local_density_cap() {
+        let mut map = MapDefinition::empty();
+        map.set_sunlight_polygon(&[
+            Vec2::ZERO,
+            vec2(WORLD_WIDTH, 0.0),
+            vec2(WORLD_WIDTH, WORLD_HEIGHT),
+            vec2(0.0, WORLD_HEIGHT),
+        ]);
+        let mut world = World::new_with_map(80, 0, map);
+        world.food = vec![Phytoplankton {
+            position: vec2(1_000.0, 1_000.0),
+            age_ticks: 0,
+        }];
+
+        for _ in 0..600 {
+            world.reproduce_sunlit_phytoplankton();
+        }
+
+        assert!(world.food.len() > 1);
+        assert!(
+            world
+                .food
+                .iter()
+                .all(|food| world.map.sunlight_intensity(food.position) > 0.0)
+        );
     }
 
     #[test]

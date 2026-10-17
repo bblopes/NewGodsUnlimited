@@ -2,7 +2,7 @@ use macroquad::prelude::*;
 
 use crate::{
     config::{MAX_FLOW_SPEED, WORLD_HEIGHT, WORLD_WIDTH},
-    environment::map::{MapDefinition, OASIS_CENTER, OASIS_RADII, ellipse_level, is_fertile},
+    environment::map::{MapDefinition, OASIS_CENTER, OASIS_RADII, ellipse_level, is_sunlit},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,8 +66,8 @@ impl FlowField {
 
     fn oasis_flow(&self, position: Vec2, map: Option<&MapDefinition>) -> Vec2 {
         let fertile = map.map_or_else(
-            || is_fertile(position),
-            |definition| definition.is_fertile(position),
+            || is_sunlit(position),
+            |definition| definition.is_sunlit(position),
         );
         let mut flow = if fertile {
             let normalized = vec2(

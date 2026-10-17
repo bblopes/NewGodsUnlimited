@@ -1,16 +1,10 @@
-//! Geometria estática da câmara: deserto, oásis e a parede perfurada entre eles.
+//! Geometria estática da câmara: máscara de luz solar, paredes e comportas.
 
 use std::io::{self, Read, Write};
 
 use macroquad::prelude::*;
 
 use crate::config::{WORLD_HEIGHT, WORLD_WIDTH};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Terrain {
-    Desert,
-    Fertile,
-}
 
 pub const OASIS_CENTER: Vec2 = Vec2::new(WORLD_WIDTH * 0.53, WORLD_HEIGHT * 0.50);
 pub const OASIS_RADII: Vec2 = Vec2::new(WORLD_WIDTH * 0.39, WORLD_HEIGHT * 0.255);
@@ -28,7 +22,7 @@ const LEGACY_MAP_GRID_HEIGHT: usize = 90;
 #[derive(Clone)]
 pub struct MapDefinition {
     walls: Vec<u8>,
-    fertile: Vec<u8>,
+    sunlight: Vec<u8>,
 }
 
 impl Default for MapDefinition {
@@ -39,7 +33,7 @@ impl Default for MapDefinition {
                 let position = map.cell_center(x, y);
                 let index = map.index(x, y);
                 if ellipse_level(position) <= 1.0 {
-                    map.fertile[index] = 1;
+                    map.sunlight[index] = 1;
                 }
                 let wall_band = (ellipse_level(position) - 1.0).abs()
                     <= WALL_HALF_THICKNESS * 1.7 / OASIS_RADII.y;
@@ -56,13 +50,19 @@ impl MapDefinition {
     pub fn empty() -> Self {
         Self {
             walls: vec![0; MAP_GRID_WIDTH * MAP_GRID_HEIGHT],
-            fertile: vec![0; MAP_GRID_WIDTH * MAP_GRID_HEIGHT],
+            sunlight: vec![0; MAP_GRID_WIDTH * MAP_GRID_HEIGHT],
         }
     }
 
-    pub fn is_fertile(&self, position: Vec2) -> bool {
+    pub fn is_sunlit(&self, position: Vec2) -> bool {
         self.cell_at(position)
-            .is_some_and(|(x, y)| self.fertile[self.index(x, y)] != 0)
+            .is_some_and(|(x, y)| self.sunlight[self.index(x, y)] != 0)
+    }
+
+    /// Camada preparada para valores contínuos futuros. Nesta primeira fase,
+    /// cada pixel é 0 (sombra) ou 1 (sol pleno).
+    pub fn sunlight_intensity(&self, position: Vec2) -> f32 {
+        self.is_sunlit(position) as u8 as f32
     }
 
     pub fn is_wall(&self, position: Vec2) -> bool {
@@ -173,25 +173,25 @@ impl MapDefinition {
         self.cell_size()
     }
 
-    pub fn clear_fertile(&mut self) {
-        self.fertile.fill(0);
+    pub fn clear_sunlight(&mut self) {
+        self.sunlight.fill(0);
     }
 
-    pub fn set_fertile_polygon(&mut self, polygon: &[Vec2]) {
-        self.clear_fertile();
+    pub fn set_sunlight_polygon(&mut self, polygon: &[Vec2]) {
+        self.clear_sunlight();
         if polygon.len() < 3 {
             return;
         }
         for y in 0..MAP_GRID_HEIGHT {
             for x in 0..MAP_GRID_WIDTH {
                 let index = self.index(x, y);
-                self.fertile[index] = point_in_polygon(self.cell_center(x, y), polygon) as u8;
+                self.sunlight[index] = point_in_polygon(self.cell_center(x, y), polygon) as u8;
             }
         }
     }
 
-    pub fn has_fertile_area(&self) -> bool {
-        self.fertile.iter().any(|&value| value != 0)
+    pub fn has_sunlight_area(&self) -> bool {
+        self.sunlight.iter().any(|&value| value != 0)
     }
 
     pub fn wall_cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
@@ -200,8 +200,8 @@ impl MapDefinition {
         })
     }
 
-    pub fn fertile_cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        self.fertile
+    pub fn sunlight_cells(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.sunlight
             .iter()
             .enumerate()
             .filter_map(|(index, value)| {
@@ -237,31 +237,6 @@ impl MapDefinition {
         previous
     }
 
-    pub fn random_point_in_terrain(
-        &self,
-        mut random: impl FnMut() -> f32,
-        terrain: Terrain,
-        radius: f32,
-    ) -> Option<Vec2> {
-        // Sem área fértil, não existe um "centro padrão" para cair: quem
-        // pediu terreno fértil simplesmente não recebe ponto de spawn.
-        if terrain == Terrain::Fertile && !self.has_fertile_area() {
-            return None;
-        }
-        for _ in 0..480 {
-            let position = vec2(
-                radius + random() * (WORLD_WIDTH - 2.0 * radius),
-                radius + random() * (WORLD_HEIGHT - 2.0 * radius),
-            );
-            if self.is_fertile(position) == (terrain == Terrain::Fertile)
-                && !self.overlaps_wall(position, radius)
-            {
-                return Some(position);
-            }
-        }
-        None
-    }
-
     /// Alternativa neutra para fundadores: evita concentrá-los no centro se
     /// uma categoria de terreno não tiver área disponível.
     pub fn random_free_point(&self, mut random: impl FnMut() -> f32, radius: f32) -> Vec2 {
@@ -287,14 +262,14 @@ impl MapDefinition {
 
     pub fn write_to(&self, writer: &mut impl Write) -> io::Result<()> {
         writer.write_all(&self.walls)?;
-        writer.write_all(&self.fertile)
+        writer.write_all(&self.sunlight)
     }
 
     pub fn read_from(reader: &mut impl Read) -> io::Result<Self> {
         let mut map = Self::empty();
         reader.read_exact(&mut map.walls)?;
-        reader.read_exact(&mut map.fertile)?;
-        if map.walls.iter().any(|value| *value > 1) || map.fertile.iter().any(|value| *value > 1) {
+        reader.read_exact(&mut map.sunlight)?;
+        if map.walls.iter().any(|value| *value > 1) || map.sunlight.iter().any(|value| *value > 1) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "máscara de mapa inválida",
@@ -309,11 +284,11 @@ impl MapDefinition {
     pub fn read_legacy_from(reader: &mut impl Read) -> io::Result<Self> {
         let legacy_len = LEGACY_MAP_GRID_WIDTH * LEGACY_MAP_GRID_HEIGHT;
         let mut legacy_walls = vec![0; legacy_len];
-        let mut legacy_fertile = vec![0; legacy_len];
+        let mut legacy_sunlight = vec![0; legacy_len];
         reader.read_exact(&mut legacy_walls)?;
-        reader.read_exact(&mut legacy_fertile)?;
+        reader.read_exact(&mut legacy_sunlight)?;
         if legacy_walls.iter().any(|value| *value > 1)
-            || legacy_fertile.iter().any(|value| *value > 1)
+            || legacy_sunlight.iter().any(|value| *value > 1)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -330,7 +305,7 @@ impl MapDefinition {
                         let target_y = legacy_y * 2 + y;
                         let target_index = map.index(target_x, target_y);
                         map.walls[target_index] = legacy_walls[legacy_index];
-                        map.fertile[target_index] = legacy_fertile[legacy_index];
+                        map.sunlight[target_index] = legacy_sunlight[legacy_index];
                     }
                 }
             }
@@ -393,16 +368,8 @@ const NORTHWEST_GATE_ANGLE: f32 = -2.02;
 const SOUTHEAST_GATE_ANGLE: f32 = 0.82;
 const GATE_HALF_ANGLE: f32 = 0.23;
 
-pub fn terrain_at(position: Vec2) -> Terrain {
-    if ellipse_level(position) <= 1.0 {
-        Terrain::Fertile
-    } else {
-        Terrain::Desert
-    }
-}
-
-pub fn is_fertile(position: Vec2) -> bool {
-    terrain_at(position) == Terrain::Fertile
+pub fn is_sunlit(position: Vec2) -> bool {
+    ellipse_level(position) <= 1.0
 }
 
 pub fn ellipse_level(position: Vec2) -> f32 {
@@ -492,9 +459,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn oasis_center_is_fertile_and_corner_is_desert() {
-        assert!(is_fertile(OASIS_CENTER));
-        assert!(!is_fertile(Vec2::ZERO));
+    fn oasis_center_is_sunlit_and_corner_is_unlit() {
+        assert!(is_sunlit(OASIS_CENTER));
+        assert!(!is_sunlit(Vec2::ZERO));
     }
 
     #[test]
@@ -516,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn lasso_replaces_the_fertile_mask() {
+    fn lasso_replaces_the_sunlight_mask() {
         let mut map = MapDefinition::empty();
         let polygon = [
             vec2(1_000.0, 1_000.0),
@@ -524,10 +491,10 @@ mod tests {
             vec2(2_000.0, 2_000.0),
             vec2(1_000.0, 2_000.0),
         ];
-        map.set_fertile_polygon(&polygon);
+        map.set_sunlight_polygon(&polygon);
 
-        assert!(map.is_fertile(vec2(1_500.0, 1_500.0)));
-        assert!(!map.is_fertile(vec2(3_000.0, 1_500.0)));
+        assert!(map.is_sunlit(vec2(1_500.0, 1_500.0)));
+        assert!(!map.is_sunlit(vec2(3_000.0, 1_500.0)));
     }
 
     #[test]

@@ -191,6 +191,7 @@ struct DemographicsWindowData {
     deaths_by_starvation_total: u64,
     deaths_by_phagocytosis_total: u64,
     deaths_by_age_total: u64,
+    reproduction_energy: f32,
     energy_distribution: Vec<usize>,
     energy_bucket_width: f32,
     telemetry: Vec<TelemetrySample>,
@@ -228,7 +229,7 @@ struct SessionPreset {
 }
 
 /// Um preset de mapa é intencionalmente menor que um preset de sessão: ele
-/// guarda apenas paredes, área fértil e o modelo de corrente.
+/// guarda apenas paredes, iluminação solar e o modelo de corrente.
 #[derive(Clone)]
 struct MapPreset {
     name: String,
@@ -287,7 +288,7 @@ enum MapTool {
     None,
     Wall,
     Eraser,
-    FertileLasso,
+    SunlightLasso,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -366,7 +367,7 @@ struct SessionUi {
     show_flow: bool,
     show_sensor_reach: bool,
     show_pheromone_field: bool,
-    show_fertile_area: bool,
+    show_sunlight_area: bool,
     pheromone_display: PheromoneDisplay,
     pheromone_menu_open: bool,
     flow_enabled: bool,
@@ -471,7 +472,7 @@ impl Default for SessionUi {
             show_flow: false,
             show_sensor_reach: false,
             show_pheromone_field: false,
-            show_fertile_area: true,
+            show_sunlight_area: true,
             pheromone_display: PheromoneDisplay::Pg,
             pheromone_menu_open: false,
             flow_enabled: true,
@@ -498,7 +499,7 @@ impl Default for SessionUi {
             show_crowding_violations: false,
             mental_energy_cost: DEFAULT_MENTAL_ENERGY_COST,
             desert_emission: 0.12,
-            fertile_emission: 0.24,
+            fertile_emission: 0.12,
             lifetime: 600,
             food_energy: FOOD_ENERGY,
             initial_cells: 20,
@@ -520,7 +521,7 @@ impl Default for SessionUi {
             reproduction_energy_input: MAX_ENERGY.to_string(),
             reproduction_limit_input: DEFAULT_REPRODUCTION_LIMIT.to_string(),
             desert_emission_input: "50".to_owned(),
-            fertile_emission_input: "100".to_owned(),
+            fertile_emission_input: "50".to_owned(),
             editing_field: None,
             session_scroll: 0.0,
             applied: AppliedSettings {
@@ -532,7 +533,7 @@ impl Default for SessionUi {
                 reproduction_limit: DEFAULT_REPRODUCTION_LIMIT,
                 mental_energy_cost: DEFAULT_MENTAL_ENERGY_COST,
                 desert_emission: 0.12,
-                fertile_emission: 0.24,
+                fertile_emission: 0.12,
                 lifetime: 600,
                 food_energy: FOOD_ENERGY,
                 flow_enabled: true,
@@ -938,9 +939,11 @@ fn simulation_worker(
                 }
                 EngineCommand::SetDesertEmission(emission) => {
                     settings.desert_emission = emission.max(0.0);
+                    settings.fertile_emission = settings.desert_emission;
                 }
                 EngineCommand::SetFertileEmission(emission) => {
-                    settings.fertile_emission = emission.max(0.0);
+                    settings.desert_emission = emission.max(0.0);
+                    settings.fertile_emission = settings.desert_emission;
                 }
                 EngineCommand::SetFoodLifetime(lifetime) => {
                     settings.lifetime = lifetime.max(1);
@@ -953,6 +956,7 @@ fn simulation_worker(
                     settings.reproduction_limit = settings
                         .reproduction_limit
                         .max(settings.reproduction_energy);
+                    world.reproduction_minimum = settings.reproduction_energy;
                 }
                 EngineCommand::SetReproductionLimit(limit) => {
                     settings.reproduction_limit = limit.max(settings.reproduction_energy);
@@ -1461,8 +1465,8 @@ fn apply_embedded_default_preset(session: &mut SessionUi) {
     session.mental_energy_cost = 0.0009;
     session.desert_emission = emission_from_display(30.0);
     session.desert_emission_input = "30".to_owned();
-    session.fertile_emission = emission_from_display(100.0);
-    session.fertile_emission_input = "100".to_owned();
+    session.fertile_emission = session.desert_emission;
+    session.fertile_emission_input = session.desert_emission_input.clone();
     session.lifetime = 3_511;
     session.food_energy = 85.0;
     session.flow_enabled = true;
@@ -1663,7 +1667,7 @@ fn load_run_file(path: &Path) -> io::Result<LoadedRun> {
     let _header_tick = read_u64_run(&mut reader)?;
     let _header_population = read_u32_run(&mut reader)?;
     let settings = read_engine_settings(&mut reader, version)?;
-    let world = match version {
+    let mut world = match version {
         1 => World::read_checkpoint_v1(&mut reader)?,
         2 => World::read_checkpoint_v2(&mut reader)?,
         3 => World::read_checkpoint_v3(&mut reader)?,
@@ -1678,6 +1682,9 @@ fn load_run_file(path: &Path) -> io::Result<LoadedRun> {
         16 => World::read_checkpoint_pre_neural_node_activity(&mut reader)?,
         _ => World::read_checkpoint(&mut reader)?,
     };
+    // O limiar vem da configuração de sessão, não precisa alterar o formato
+    // do checkpoint para aparecer corretamente no gráfico ao carregar pausado.
+    world.reproduction_minimum = settings.reproduction_energy;
     let telemetry_count = read_count_run(&mut reader, MAX_TELEMETRY_SAMPLES)?;
     let mut telemetry = Vec::with_capacity(telemetry_count);
     for _ in 0..telemetry_count {
@@ -1974,7 +1981,7 @@ fn read_bool_run(reader: &mut impl Read) -> io::Result<bool> {
 fn read_flow_preset(reader: &mut impl Read) -> io::Result<FlowPreset> {
     match read_u32_run(reader)? {
         // O código histórico 0 era Oásis; migra para Clássico porque a
-        // corrente agora é independente do desenho de terra fértil.
+        // corrente agora é independente do desenho de iluminação solar.
         0 => Ok(FlowPreset::Classic),
         1 => Ok(FlowPreset::Classic),
         2 => Ok(FlowPreset::Left),
@@ -2202,7 +2209,7 @@ pub async fn run() {
             session.show_sensor_reach,
             session.show_crowding_violations,
             session.show_pheromone_field,
-            session.show_fertile_area,
+            session.show_sunlight_area,
             session.pheromone_display,
             (session.tab == PanelTab::Cells)
                 .then_some(session.selected_cell_id)
@@ -2519,6 +2526,7 @@ fn demographics_data(world: &World, telemetry: Vec<TelemetrySample>) -> Demograp
         deaths_by_starvation_total: world.deaths_by_starvation_total,
         deaths_by_phagocytosis_total: world.deaths_by_phagocytosis_total,
         deaths_by_age_total: world.deaths_by_age_total,
+        reproduction_energy: world.reproduction_minimum,
         energy_distribution,
         energy_bucket_width,
         telemetry,
@@ -2526,9 +2534,9 @@ fn demographics_data(world: &World, telemetry: Vec<TelemetrySample>) -> Demograp
 }
 
 fn write_demographics_data(path: &Path, data: &DemographicsWindowData) -> std::io::Result<()> {
-    let mut encoded = String::from("ECOSYSTEM_DEMOGRAPHICS_V5\n");
+    let mut encoded = String::from("ECOSYSTEM_DEMOGRAPHICS_V6\n");
     encoded.push_str(&format!(
-        "S|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
+        "S|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
         data.tick,
         data.population,
         data.births_total,
@@ -2538,6 +2546,7 @@ fn write_demographics_data(path: &Path, data: &DemographicsWindowData) -> std::i
         data.deaths_by_starvation_total,
         data.deaths_by_phagocytosis_total,
         data.deaths_by_age_total,
+        data.reproduction_energy,
     ));
     encoded.push_str(&format!("E|{}|", data.energy_bucket_width));
     for (index, count) in data.energy_distribution.iter().enumerate() {
@@ -2576,6 +2585,7 @@ fn read_demographics_data(path: &Path) -> Option<DemographicsWindowData> {
         "ECOSYSTEM_DEMOGRAPHICS_V3" => 3,
         "ECOSYSTEM_DEMOGRAPHICS_V4" => 4,
         "ECOSYSTEM_DEMOGRAPHICS_V5" => 5,
+        "ECOSYSTEM_DEMOGRAPHICS_V6" => 6,
         _ => return None,
     };
     let stats: Vec<&str> = lines.next()?.split('|').collect();
@@ -2592,6 +2602,7 @@ fn read_demographics_data(path: &Path) -> Option<DemographicsWindowData> {
     let deaths_by_starvation = if version >= 4 { stat(7) } else { "0" };
     let deaths_by_phagocytosis = if version >= 4 { stat(8) } else { "0" };
     let deaths_by_age = if version >= 5 { stat(9) } else { "0" };
+    let reproduction_energy = if version >= 6 { stat(10) } else { "0" };
     let energy_line = lines.next()?;
     let energy_parts: Vec<&str> = energy_line.split('|').collect();
     let ["E", energy_bucket_width, encoded_distribution] = energy_parts.as_slice() else {
@@ -2658,6 +2669,7 @@ fn read_demographics_data(path: &Path) -> Option<DemographicsWindowData> {
         deaths_by_starvation_total: deaths_by_starvation.parse().ok()?,
         deaths_by_phagocytosis_total: deaths_by_phagocytosis.parse().ok()?,
         deaths_by_age_total: deaths_by_age.parse().ok()?,
+        reproduction_energy: reproduction_energy.parse().ok()?,
         energy_distribution,
         energy_bucket_width: energy_bucket_width.parse().ok()?,
         telemetry,
@@ -2708,7 +2720,7 @@ fn draw_arena(
     show_sensor_reach: bool,
     show_crowding_violations: bool,
     show_pheromone_field: bool,
-    show_fertile_area: bool,
+    show_sunlight_area: bool,
     pheromone_display: PheromoneDisplay,
     selected_cell_id: Option<u64>,
 ) {
@@ -2733,7 +2745,7 @@ fn draw_arena(
     if show_pheromone_field {
         draw_pheromone_field(arena, world, pheromone_display);
     }
-    draw_map_geometry(arena, map, show_fertile_area);
+    draw_map_geometry(arena, map, show_sunlight_area);
     if show_flow {
         draw_flow_field(
             arena,
@@ -2754,11 +2766,11 @@ fn draw_arena(
     draw_food(arena, &world.food);
 }
 
-fn draw_map_geometry(arena: Rect, map: &MapDefinition, show_fertile_area: bool) {
+fn draw_map_geometry(arena: Rect, map: &MapDefinition, show_sunlight_area: bool) {
     let cell_w = arena.w / MAP_GRID_WIDTH as f32;
     let cell_h = arena.h / MAP_GRID_HEIGHT as f32;
-    if show_fertile_area {
-        for (x, y) in map.fertile_cells() {
+    if show_sunlight_area {
+        for (x, y) in map.sunlight_cells() {
             draw_rectangle(
                 arena.x + x as f32 * cell_w,
                 arena.y + y as f32 * cell_h,
@@ -3077,7 +3089,7 @@ fn handle_map_editor(session: &mut SessionUi, arena: Rect) {
             session.last_brush_position = Some(world);
             session.map_dirty = true;
         }
-        MapTool::FertileLasso => {
+        MapTool::SunlightLasso => {
             if is_mouse_button_pressed(MouseButton::Left) {
                 session.lasso_points.clear();
                 session.lasso_points.push(world);
@@ -3092,7 +3104,7 @@ fn handle_map_editor(session: &mut SessionUi, arena: Rect) {
             if is_mouse_button_released(MouseButton::Left) {
                 session
                     .edited_map
-                    .set_fertile_polygon(&session.lasso_points);
+                    .set_sunlight_polygon(&session.lasso_points);
                 session.lasso_points.clear();
                 session.map_tool = MapTool::None;
                 session.map_dirty = true;
@@ -3769,9 +3781,8 @@ fn draw_session_tab(
 
     section_title(left, y(661.0), "Fitoplâncton");
     let food_status = format!(
-        "deserto {} · fértil {} · {} no mapa",
+        "emissão uniforme {} · {} no mapa",
         format_emission_display(metrics.active_desert_emission),
-        format_emission_display(metrics.active_fertile_emission),
         world.food.len()
     );
     let food_status_width = measure_text(&food_status, None, 11, 1.0).width;
@@ -3784,25 +3795,16 @@ fn draw_session_tab(
     );
     if editable_number_row(
         Rect::new(left, y(675.0), width, 38.0),
-        "Emissão deserto",
+        "Emissão uniforme",
         &session.desert_emission_input,
         session.editing_field == Some(EditingField::DesertEmission),
         session.desert_emission_is_dirty(),
     ) {
         begin_editing(session, EditingField::DesertEmission);
     }
-    if editable_number_row(
-        Rect::new(left, y(720.0), width, 38.0),
-        "Emissão terra fértil",
-        &session.fertile_emission_input,
-        session.editing_field == Some(EditingField::FertileEmission),
-        session.fertile_emission_is_dirty(),
-    ) {
-        begin_editing(session, EditingField::FertileEmission);
-    }
     if let Some(lifetime) = slider_row(
         left,
-        y(765.0),
+        y(720.0),
         width,
         "Vida fito",
         session.lifetime as f32,
@@ -3815,7 +3817,7 @@ fn draw_session_tab(
     }
     match stepper_row(
         left,
-        y(810.0),
+        y(765.0),
         width,
         "Energia",
         &format!("{:.0}", session.food_energy),
@@ -4136,7 +4138,7 @@ fn draw_map_preset_modal(session: &mut SessionUi, action: &mut PanelAction) {
     draw_rectangle_lines(x, y, width, height, 1.0, BORDER);
     draw_text("Presets de mapa", x + 18.0, y + 34.0, 23.0, TEXT);
     draw_text(
-        "Guarda paredes, área fértil e correnteza.",
+        "Guarda paredes, iluminação solar e correnteza.",
         x + 18.0,
         y + 56.0,
         12.0,
@@ -4477,33 +4479,21 @@ fn draw_session_tab_compact(
     cursor += 40.0;
     if session.phytoplankton_section_open {
         let food_status = format!(
-            "deserto {} · fértil {} · {} no mapa",
+            "emissão uniforme {} · {} no mapa",
             format_emission_display(metrics.active_desert_emission),
-            format_emission_display(metrics.active_fertile_emission),
             world.food.len()
         );
         draw_text(&food_status, left, y(cursor), 11.0, MUTED);
         cursor += 12.0;
         if editable_number_row(
             Rect::new(left, y(cursor), width, 38.0),
-            "Emissão deserto",
+            "Emissão uniforme",
             &session.desert_emission_input,
             session.editing_field == Some(EditingField::DesertEmission),
             session.desert_emission_is_dirty(),
         ) {
             begin_editing(session, EditingField::DesertEmission);
         }
-        cursor += 45.0;
-        if editable_number_row(
-            Rect::new(left, y(cursor), width, 38.0),
-            "Emissão terra fértil",
-            &session.fertile_emission_input,
-            session.editing_field == Some(EditingField::FertileEmission),
-            session.fertile_emission_is_dirty(),
-        ) {
-            begin_editing(session, EditingField::FertileEmission);
-        }
-        cursor += 45.0;
         if let Some(lifetime) = slider_row(
             left,
             y(cursor),
@@ -4792,28 +4782,28 @@ fn draw_settings_tab(left: f32, width: f32, session: &mut SessionUi, world: &Wor
     }
     if button(
         Rect::new(left + (tool_width + 4.0) * 2.0, 284.0, tool_width, 32.0),
-        "Área fértil",
-        session.map_tool == MapTool::FertileLasso || session.edited_map.has_fertile_area(),
+        "Região ensolarada",
+        session.map_tool == MapTool::SunlightLasso || session.edited_map.has_sunlight_area(),
     ) {
-        if session.edited_map.has_fertile_area() && session.map_tool != MapTool::FertileLasso {
-            session.edited_map.clear_fertile();
+        if session.edited_map.has_sunlight_area() && session.map_tool != MapTool::SunlightLasso {
+            session.edited_map.clear_sunlight();
             session.map_dirty = true;
         } else {
-            session.map_tool = MapTool::FertileLasso;
+            session.map_tool = MapTool::SunlightLasso;
             session.lasso_points.clear();
             session.last_brush_position = None;
         }
     }
     if button(
         Rect::new(left, 328.0, width, 32.0),
-        if session.show_fertile_area {
-            "Ocultar área fértil"
+        if session.show_sunlight_area {
+            "Ocultar iluminação"
         } else {
-            "Visualizar área fértil"
+            "Visualizar iluminação"
         },
-        session.show_fertile_area,
+        session.show_sunlight_area,
     ) {
-        session.show_fertile_area = !session.show_fertile_area;
+        session.show_sunlight_area = !session.show_sunlight_area;
     }
     if button(
         Rect::new(left, 372.0, width, 32.0),
@@ -5745,6 +5735,7 @@ fn draw_demographics_dashboard(
         |sample| sample.population as f32,
         ACCENT,
         "células",
+        None,
     );
 
     let gap = 12.0;
@@ -5758,6 +5749,7 @@ fn draw_demographics_dashboard(
         |sample| sample.average_energy,
         Color::new(0.94, 0.69, 0.24, 1.0),
         "energia",
+        Some((data.reproduction_energy, "mín. reprodução")),
     );
     draw_energy_histogram(
         Rect::new(chart_x + small_w + gap, secondary_y, small_w, secondary_h),
@@ -5777,6 +5769,7 @@ fn draw_demographics_dashboard(
         |sample| sample.average_age,
         Color::new(0.38, 0.66, 0.96, 1.0),
         "ticks",
+        None,
     );
     draw_line_chart(
         Rect::new(
@@ -5790,6 +5783,7 @@ fn draw_demographics_dashboard(
         |sample| sample.genetic_diversity * 100.0,
         Color::new(0.31, 0.84, 0.62, 1.0),
         "%",
+        None,
     );
 
     let rates_y = secondary_y + secondary_h + gap;
@@ -5977,6 +5971,7 @@ fn draw_line_chart(
     value_of: impl Fn(&TelemetrySample) -> f32,
     color: Color,
     unit: &str,
+    reference: Option<(f32, &str)>,
 ) {
     draw_rectangle(
         rect.x,
@@ -5992,8 +5987,12 @@ fn draw_line_chart(
             return;
         }
         let values: Vec<f32> = samples.iter().map(&value_of).collect();
-        let minimum = values.iter().copied().fold(f32::INFINITY, f32::min);
-        let maximum = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut minimum = values.iter().copied().fold(f32::INFINITY, f32::min);
+        let mut maximum = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        if let Some((value, _)) = reference {
+            minimum = minimum.min(value);
+            maximum = maximum.max(value);
+        }
         let span = (maximum - minimum).max(0.001);
         let plot = Rect::new(rect.x + 7.0, rect.y + 18.0, rect.w - 14.0, rect.h - 24.0);
         for (index, pair) in values.windows(2).enumerate() {
@@ -6002,6 +6001,10 @@ fn draw_line_chart(
             let y1 = plot.y + plot.h - (pair[0] - minimum) / span * plot.h;
             let y2 = plot.y + plot.h - (pair[1] - minimum) / span * plot.h;
             draw_line(x1, y1, x2, y2, 1.4, color);
+        }
+        if let Some((value, _)) = reference {
+            let y = plot.y + plot.h - (value - minimum) / span * plot.h;
+            draw_dashed_horizontal(plot, y, Color::new(0.95, 0.82, 0.28, 0.95));
         }
         return;
     }
@@ -6015,6 +6018,10 @@ fn draw_line_chart(
         .iter()
         .map(&value_of)
         .fold(f32::NEG_INFINITY, f32::max);
+    if let Some((value, _)) = reference {
+        minimum = minimum.min(value);
+        maximum = maximum.max(value);
+    }
     if (maximum - minimum).abs() < 0.000_1 {
         let padding = maximum.abs().max(1.0) * 0.12;
         minimum -= padding;
@@ -6055,6 +6062,20 @@ fn draw_line_chart(
         let y2 = plot.y + plot.h - (value_of(&second) - minimum) / (maximum - minimum) * plot.h;
         draw_line(x1, y1, x2, y2, 2.0, color);
     }
+    if let Some((value, label)) = reference {
+        let y = plot.y + plot.h - (value - minimum) / (maximum - minimum) * plot.h;
+        let reference_color = Color::new(0.95, 0.82, 0.28, 0.95);
+        draw_dashed_horizontal(plot, y, reference_color);
+        let text = format!("{label} · {}", format_chart_value(value, unit));
+        let text_width = measure_text(&text, None, 10, 1.0).width;
+        draw_text(
+            &text,
+            plot.x + plot.w - text_width,
+            (y - 5.0).max(rect.y + 30.0),
+            10.0,
+            reference_color,
+        );
+    }
     let tick_label = format!("{} a {}", first_tick, last_tick);
     draw_text(&tick_label, plot.x, rect.y + rect.h - 10.0, 10.0, MUTED);
     if let Some(last) = samples.last() {
@@ -6067,6 +6088,16 @@ fn draw_line_chart(
             11.0,
             color,
         );
+    }
+}
+
+fn draw_dashed_horizontal(plot: Rect, y: f32, color: Color) {
+    let dash = 6.0;
+    let gap = 4.0;
+    let mut x = plot.x;
+    while x < plot.x + plot.w {
+        draw_line(x, y, (x + dash).min(plot.x + plot.w), y, 1.2, color);
+        x += dash + gap;
     }
 }
 
@@ -6706,6 +6737,8 @@ fn commit_field(session: &mut SessionUi, field: EditingField) -> bool {
                     session.desert_emission = emission_from_display(emission);
                     session.desert_emission_input =
                         format_emission_display(session.desert_emission);
+                    session.fertile_emission = session.desert_emission;
+                    session.fertile_emission_input = session.desert_emission_input.clone();
                     return true;
                 }
             }

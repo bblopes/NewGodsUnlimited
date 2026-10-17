@@ -39,11 +39,11 @@ pub fn tick(&mut self, flow: &FlowField, ..., reproduction_limit: f32)
 | Etapa no código | Funções importantes | Resultado |
 |---|---|---|
 | 1. Tempo | `self.tick += 1` | Um novo instante lógico começa; limites de reprodução são normalizados. |
-| 2. Emissão | `spawn_food_in` | Créditos acumulados viram fitoplâncton em terreno desértico ou fértil. |
+| 2. Emissão | `spawn_food_anywhere` | Um único crédito de emissão gera fitoplâncton uniformemente no mapa. |
 | 3. Química | `PheromoneField::rebuild` | Campo químico é reconstruído com as emissões decididas no tick anterior. |
 | 4. Sensores | `update_sensors` | Cada organismo recebe alimento direcional, corrente, energia, contato, química e força externa. |
 | 5. Decisão | `Brain::tick` | Sensores e estado interno anterior viram motores de nado, reprodução, fagocitose, emissão e doação. |
-| 6. Alimento | `FlowField::sample_with_map` | A corrente desloca e envelhece cada partícula de alimento. |
+| 6. Alimento | `FlowField::sample_with_map`, `reproduce_sunlit_phytoplankton` | Corrente desloca o fito; sombra o envelhece e luz permite duplicação local. |
 | 7. Células | `motors.swim_velocity` | Corrente mais nado deslocam organismos; o mapa bloqueia paredes. |
 | 8. Interações | `apply_phagocytosis`, `apply_anti_cramming`, `apply_donations` | Células podem puxar/consumir presas, separar-se e transferir energia. |
 | 9. Custos | `mental_energy_cost`, `pheromone_energy_cost` | A célula paga metabolismo, movimento, cérebro e química. |
