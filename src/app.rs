@@ -45,6 +45,9 @@ const TEXT: Color = Color::new(0.91, 0.93, 0.96, 1.0);
 const MUTED: Color = Color::new(0.56, 0.62, 0.70, 1.0);
 const ACCENT: Color = Color::new(0.20, 0.66, 0.93, 1.0);
 const RED: Color = Color::new(0.91, 0.12, 0.16, 1.0);
+/// Internos e motores cujo bit hereditário está desligado. Eles não entram na
+/// avaliação da rede nem pagam manutenção ou conexões neurais.
+const INACTIVE_NEURON: Color = Color::new(0.24, 0.28, 0.34, 1.0);
 const SPEED_MULTIPLIERS: [f32; 7] = [1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0];
 const TELEMETRY_INTERVAL_TICKS: u64 = 250;
 const MAX_TELEMETRY_SAMPLES: usize = 12_000;
@@ -5059,7 +5062,7 @@ fn draw_individual_cells_view(left: f32, width: f32, session: &mut SessionUi, wo
     }
     draw_text("Rede neural ao vivo", left, neural_title_y, 17.0, TEXT);
     draw_text(
-        "verde: sinal positivo · vermelho: negativo",
+        "verde: sinal positivo · vermelho: negativo · cinza: neurônio inativo",
         left,
         neural_title_y + 19.0,
         13.0,
@@ -6363,7 +6366,11 @@ fn draw_brain_viewer(rect: Rect, organism: &Organism) {
     for slot in 0..SLOT_COUNT {
         let position = positions[slot];
         let value = organism.brain.slot_value(slot);
-        let node_color = if slot >= MOTOR_START {
+        let genetically_active =
+            slot < INTERNAL_START || organism.genome.neural_slot_is_active(slot);
+        let node_color = if !genetically_active {
+            INACTIVE_NEURON
+        } else if slot >= MOTOR_START {
             Color::new(0.08, 0.30 + 0.70 * value, 0.22 + 0.48 * value, 1.0)
         } else if value >= 0.0 {
             Color::new(0.15, 0.34 + 0.42 * value, 0.55 + 0.26 * value, 1.0)
@@ -6376,7 +6383,11 @@ fn draw_brain_viewer(rect: Rect, organism: &Organism) {
             position.y,
             node_radius,
             1.0,
-            Color::new(0.01, 0.02, 0.03, 1.0),
+            if genetically_active {
+                Color::new(0.01, 0.02, 0.03, 1.0)
+            } else {
+                Color::new(0.56, 0.62, 0.70, 0.75)
+            },
         );
         let label = slot_label(slot);
         let measured = measure_text(label, None, label_size, 1.0);
@@ -6385,7 +6396,7 @@ fn draw_brain_viewer(rect: Rect, organism: &Organism) {
             position.x - measured.width / 2.0,
             position.y + label_size as f32 * 0.34,
             label_size as f32,
-            TEXT,
+            if genetically_active { TEXT } else { MUTED },
         );
     }
     let mouse = vec2(mouse_position().0, mouse_position().1);
@@ -6397,7 +6408,9 @@ fn draw_brain_viewer(rect: Rect, organism: &Organism) {
                 .total_cmp(&positions[*right].distance_squared(mouse))
         })
     {
-        draw_neuron_tooltip(mouse, slot);
+        let genetically_active =
+            slot < INTERNAL_START || organism.genome.neural_slot_is_active(slot);
+        draw_neuron_tooltip(mouse, slot, genetically_active);
     }
     draw_text("sensores", rect.x + 8.0, rect.y + 18.0, 12.0, MUTED);
     draw_text(
@@ -6520,12 +6533,21 @@ fn neuron_name(slot: usize) -> String {
     }
 }
 
-fn draw_neuron_tooltip(mouse: Vec2, slot: usize) {
+fn draw_neuron_tooltip(mouse: Vec2, slot: usize, genetically_active: bool) {
     let title = format!("{} · {}", slot_label(slot), neuron_name(slot));
+    let state = if slot < INTERNAL_START {
+        "sensor fixo"
+    } else if genetically_active {
+        "ativo geneticamente"
+    } else {
+        "inativo geneticamente · sem custo"
+    };
     let font_size = 14;
     let padding = 10.0;
-    let width = measure_text(&title, None, font_size, 1.0).width + padding * 2.0;
-    let height = 31.0;
+    let title_width = measure_text(&title, None, font_size, 1.0).width;
+    let state_width = measure_text(state, None, 12, 1.0).width;
+    let width = title_width.max(state_width) + padding * 2.0;
+    let height = 47.0;
     let x = if mouse.x + width + 18.0 <= screen_width() {
         mouse.x + 14.0
     } else {
@@ -6533,8 +6555,30 @@ fn draw_neuron_tooltip(mouse: Vec2, slot: usize) {
     };
     let y = (mouse.y - height - 10.0).clamp(4.0, screen_height() - height - 4.0);
     draw_rectangle(x, y, width, height, Color::new(0.015, 0.022, 0.035, 0.96));
-    draw_rectangle_lines(x, y, width, height, 1.0, ACCENT);
+    draw_rectangle_lines(
+        x,
+        y,
+        width,
+        height,
+        1.0,
+        if genetically_active || slot < INTERNAL_START {
+            ACCENT
+        } else {
+            MUTED
+        },
+    );
     draw_text(&title, x + padding, y + 20.5, font_size as f32, TEXT);
+    draw_text(
+        state,
+        x + padding,
+        y + 37.0,
+        12.0,
+        if genetically_active || slot < INTERNAL_START {
+            MUTED
+        } else {
+            Color::new(0.72, 0.76, 0.82, 1.0)
+        },
+    );
 }
 
 fn ensure_selected_cell(session: &mut SessionUi, world: &World) {

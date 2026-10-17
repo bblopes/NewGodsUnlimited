@@ -419,7 +419,10 @@ impl Genome {
             && (source < INTERNAL_START || self.neural_slot_is_active(source))
     }
 
-    fn neural_slot_is_active(&self, slot: usize) -> bool {
+    /// Diz se um neurônio interno ou motor está habilitado pelo seu bit
+    /// hereditário. Sensores externos são partes fixas da fisiologia e, por
+    /// isso, retornam `false` aqui em vez de fingirem ter um gene próprio.
+    pub fn neural_slot_is_active(&self, slot: usize) -> bool {
         let index = if (INTERNAL_START..MOTOR_START).contains(&slot) {
             slot - INTERNAL_START
         } else if (MOTOR_START..SLOT_COUNT).contains(&slot) {
