@@ -15,8 +15,7 @@ por implementação, testes e geração do executável principal.
   o teto impede que uma célula enxergue todo o mapa.
 - Atualizar os testes e os valores exibidos no painel do indivíduo.
 
-**Estado:** implementado e validado por testes; aguardando a geração do
-executável e a publicação.
+**Estado:** publicado na entrega Windows atual.
 
 ### Vida do fitoplâncton sob iluminação
 
@@ -30,8 +29,7 @@ executável e a publicação.
 - O texto da interface deixará explícito: vida-base sem sol e bônus de vida
   sob sol.
 
-**Estado:** implementado e validado por testes; aguardando a geração do
-executável e a publicação.
+**Estado:** publicado na entrega Windows atual.
 
 ### Inserir indivíduo pelo mapa
 
@@ -60,8 +58,7 @@ Critérios de implementação:
 - salvar o mundo resultante no checkpoint, para que a população inserida seja
   restaurada ao carregar a sessão.
 
-**Estado:** implementado e validado por testes; aguardando a geração do
-executável e a publicação.
+**Estado:** publicado na entrega Windows atual.
 
 ### Controles de sessão já solicitados
 
@@ -69,7 +66,7 @@ executável e a publicação.
 - Restaurar o modal de salvar o estado da sessão no executável padrão, para que
   uma run possa ser enviada para análise.
 
-**Estado:** implementado; a validação final ocorrerá na entrega Windows.
+**Estado:** publicado na entrega Windows atual.
 
 ## Backlog após esta subida
 
