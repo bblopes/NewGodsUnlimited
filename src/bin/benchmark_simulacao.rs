@@ -20,6 +20,7 @@ use new_gods_unlimited::{
     simulation::{
         genome::{
             GENOME_BYTES, Genome, LEGACY_V1_GENOME_BYTES, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES,
+            PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
         },
         world::{
             AntiCrammingConfig, DEFAULT_MENTAL_ENERGY_COST, FOOD_ENERGY,
@@ -29,7 +30,7 @@ use new_gods_unlimited::{
 };
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
-const MAX_RUN_FORMAT_VERSION: u32 = 16;
+const MAX_RUN_FORMAT_VERSION: u32 = 17;
 const MAX_VALIDATED_GENOMES: usize = 20_000;
 
 #[derive(Clone, Copy, Debug)]
@@ -490,8 +491,10 @@ fn skip_engine_settings(reader: &mut impl Read, version: u32) -> io::Result<()> 
                 "lista de genomas excede o limite seguro",
             ));
         }
-        let bytes_per_genome = if version >= 16 {
+        let bytes_per_genome = if version >= 17 {
             GENOME_BYTES
+        } else if version >= 16 {
+            PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES
         } else if version >= 10 {
             PRE_FOOD_SENSOR_RANGE_GENOME_BYTES
         } else {
@@ -515,7 +518,8 @@ fn read_world_for_run_version(reader: &mut impl Read, version: u32) -> io::Resul
         13 => World::read_checkpoint_pre_event_counters(reader),
         14 => World::read_checkpoint_pre_age_counters(reader),
         15 => World::read_checkpoint_pre_food_sensor_range(reader),
-        16 => World::read_checkpoint(reader),
+        16 => World::read_checkpoint_pre_neural_node_activity(reader),
+        17 => World::read_checkpoint(reader),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "versão de checkpoint desconhecida",

@@ -15,7 +15,9 @@ use crate::{
         map::{MapDefinition, Terrain},
     },
     simulation::brain::{Brain, MotorOutput, SensorInput},
-    simulation::genome::{Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES},
+    simulation::genome::{
+        Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES, PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
+    },
     simulation::pheromone::{PheromoneField, pheromone_energy_cost},
 };
 
@@ -34,6 +36,9 @@ pub const FOOD_ENERGY: f32 = 50.0;
 pub const BASAL_ENERGY_COST: f32 = 0.03;
 pub const MAX_MOTOR_ENERGY_COST: f32 = 0.20;
 pub const DEFAULT_MENTAL_ENERGY_COST: f32 = 0.0025;
+/// Manter um neurônio interno ou motor habilitado custa por tick, mesmo sem
+/// disparo. A fiação efetiva continua usando o slider mental da sessão.
+pub const ACTIVE_NEURON_ENERGY_COST: f32 = 0.0015;
 /// Manter o sensor de alimento padrão (240 unidades) ativo custa 0,006 por
 /// tick. Alcances hereditários maiores escalam pelo quadrado da distância.
 pub const DEFAULT_FOOD_SENSOR_ENERGY_COST: f32 = 0.006;
@@ -272,6 +277,8 @@ enum CheckpointFormat {
     PreAgeCounters,
     /// V15 antes do alelo hereditário de alcance do sensor de alimento.
     PreFoodSensorRange,
+    /// V16 antes dos bits hereditários de atividade neural.
+    PreNeuralNodeActivity,
     Current,
 }
 
@@ -340,13 +347,25 @@ impl Organism {
         radius_ratio.powf(BODY_COST_RADIUS_EXPONENT)
     }
 
+    /// O corpo maior ganha alcance sensorial pela geometria sem alterar o
+    /// alelo-base: uma célula com 4× a área tem 2× o alcance efetivo.
+    fn food_sensor_size_scale(&self) -> f32 {
+        (self.physical_radius() / CELL_RADIUS).sqrt()
+    }
+
     pub fn food_sensor_range(&self) -> f32 {
-        self.genome.food_sensor_range()
+        self.genome.food_sensor_range() * self.food_sensor_size_scale()
     }
 
     fn food_sensor_energy_cost(&self) -> f32 {
         let relative_range = self.food_sensor_range() / DEFAULT_FOOD_SENSOR_RANGE;
         DEFAULT_FOOD_SENSOR_ENERGY_COST * relative_range * relative_range
+    }
+
+    /// Corpos maiores têm mais massa/inércia: sua velocidade própria máxima
+    /// diminui pela raiz do raio relativo, sem alterar a corrente ambiental.
+    fn maximum_swim_speed(&self) -> f32 {
+        crate::config::MAX_SWIM_SPEED / self.food_sensor_size_scale()
     }
 }
 
@@ -751,13 +770,15 @@ impl World {
         observer.end(TickPhase::FoodMovement);
 
         // ── Etapa 7: deslocar as células ─────────────────────────────────
-        // Posição nova = corrente ambiental + velocidade escolhida pelo cérebro.
+        // Posição nova = corrente ambiental + nado escolhido pelo cérebro.
+        // O teto do nado próprio cai com o raio; a corrente segue física externa.
         observer.begin(TickPhase::OrganismMovement);
         for organism in &mut self.organisms {
             let previous_position = organism.position;
             let environment_velocity =
                 flow.sample_with_map(organism.position, Some(&self.map)) * CELL_FLOW_COUPLING;
-            organism.position += environment_velocity + organism.motors.swim_velocity();
+            organism.position +=
+                environment_velocity + organism.motors.swim_velocity(organism.maximum_swim_speed());
             let radius = organism.physical_radius();
             organism.position.x =
                 clamp_coordinate_to_world(organism.position.x, radius, WORLD_WIDTH);
@@ -788,7 +809,9 @@ impl World {
             organism.energy -= ((BASAL_ENERGY_COST
                 + organism.motors.energy_cost(MAX_MOTOR_ENERGY_COST))
                 * body_cost_scale
-                + organism.brain.mental_energy_cost(mental_energy_cost)
+                + organism
+                    .brain
+                    .mental_energy_cost(mental_energy_cost, ACTIVE_NEURON_ENERGY_COST)
                 + pheromone_energy_cost(organism)
                 + organism.food_sensor_energy_cost())
                 * organism.energy_cost_multiplier();
@@ -1000,6 +1023,12 @@ impl World {
         Self::read_checkpoint_with_format(reader, CheckpointFormat::PreFoodSensorRange)
     }
 
+    /// Restaura a V16, cujo genoma já tinha alcance hereditário, mas ainda
+    /// não carregava os bits de atividade de neurônios.
+    pub fn read_checkpoint_pre_neural_node_activity(reader: &mut impl Read) -> io::Result<Self> {
+        Self::read_checkpoint_with_format(reader, CheckpointFormat::PreNeuralNodeActivity)
+    }
+
     /// Restaura sessões gravadas antes de fagocitose e sensores de força.
     pub fn read_checkpoint_v2(reader: &mut impl Read) -> io::Result<Self> {
         Self::read_checkpoint_with_format(reader, CheckpointFormat::V2)
@@ -1033,7 +1062,9 @@ impl World {
             deaths_by_phagocytosis_total,
             deaths_by_age_total,
         ) = match checkpoint_format {
-            CheckpointFormat::PreFoodSensorRange | CheckpointFormat::Current => (
+            CheckpointFormat::PreFoodSensorRange
+            | CheckpointFormat::PreNeuralNodeActivity
+            | CheckpointFormat::Current => (
                 read_u64(reader)?,
                 read_u64(reader)?,
                 read_u64(reader)?,
@@ -1061,6 +1092,7 @@ impl World {
                 | CheckpointFormat::PreEventCounters
                 | CheckpointFormat::PreAgeCounters
                 | CheckpointFormat::PreFoodSensorRange
+                | CheckpointFormat::PreNeuralNodeActivity
                 | CheckpointFormat::Current
         ) {
             read_f32(reader)?
@@ -1073,6 +1105,7 @@ impl World {
                 | CheckpointFormat::PreEventCounters
                 | CheckpointFormat::PreAgeCounters
                 | CheckpointFormat::PreFoodSensorRange
+                | CheckpointFormat::PreNeuralNodeActivity
                 | CheckpointFormat::Current
         ) {
             MapDefinition::read_from(reader)?
@@ -1104,6 +1137,7 @@ impl World {
                             | CheckpointFormat::PreEventCounters
                             | CheckpointFormat::PreAgeCounters
                             | CheckpointFormat::PreFoodSensorRange
+                            | CheckpointFormat::PreNeuralNodeActivity
                             | CheckpointFormat::Current
                     ) {
                         1.0
@@ -1124,6 +1158,7 @@ impl World {
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
+                        | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::Current
                 ) {
                     1.0
@@ -1137,6 +1172,7 @@ impl World {
                 CheckpointFormat::PreEventCounters
                     | CheckpointFormat::PreAgeCounters
                     | CheckpointFormat::PreFoodSensorRange
+                    | CheckpointFormat::PreNeuralNodeActivity
                     | CheckpointFormat::Current
             ) {
                 LongevityGene::from_allele(read_u16(reader)?)
@@ -1156,6 +1192,7 @@ impl World {
                     | CheckpointFormat::PreEventCounters
                     | CheckpointFormat::PreAgeCounters
                     | CheckpointFormat::PreFoodSensorRange
+                    | CheckpointFormat::PreNeuralNodeActivity
                     | CheckpointFormat::Current
             ) {
                 vec2(read_f32(reader)?, read_f32(reader)?)
@@ -1178,6 +1215,7 @@ impl World {
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
+                        | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1192,6 +1230,7 @@ impl World {
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
+                        | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1206,6 +1245,7 @@ impl World {
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
+                        | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1220,6 +1260,7 @@ impl World {
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
+                        | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1234,6 +1275,7 @@ impl World {
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
+                        | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1246,6 +1288,7 @@ impl World {
                         | CheckpointFormat::PreEventCounters
                         | CheckpointFormat::PreAgeCounters
                         | CheckpointFormat::PreFoodSensorRange
+                        | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1262,6 +1305,10 @@ impl World {
                 let mut bits = [0u8; crate::simulation::genome::GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
                 Genome::from_bytes(bits)
+            } else if checkpoint_format == CheckpointFormat::PreNeuralNodeActivity {
+                let mut bits = [0u8; PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES];
+                reader.read_exact(&mut bits)?;
+                Genome::from_pre_neural_node_activity_bytes(bits)
             } else {
                 let mut bits = [0u8; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
@@ -1285,7 +1332,7 @@ impl World {
                 *value = read_f32(reader)?;
             }
             let mut brain = Brain::default();
-            brain.replace_connections(genome.decode_connections());
+            brain.configure_network(genome.decode_connections(), genome.neural_node_activity());
             brain.restore_internal_state(internal_state);
             organisms.push(Organism {
                 id,
@@ -1508,7 +1555,8 @@ impl World {
         for (predator_index, prey_index, activation) in attempts {
             // Há contato/aproximação real: ativar fagocitose sempre cobra um
             // pouco. Isso permite que a seleção elimine ataques inúteis.
-            let cost_multiplier = self.organisms[predator_index].energy_cost_multiplier();
+            let cost_multiplier = self.organisms[predator_index].energy_cost_multiplier()
+                * self.organisms[predator_index].physical_area_scale();
             self.organisms[predator_index].energy -=
                 MAX_PHAGOCYTOSIS_ENERGY_COST * activation * cost_multiplier;
 
@@ -1527,7 +1575,12 @@ impl World {
                 spread_direction(self.organisms[predator_index].id ^ self.organisms[prey_index].id)
             };
             let size_advantage = (predator_radius / prey_radius - 1.0).clamp(0.0, 1.0);
-            let pull = MAX_PHAGOCYTOSIS_PULL_PER_TICK * activation * size_advantage;
+            // O raio maior amplifica a área de captura além da vantagem contra
+            // a presa: custo corporal cresce sublinearmente, tração cresce
+            // linearmente com o raio relativo.
+            let size_capture_scale = predator_radius / CELL_RADIUS;
+            let pull =
+                MAX_PHAGOCYTOSIS_PULL_PER_TICK * activation * size_advantage * size_capture_scale;
             let predator_force = direction * pull * 0.20;
             let prey_force = -direction * pull * 0.80;
             {
@@ -2025,10 +2078,12 @@ impl World {
                 Genome::random(&mut self.random_state)
             }
         });
-        let genome = if initial_neural_configuration == InitialNeuralConfiguration::ValidatedV2 {
-            genome.with_validated_v2_cooperation()
-        } else {
-            genome
+        let genome = match initial_neural_configuration {
+            InitialNeuralConfiguration::ValidatedV1 => genome.with_validated_v1_motor_group(),
+            InitialNeuralConfiguration::ValidatedV2 => genome.with_validated_v2_cooperation(),
+            InitialNeuralConfiguration::Classic | InitialNeuralConfiguration::MotorMinimum => {
+                genome
+            }
         };
         let longevity_gene =
             LongevityGene::founder(self.next_random_unit(), initial_neural_configuration);
@@ -2045,7 +2100,7 @@ impl World {
         energy: f32,
     ) -> Organism {
         let mut brain = Brain::default();
-        brain.replace_connections(genome.decode_connections());
+        brain.configure_network(genome.decode_connections(), genome.neural_node_activity());
         let organism = Organism {
             id: self.next_organism_id,
             position,
@@ -2103,6 +2158,7 @@ fn read_sensors(
             | CheckpointFormat::PreEventCounters
             | CheckpointFormat::PreAgeCounters
             | CheckpointFormat::PreFoodSensorRange
+            | CheckpointFormat::PreNeuralNodeActivity
             | CheckpointFormat::Current
     ) {
         return Ok(SensorInput {
@@ -2179,6 +2235,7 @@ fn read_sensors(
             | CheckpointFormat::PreEventCounters
             | CheckpointFormat::PreAgeCounters
             | CheckpointFormat::PreFoodSensorRange
+            | CheckpointFormat::PreNeuralNodeActivity
             | CheckpointFormat::Current
     ) {
         sensors.force_x = read_f32(reader)?;
@@ -2281,7 +2338,10 @@ fn nearest_food_in_cones(
 ) -> [Option<f32>; 4] {
     let mut nearest = [None; 4];
     let base = sensor_grid_cell(origin);
-    let range = range.clamp(0.0, MAX_FOOD_SENSOR_RANGE);
+    // O alelo tem teto próprio, mas o corpo pode ampliar o alcance efetivo.
+    // A grade calcula quantas células visitar, portanto não cortamos esse
+    // benefício geométrico no máximo genético de 480 unidades.
+    let range = range.max(0.0);
     let range_squared = range * range;
     let grid_radius = (range / MAX_FOOD_SENSOR_RANGE).ceil() as i32;
     for grid_y in base.1 - grid_radius..=base.1 + grid_radius {
@@ -2492,11 +2552,48 @@ mod tests {
         let organism = &mut world.organisms[0];
         let default_cost = organism.food_sensor_energy_cost();
         let mut bits = *organism.genome.bytes();
-        bits[crate::simulation::genome::GENOME_BYTES - 1] = 0b1111_1000;
+        bits[PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES - 1] = 0b1111_1000;
         organism.genome = Genome::from_bytes(bits);
 
         assert!(organism.food_sensor_range() > DEFAULT_FOOD_SENSOR_RANGE);
         assert!(organism.food_sensor_energy_cost() > default_cost * 3.5);
+    }
+
+    #[test]
+    fn body_size_extends_sensor_slows_swimming_and_raises_sensor_upkeep() {
+        let mut world = World::new(2_022, 1);
+        let organism = &mut world.organisms[0];
+        organism.energy = 0.0;
+        let base_range = organism.food_sensor_range();
+        let base_cost = organism.food_sensor_energy_cost();
+        organism.energy = SIZE_GROWTH_ENERGY;
+
+        assert!((organism.physical_radius() / CELL_RADIUS - 2.0).abs() < 0.000_1);
+        assert!((organism.food_sensor_range() / base_range - 2.0_f32.sqrt()).abs() < 0.000_1);
+        assert!((organism.food_sensor_energy_cost() / base_cost - 2.0).abs() < 0.000_1);
+        assert!(organism.maximum_swim_speed() < crate::config::MAX_SWIM_SPEED);
+        assert!(
+            (organism.maximum_swim_speed() - crate::config::MAX_SWIM_SPEED / 2.0_f32.sqrt()).abs()
+                < 0.000_1
+        );
+    }
+
+    #[test]
+    fn phagocytosis_cost_uses_the_large_body_multiplier() {
+        let mut world = World::new(2_023, 2);
+        world.organisms[0].energy = SIZE_GROWTH_ENERGY;
+        world.organisms[1].energy = STARTING_ENERGY;
+        world.organisms[0].position = vec2(1_000.0, 1_000.0);
+        world.organisms[1].position = vec2(1_020.0, 1_000.0);
+        world.organisms[0].motors.phagocytose = 1.0;
+
+        world.apply_phagocytosis();
+
+        assert!(
+            (world.organisms[0].energy - (SIZE_GROWTH_ENERGY - 0.04 * MAX_BODY_COST_MULTIPLIER))
+                .abs()
+                < 0.000_1
+        );
     }
 
     #[test]

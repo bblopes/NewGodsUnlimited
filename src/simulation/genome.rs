@@ -2,28 +2,37 @@ use macroquad::prelude::*;
 
 use crate::{
     config::{DEFAULT_FOOD_SENSOR_RANGE, MAX_FOOD_SENSOR_RANGE, MIN_FOOD_SENSOR_RANGE},
-    simulation::brain::{DecodedConnection, INTERNAL_START, MOTOR_START, SLOT_COUNT},
+    simulation::brain::{
+        DecodedConnection, INTERNAL_COUNT, INTERNAL_START, MOTOR_SLOT_COUNT, MOTOR_START,
+        NEURAL_NODE_COUNT, SLOT_COUNT,
+    },
 };
 
 pub const CONNECTION_RECORDS: usize = 64;
 pub const BITS_PER_RECORD: usize = 19;
 /// Bytes gravados por versões anteriores ao gene de alcance sensorial.
 pub const PRE_FOOD_SENSOR_RANGE_GENOME_BYTES: usize = 152;
+/// Bytes gravados pela V16, antes de os neurônios poderem ser desligados.
+pub const PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES: usize = 153;
 /// Cinco bits extras carregam o alcance do sensor de alimento. Os três bits
-/// baixos do último byte são reserva e não entram em mutação/similaridade.
-pub const GENOME_BYTES: usize = 153;
+/// baixos desse byte e os 27 bits seguintes passam a carregar a atividade dos
+/// 19 internos e 11 motores. Os cinco bits finais continuam como reserva.
+pub const GENOME_BYTES: usize = 157;
 pub const LEGACY_V1_GENOME_BYTES: usize = 136;
 pub const MUTATION_DENOMINATOR: u32 = 1_024;
 const NEURAL_GENOME_BITS: usize = PRE_FOOD_SENSOR_RANGE_GENOME_BYTES * 8;
 const FOOD_SENSOR_ALLELE_BITS: usize = 5;
-pub const GENOME_BIT_COUNT: usize = NEURAL_GENOME_BITS + FOOD_SENSOR_ALLELE_BITS;
+const NEURAL_NODE_ACTIVITY_BITS: usize = NEURAL_NODE_COUNT;
+pub const GENOME_BIT_COUNT: usize =
+    NEURAL_GENOME_BITS + FOOD_SENSOR_ALLELE_BITS + NEURAL_NODE_ACTIVITY_BITS;
 const PHEROMONE_CHANNEL_OFFSET: usize = NEURAL_GENOME_BITS - 9;
 const FOOD_SENSOR_ALLELE_OFFSET: usize = NEURAL_GENOME_BITS;
+const NEURAL_NODE_ACTIVITY_OFFSET: usize = FOOD_SENSOR_ALLELE_OFFSET + FOOD_SENSOR_ALLELE_BITS;
 const DEFAULT_FOOD_SENSOR_ALLELE: u32 = 16;
 
 /// Genoma compacto: 64 registros `[origem:6][destino:6][peso:6][ativo:1]`
-/// mais um alelo sensorial. O estado neural não está aqui; somente informação
-/// hereditária, cuja projeção também define cor, similaridade e PG.
+/// mais um alelo sensorial e 30 bits de atividade neural. Toda fisiologia
+/// hereditária aqui também projeta cor, similaridade e PG.
 #[derive(Clone)]
 pub struct Genome {
     bits: [u8; GENOME_BYTES],
@@ -69,6 +78,7 @@ impl Genome {
             FOOD_SENSOR_ALLELE_BITS,
             DEFAULT_FOOD_SENSOR_ALLELE,
         );
+        genome.enable_all_neural_nodes();
         genome
     }
 
@@ -90,6 +100,7 @@ impl Genome {
             let weight_steps = (next_u32(random_state) % 17) as i8 - 8;
             genome.write_record(record_index, source, destination, weight_steps, true);
         }
+        genome.enable_directional_motor_group();
         genome
     }
 
@@ -114,6 +125,15 @@ impl Genome {
         for (record, (source, destination, weight)) in paths.into_iter().enumerate() {
             self.write_record(record, source, destination, weight, true);
         }
+        self.enable_all_motor_nodes();
+        self.set_neural_slot_active(gate, true);
+        self
+    }
+
+    /// Val 1 preserva sua fiação herdada, mas seus 11 motores continuam
+    /// disponíveis quando uma população validada é reaberta nesta versão.
+    pub fn with_validated_v1_motor_group(mut self) -> Self {
+        self.enable_all_motor_nodes();
         self
     }
 
@@ -147,7 +167,10 @@ impl Genome {
         let mut connections = Vec::with_capacity(CONNECTION_RECORDS / 2);
         for record_index in 0..CONNECTION_RECORDS {
             let (source, destination, weight_steps, active) = self.read_record(record_index);
-            if active && is_legal_connection(source, destination) {
+            if active
+                && is_legal_connection(source, destination)
+                && self.connection_uses_active_nodes(source, destination)
+            {
                 connections.push(DecodedConnection {
                     source,
                     destination,
@@ -177,6 +200,17 @@ impl Genome {
         Self { bits }
     }
 
+    /// Migra a V16: todos os nós começam ligados, preservando exatamente a
+    /// topologia e o comportamento das populações Val 1/Val 2 já salvas.
+    pub fn from_pre_neural_node_activity_bytes(
+        bits: [u8; PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES],
+    ) -> Self {
+        let mut genome = Self::empty_with_default_sensor();
+        genome.bits[..PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES].copy_from_slice(&bits);
+        genome.enable_all_neural_nodes();
+        genome
+    }
+
     /// Migra o genoma de 1.216 bits: preserva a fiação e os canais químicos,
     /// preenchendo o novo alelo com o alcance histórico de 240 unidades.
     pub fn from_pre_food_sensor_range_bytes(
@@ -201,6 +235,12 @@ impl Genome {
             (allele - DEFAULT_FOOD_SENSOR_ALLELE as f32) / DEFAULT_FOOD_SENSOR_ALLELE as f32;
         (DEFAULT_FOOD_SENSOR_RANGE * 2.0_f32.powf(exponent))
             .clamp(MIN_FOOD_SENSOR_RANGE, MAX_FOOD_SENSOR_RANGE)
+    }
+
+    /// 30 bits, na ordem dos 19 internos e depois dos 11 motores. Sensores
+    /// externos não têm bit: são partes fixas da fisiologia.
+    pub fn neural_node_activity(&self) -> [bool; NEURAL_NODE_COUNT] {
+        std::array::from_fn(|index| self.bit(NEURAL_NODE_ACTIVITY_OFFSET + index))
     }
 
     /// Migra genomas gravados antes da expansão química. A topologia antiga
@@ -370,7 +410,53 @@ impl Genome {
             FOOD_SENSOR_ALLELE_BITS,
             DEFAULT_FOOD_SENSOR_ALLELE,
         );
+        genome.enable_all_neural_nodes();
         genome
+    }
+
+    fn connection_uses_active_nodes(&self, source: usize, destination: usize) -> bool {
+        self.neural_slot_is_active(destination)
+            && (source < INTERNAL_START || self.neural_slot_is_active(source))
+    }
+
+    fn neural_slot_is_active(&self, slot: usize) -> bool {
+        let index = if (INTERNAL_START..MOTOR_START).contains(&slot) {
+            slot - INTERNAL_START
+        } else if (MOTOR_START..SLOT_COUNT).contains(&slot) {
+            INTERNAL_COUNT + slot - MOTOR_START
+        } else {
+            return false;
+        };
+        self.bit(NEURAL_NODE_ACTIVITY_OFFSET + index)
+    }
+
+    fn set_neural_slot_active(&mut self, slot: usize, active: bool) {
+        let index = if (INTERNAL_START..MOTOR_START).contains(&slot) {
+            slot - INTERNAL_START
+        } else if (MOTOR_START..SLOT_COUNT).contains(&slot) {
+            INTERNAL_COUNT + slot - MOTOR_START
+        } else {
+            return;
+        };
+        self.set_bit(NEURAL_NODE_ACTIVITY_OFFSET + index, active);
+    }
+
+    fn enable_all_neural_nodes(&mut self) {
+        for index in 0..NEURAL_NODE_ACTIVITY_BITS {
+            self.set_bit(NEURAL_NODE_ACTIVITY_OFFSET + index, true);
+        }
+    }
+
+    fn enable_all_motor_nodes(&mut self) {
+        for motor in 0..MOTOR_SLOT_COUNT {
+            self.set_neural_slot_active(MOTOR_START + motor, true);
+        }
+    }
+
+    fn enable_directional_motor_group(&mut self) {
+        for motor in 0..4 {
+            self.set_neural_slot_active(MOTOR_START + motor, true);
+        }
     }
 
     fn read_record(&self, record_index: usize) -> (usize, usize, i8, bool) {
@@ -569,5 +655,47 @@ mod tests {
             &legacy
         );
         assert!((migrated.food_sensor_range() - DEFAULT_FOOD_SENSOR_RANGE).abs() < 0.001);
+    }
+
+    #[test]
+    fn inactive_neural_node_removes_its_incident_connections_and_changes_signature() {
+        let mut state = 912;
+        let mut genome = Genome::random(&mut state);
+        genome.write_record(0, 0, MOTOR_START, 8, true);
+        let baseline = genome.clone();
+
+        genome.set_neural_slot_active(MOTOR_START, false);
+
+        assert!(!genome.neural_node_activity()[INTERNAL_COUNT]);
+        assert!(
+            baseline.decode_connections().iter().any(|connection| {
+                connection.source == 0 && connection.destination == MOTOR_START
+            })
+        );
+        assert!(
+            !genome.decode_connections().iter().any(|connection| {
+                connection.source == 0 && connection.destination == MOTOR_START
+            })
+        );
+        assert!(genome.similarity_to(&baseline) < 1.0);
+        assert_ne!(genome.pheromone_signature(), baseline.pheromone_signature());
+    }
+
+    #[test]
+    fn v16_genome_migration_preserves_sensor_and_enables_every_neural_node() {
+        let mut state = 913;
+        let mut current = Genome::random(&mut state);
+        current.write_bits(FOOD_SENSOR_ALLELE_OFFSET, FOOD_SENSOR_ALLELE_BITS, 31);
+        let mut old = [0; PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES];
+        old.copy_from_slice(&current.bytes()[..PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES]);
+        let migrated = Genome::from_pre_neural_node_activity_bytes(old);
+
+        assert!((migrated.food_sensor_range() - current.food_sensor_range()).abs() < 0.001);
+        assert!(
+            migrated
+                .neural_node_activity()
+                .into_iter()
+                .all(|active| active)
+        );
     }
 }

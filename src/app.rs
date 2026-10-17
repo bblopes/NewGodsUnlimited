@@ -22,7 +22,7 @@ use crate::{
         },
         genome::{
             CONNECTION_RECORDS, GENOME_BIT_COUNT, GENOME_BYTES, Genome,
-            PRE_FOOD_SENSOR_RANGE_GENOME_BYTES,
+            PRE_FOOD_SENSOR_RANGE_GENOME_BYTES, PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
         },
         pheromone::{
             FIELD_HEIGHT as PHEROMONE_FIELD_HEIGHT, FIELD_WIDTH as PHEROMONE_FIELD_WIDTH,
@@ -1207,8 +1207,8 @@ fn format_emission_display(emission_per_tick: f32) -> String {
 }
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
-/// V16 adiciona o alelo hereditário de alcance do sensor de alimento.
-const RUN_FORMAT_VERSION: u32 = 16;
+/// V17 adiciona os bits hereditários que habilitam nós internos e motores.
+const RUN_FORMAT_VERSION: u32 = 17;
 
 /// Raiz portátil: os dados de uma cópia compartilhada ficam ao lado do .exe,
 /// e não dependem da estrutura `target/release` usada no desenvolvimento.
@@ -1664,6 +1664,7 @@ fn load_run_file(path: &Path) -> io::Result<LoadedRun> {
         13 => World::read_checkpoint_pre_event_counters(&mut reader)?,
         14 => World::read_checkpoint_pre_age_counters(&mut reader)?,
         15 => World::read_checkpoint_pre_food_sensor_range(&mut reader)?,
+        16 => World::read_checkpoint_pre_neural_node_activity(&mut reader)?,
         _ => World::read_checkpoint(&mut reader)?,
     };
     let telemetry_count = read_count_run(&mut reader, MAX_TELEMETRY_SAMPLES)?;
@@ -1768,8 +1769,10 @@ fn read_engine_settings(reader: &mut impl Read, version: u32) -> io::Result<Engi
         reproduction_limit: read_f32_run(reader)?,
         initial_cells: read_u64_run(reader)? as usize,
         initial_neural_configuration,
-        validated_genomes: if version >= 16 {
+        validated_genomes: if version >= 17 {
             read_validated_genomes(reader)?
+        } else if version >= 16 {
+            read_validated_genomes_pre_neural_node_activity(reader)?
         } else if version >= 10 {
             read_validated_genomes_pre_food_sensor_range(reader)?
         } else if version >= 9 {
@@ -2003,6 +2006,19 @@ fn read_validated_genomes(reader: &mut impl Read) -> io::Result<Vec<Genome>> {
         let mut bits = [0; GENOME_BYTES];
         reader.read_exact(&mut bits)?;
         genomes.push(Genome::from_bytes(bits));
+    }
+    Ok(genomes)
+}
+
+fn read_validated_genomes_pre_neural_node_activity(
+    reader: &mut impl Read,
+) -> io::Result<Vec<Genome>> {
+    let count = read_count_run(reader, MAX_VALIDATED_GENOMES)?;
+    let mut genomes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut bits = [0; PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES];
+        reader.read_exact(&mut bits)?;
+        genomes.push(Genome::from_pre_neural_node_activity_bytes(bits));
     }
     Ok(genomes)
 }
@@ -4974,8 +4990,12 @@ fn draw_individual_cells_view(left: f32, width: f32, session: &mut SessionUi, wo
         left,
         218.0,
         width,
-        "Conexões",
-        &selected.brain.connection_count().to_string(),
+        "Conexões / neurônios",
+        &format!(
+            "{} / {} ativos",
+            selected.brain.connection_count(),
+            selected.brain.active_node_count()
+        ),
     );
     draw_value_row(
         left,

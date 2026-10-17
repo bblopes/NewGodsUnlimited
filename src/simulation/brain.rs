@@ -10,7 +10,10 @@ pub const INTERNAL_START: usize = 23;
 pub const INTERNAL_COUNT: usize = 19;
 pub const TIMER_INTERNAL_START: usize = 16;
 pub const MOTOR_START: usize = 42;
-const MOTOR_SLOT_COUNT: usize = 11;
+pub const MOTOR_SLOT_COUNT: usize = 11;
+/// Só os 19 internos e os 11 motores são neurônios opcionais. Os 23 slots
+/// externos são sensores físicos fixos e continuam disponíveis a toda célula.
+pub const NEURAL_NODE_COUNT: usize = INTERNAL_COUNT + MOTOR_SLOT_COUNT;
 
 /// Entradas dos slots 0–22 do cérebro.
 #[derive(Clone, Copy)]
@@ -129,9 +132,11 @@ pub struct MotorOutput {
 }
 
 impl MotorOutput {
-    pub fn swim_velocity(self) -> Vec2 {
+    pub fn swim_velocity(self, maximum_speed: f32) -> Vec2 {
         let raw_direction = vec2(self.right - self.left, self.down - self.up);
-        raw_direction.normalize_or_zero() * raw_direction.length().min(1.0) * MAX_SWIM_SPEED
+        raw_direction.normalize_or_zero()
+            * raw_direction.length().min(1.0)
+            * maximum_speed.clamp(0.0, MAX_SWIM_SPEED)
     }
 
     pub fn energy_cost(self, max_cost: f32) -> f32 {
@@ -161,6 +166,9 @@ pub struct DecodedConnection {
 #[derive(Clone)]
 pub struct Brain {
     internal_state: [f32; INTERNAL_COUNT],
+    /// Bits hereditários, já decodificados uma vez no nascimento/carregamento.
+    /// Nó desligado não é avaliado e não deixa conexões chegarem ao cérebro.
+    active_nodes: [bool; NEURAL_NODE_COUNT],
     connections: Vec<DecodedConnection>,
     last_slots: [f32; SLOT_COUNT],
     connection_signals: Vec<f32>,
@@ -170,6 +178,7 @@ impl Default for Brain {
     fn default() -> Self {
         Self {
             internal_state: [0.0; INTERNAL_COUNT],
+            active_nodes: [false; NEURAL_NODE_COUNT],
             connections: Vec::new(),
             last_slots: [0.0; SLOT_COUNT],
             connection_signals: Vec::new(),
@@ -201,6 +210,9 @@ impl Brain {
 
         let mut next_internal_state = [0.0; INTERNAL_COUNT];
         for index in 0..INTERNAL_COUNT {
+            if !self.active_nodes[index] {
+                continue;
+            }
             let activated = centered_sigmoid(internal_sums[index]);
             next_internal_state[index] = if index < TIMER_INTERNAL_START {
                 activated
@@ -211,18 +223,23 @@ impl Brain {
         }
         self.internal_state = next_internal_state;
 
+        let motor = |index: usize| {
+            self.active_nodes[INTERNAL_COUNT + index]
+                .then(|| centered_sigmoid(motor_sums[index]).max(0.0))
+                .unwrap_or(0.0)
+        };
         let motors = MotorOutput {
-            left: centered_sigmoid(motor_sums[0]).max(0.0),
-            right: centered_sigmoid(motor_sums[1]).max(0.0),
-            up: centered_sigmoid(motor_sums[2]).max(0.0),
-            down: centered_sigmoid(motor_sums[3]).max(0.0),
-            reproduce: centered_sigmoid(motor_sums[4]).max(0.0),
-            phagocytose: centered_sigmoid(motor_sums[5]).max(0.0),
-            emit_pg: centered_sigmoid(motor_sums[6]).max(0.0),
-            emit_p1: centered_sigmoid(motor_sums[7]).max(0.0),
-            emit_p2: centered_sigmoid(motor_sums[8]).max(0.0),
-            emit_p3: centered_sigmoid(motor_sums[9]).max(0.0),
-            donate: centered_sigmoid(motor_sums[10]).max(0.0),
+            left: motor(0),
+            right: motor(1),
+            up: motor(2),
+            down: motor(3),
+            reproduce: motor(4),
+            phagocytose: motor(5),
+            emit_pg: motor(6),
+            emit_p1: motor(7),
+            emit_p2: motor(8),
+            emit_p3: motor(9),
+            donate: motor(10),
         };
         self.last_slots[..EXTERNAL_SLOT_COUNT].copy_from_slice(&external);
         self.last_slots[INTERNAL_START..MOTOR_START].copy_from_slice(&self.internal_state);
@@ -242,8 +259,13 @@ impl Brain {
         motors
     }
 
-    pub fn replace_connections(&mut self, connections: Vec<DecodedConnection>) {
+    pub fn configure_network(
+        &mut self,
+        connections: Vec<DecodedConnection>,
+        active_nodes: [bool; NEURAL_NODE_COUNT],
+    ) {
         self.connections = connections;
+        self.active_nodes = active_nodes;
         self.connection_signals = vec![0.0; self.connections.len()];
     }
 
@@ -259,11 +281,16 @@ impl Brain {
         self.connections.len()
     }
 
-    /// Toda conexão ativa é avaliada uma vez por tick. Cobrar por conexão faz
-    /// redes maiores pagarem pelo processamento, sem penalizar uma célula por
-    /// um estado interno específico ou por uma decisão que ainda não tomou.
-    pub fn mental_energy_cost(&self, cost_per_connection: f32) -> f32 {
+    /// O custo neural tem duas partes: manter nós habilitados e avaliar as
+    /// conexões que ainda existem entre eles. Nós desligados e fios ligados a
+    /// eles não chegam aqui, portanto não custam nem são calculados.
+    pub fn mental_energy_cost(&self, cost_per_connection: f32, cost_per_active_node: f32) -> f32 {
         self.connections.len() as f32 * cost_per_connection.max(0.0)
+            + self.active_node_count() as f32 * cost_per_active_node.max(0.0)
+    }
+
+    pub fn active_node_count(&self) -> usize {
+        self.active_nodes.iter().filter(|active| **active).count()
     }
 
     pub fn slot_value(&self, slot: usize) -> f32 {
@@ -294,4 +321,33 @@ fn source_signal(
 
 fn centered_sigmoid(value: f32) -> f32 {
     2.0 / (1.0 + (-value).exp()) - 1.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inactive_motor_is_not_evaluated_and_active_nodes_have_upkeep() {
+        let mut brain = Brain::default();
+        let mut nodes = [false; NEURAL_NODE_COUNT];
+        nodes[INTERNAL_COUNT] = true;
+        brain.configure_network(
+            vec![DecodedConnection {
+                source: 7,
+                destination: MOTOR_START,
+                weight: 1.0,
+            }],
+            nodes,
+        );
+
+        let motors = brain.tick(SensorInput::default());
+        assert!(motors.left > 0.0);
+        assert_eq!(brain.active_node_count(), 1);
+        assert!((brain.mental_energy_cost(0.0025, 0.0015) - 0.004).abs() < 0.000_001);
+
+        brain.configure_network(Vec::new(), [false; NEURAL_NODE_COUNT]);
+        assert_eq!(brain.tick(SensorInput::default()).left, 0.0);
+        assert_eq!(brain.mental_energy_cost(0.0025, 0.0015), 0.0);
+    }
 }

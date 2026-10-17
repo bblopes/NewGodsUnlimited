@@ -81,9 +81,9 @@ impl PheromoneField {
         }
 
         for organism in organisms {
-            let area_scale = (organism.physical_radius() / CELL_RADIUS).powi(2);
+            let emission_scale = chemical_emission_scale(organism);
             let signature = organism.genome.pheromone_signature();
-            let pg_amount = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * area_scale;
+            let pg_amount = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * emission_scale;
             let channels = organism.genome.pheromone_channels();
             let mut generic_emissions = [None; 3];
             for (index, activation) in organism.motors.pheromone_activation()[1..]
@@ -93,7 +93,7 @@ impl PheromoneField {
                 if *activation > 0.01 {
                     generic_emissions[index] = Some((
                         channels[index] as usize,
-                        GENERIC_PPM * *activation * area_scale,
+                        GENERIC_PPM * *activation * emission_scale,
                     ));
                 }
             }
@@ -111,8 +111,8 @@ impl PheromoneField {
     }
 
     pub fn sensors_for(&self, organism: &Organism) -> [ChemicalSensors; 4] {
-        let area_scale = (organism.physical_radius() / CELL_RADIUS).powi(2);
-        let own_pg = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * area_scale;
+        let emission_scale = chemical_emission_scale(organism);
+        let own_pg = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * emission_scale;
         let index = self.nearest_index(organism.position);
         let total_pg = (self.pg[index] - own_pg).max(0.0);
         let signature = organism.genome.pheromone_signature();
@@ -179,9 +179,9 @@ impl PheromoneField {
         }
 
         for organism in organisms {
-            let area_scale = (organism.physical_radius() / CELL_RADIUS).powi(2);
+            let emission_scale = chemical_emission_scale(organism);
             let signature = organism.genome.pheromone_signature();
-            let pg_amount = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * area_scale;
+            let pg_amount = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * emission_scale;
             for (index, weight) in deposition_samples_reference(organism.position, map) {
                 let contribution = pg_amount * weight;
                 self.pg[index] += contribution;
@@ -195,7 +195,7 @@ impl PheromoneField {
             {
                 if *activation > 0.01 {
                     let field = &mut self.generic[channels[index] as usize % GENERIC_CHANNEL_COUNT];
-                    let amount = GENERIC_PPM * *activation * area_scale;
+                    let amount = GENERIC_PPM * *activation * emission_scale;
                     for (sample, weight) in deposition_samples_reference(organism.position, map) {
                         field[sample] += amount * weight;
                     }
@@ -327,6 +327,13 @@ pub fn pheromone_energy_cost(organism: &Organism) -> f32 {
         * area_scale
 }
 
+/// Emissão cresce com o volume relativo (r³), enquanto o custo químico segue
+/// a área (r²). Assim, corpos grandes pagam mais para sinalizar, mas produzem
+/// proporcionalmente mais PG basal e químico genérico.
+fn chemical_emission_scale(organism: &Organism) -> f32 {
+    (organism.physical_radius() / CELL_RADIUS).powi(3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +363,24 @@ mod tests {
         {
             assert_eq!(optimized_channel, reference_channel);
         }
+    }
+
+    #[test]
+    fn large_body_emits_more_chemical_per_energy_than_small_body() {
+        let mut world = World::new(4_243, 1);
+        world.organisms[0].position = vec2(1_000.0, 1_000.0);
+        world.organisms[0].energy = 0.0;
+        let baseline_cost = pheromone_energy_cost(&world.organisms[0]);
+        let mut field = PheromoneField::default();
+        field.rebuild(&world.organisms, &world.map);
+        let baseline_output = field.display_value(PheromoneDisplay::Pg, 10, 10);
+
+        world.organisms[0].energy = crate::simulation::world::SIZE_GROWTH_ENERGY;
+        let large_cost = pheromone_energy_cost(&world.organisms[0]);
+        field.rebuild(&world.organisms, &world.map);
+        let large_output = field.display_value(PheromoneDisplay::Pg, 10, 10);
+
+        assert!((large_cost / baseline_cost - 4.0).abs() < 0.000_1);
+        assert!((large_output / baseline_output - 8.0).abs() < 0.000_1);
     }
 }
