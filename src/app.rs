@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    config::{DEFAULT_FOOD_SENSOR_RANGE, WORLD_HEIGHT, WORLD_WIDTH},
+    config::{WORLD_HEIGHT, WORLD_WIDTH},
     environment::{
         flow::{FlowField, FlowPreset},
         map::{MAP_GRID_HEIGHT, MAP_GRID_WIDTH, MapDefinition},
@@ -29,10 +29,9 @@ use crate::{
             PheromoneDisplay,
         },
         world::{
-            AntiCrammingConfig, CELL_RADIUS, DEFAULT_FOOD_SENSOR_ENERGY_COST,
-            DEFAULT_MENTAL_ENERGY_COST, FOOD_ENERGY, FOOD_RADIUS, InitialNeuralConfiguration,
-            MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MIN_EXCLUSION_DISTANCE, Organism, Phytoplankton,
-            World,
+            AntiCrammingConfig, CELL_RADIUS, DEFAULT_MENTAL_ENERGY_COST, FOOD_ENERGY, FOOD_RADIUS,
+            InitialNeuralConfiguration, MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MIN_EXCLUSION_DISTANCE,
+            Organism, Phytoplankton, World,
         },
     },
 };
@@ -5034,8 +5033,7 @@ fn draw_individual_cells_view(left: f32, width: f32, session: &mut SessionUi, wo
         ),
     );
     let sensor_range = selected.food_sensor_range();
-    let sensor_cost =
-        DEFAULT_FOOD_SENSOR_ENERGY_COST * (sensor_range / DEFAULT_FOOD_SENSOR_RANGE).powi(2);
+    let sensor_cost = selected.food_sensor_energy_cost();
     draw_value_row(
         left,
         338.0,

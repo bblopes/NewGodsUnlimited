@@ -79,14 +79,15 @@ relativa do corpo é `1 + 3 × energia / 2.000`; o raio é a raiz quadrada dessa
 área. Assim, em `2.000` de energia, o corpo tem 4× a área e 2× o raio base.
 
 O custo basal e o de nado não sobem 4× nesse ponto: usam uma curva deliberadamente
-mais suave e chegam a **1,40×** com raio dobrado. Já a emissão de feromônios
-acompanha a área completa e chega a **4×**. Cérebro, fagocitose e operação de
-doação não recebem fator de tamanho.
+mais suave e chegam a **1,40×** com raio dobrado. A emissão de feromônios e o
+custo do sensor alimentar acompanham a área e chegam a **4×**; a emissão
+química, o alcance do sensor e a tração de fagocitose usam volume e chegam a
+**8×**. Cérebro e operação de doação não recebem fator de tamanho.
 
 Isso significa que, para uma célula grande, a emissão química é hoje o custo
-que mais cresce geometricamente; cérebro e sensor de alimento não ficam mais
-caros apenas por tamanho, mas este último pode ficar mais caro pela mutação de
-alcance.
+que mais cresce geometricamente; o sensor de alimento também ganha eficiência:
+seu alcance cresce com o volume, mas seu custo corporal só com a área. A mutação
+de alcance continua tendo custo próprio.
 Em compensação, o raio maior aumenta a área que pode conter alimento e ajuda na
 vantagem geométrica da fagocitose. O limite obrigatório de energia padrão da
 interface é `5.000`, então células grandes são possíveis enquanto a rede não

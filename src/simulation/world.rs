@@ -347,25 +347,29 @@ impl Organism {
         radius_ratio.powf(BODY_COST_RADIUS_EXPONENT)
     }
 
-    /// O corpo maior ganha alcance sensorial pela geometria sem alterar o
-    /// alelo-base: uma célula com 4× a área tem 2× o alcance efetivo.
+    /// O corpo maior capta alimento com eficiência volumétrica, como na
+    /// emissão química. O alelo hereditário multiplica essa capacidade.
     fn food_sensor_size_scale(&self) -> f32 {
-        (self.physical_radius() / CELL_RADIUS).sqrt()
+        (self.physical_radius() / CELL_RADIUS).powi(3)
     }
 
     pub fn food_sensor_range(&self) -> f32 {
         self.genome.food_sensor_range() * self.food_sensor_size_scale()
     }
 
-    fn food_sensor_energy_cost(&self) -> f32 {
-        let relative_range = self.food_sensor_range() / DEFAULT_FOOD_SENSOR_RANGE;
-        DEFAULT_FOOD_SENSOR_ENERGY_COST * relative_range * relative_range
+    /// O gene mais amplo cobra mais por órgão sensorial; crescer o corpo só
+    /// cobra a área (r²), enquanto o alcance ganha o volume (r³). Isso torna
+    /// o sensor mais eficiente por energia em células grandes.
+    pub fn food_sensor_energy_cost(&self) -> f32 {
+        let genetic_scale = self.genome.food_sensor_range() / DEFAULT_FOOD_SENSOR_RANGE;
+        let body_area_scale = (self.physical_radius() / CELL_RADIUS).powi(2);
+        DEFAULT_FOOD_SENSOR_ENERGY_COST * genetic_scale.powi(2) * body_area_scale
     }
 
     /// Corpos maiores têm mais massa/inércia: sua velocidade própria máxima
     /// diminui pela raiz do raio relativo, sem alterar a corrente ambiental.
     fn maximum_swim_speed(&self) -> f32 {
-        crate::config::MAX_SWIM_SPEED / self.food_sensor_size_scale()
+        crate::config::MAX_SWIM_SPEED / (self.physical_radius() / CELL_RADIUS).sqrt()
     }
 }
 
@@ -1575,10 +1579,11 @@ impl World {
                 spread_direction(self.organisms[predator_index].id ^ self.organisms[prey_index].id)
             };
             let size_advantage = (predator_radius / prey_radius - 1.0).clamp(0.0, 1.0);
-            // O raio maior amplifica a área de captura além da vantagem contra
-            // a presa: custo corporal cresce sublinearmente, tração cresce
-            // linearmente com o raio relativo.
-            let size_capture_scale = predator_radius / CELL_RADIUS;
+            // Como a emissão química e o alcance alimentar, a atração ganha
+            // escala volumétrica (r³). O custo segue o expoente corporal
+            // sublinear, portanto uma célula grande captura com mais
+            // eficiência por energia investida.
+            let size_capture_scale = (predator_radius / CELL_RADIUS).powi(3);
             let pull =
                 MAX_PHAGOCYTOSIS_PULL_PER_TICK * activation * size_advantage * size_capture_scale;
             let predator_force = direction * pull * 0.20;
@@ -2560,7 +2565,7 @@ mod tests {
     }
 
     #[test]
-    fn body_size_extends_sensor_slows_swimming_and_raises_sensor_upkeep() {
+    fn body_size_makes_sensor_more_efficient_and_slows_swimming() {
         let mut world = World::new(2_022, 1);
         let organism = &mut world.organisms[0];
         organism.energy = 0.0;
@@ -2569,8 +2574,8 @@ mod tests {
         organism.energy = SIZE_GROWTH_ENERGY;
 
         assert!((organism.physical_radius() / CELL_RADIUS - 2.0).abs() < 0.000_1);
-        assert!((organism.food_sensor_range() / base_range - 2.0_f32.sqrt()).abs() < 0.000_1);
-        assert!((organism.food_sensor_energy_cost() / base_cost - 2.0).abs() < 0.000_1);
+        assert!((organism.food_sensor_range() / base_range - 8.0).abs() < 0.000_1);
+        assert!((organism.food_sensor_energy_cost() / base_cost - 4.0).abs() < 0.000_1);
         assert!(organism.maximum_swim_speed() < crate::config::MAX_SWIM_SPEED);
         assert!(
             (organism.maximum_swim_speed() - crate::config::MAX_SWIM_SPEED / 2.0_f32.sqrt()).abs()
@@ -2586,14 +2591,30 @@ mod tests {
         world.organisms[0].position = vec2(1_000.0, 1_000.0);
         world.organisms[1].position = vec2(1_020.0, 1_000.0);
         world.organisms[0].motors.phagocytose = 1.0;
+        let size_capture_scale = (world.organisms[0].physical_radius() / CELL_RADIUS).powi(3);
 
         world.apply_phagocytosis();
+
+        // A energia do predador é descontada antes da física, então a tração
+        // usa o raio residual deste mesmo tick.
+        let size_advantage =
+            (world.organisms[0].physical_radius() / world.organisms[1].physical_radius() - 1.0)
+                .clamp(0.0, 1.0);
+        let actual_size_capture_scale =
+            (world.organisms[0].physical_radius() / CELL_RADIUS).powi(3);
+        let expected_pull =
+            MAX_PHAGOCYTOSIS_PULL_PER_TICK * size_advantage * actual_size_capture_scale;
 
         assert!(
             (world.organisms[0].energy - (SIZE_GROWTH_ENERGY - 0.04 * MAX_BODY_COST_MULTIPLIER))
                 .abs()
                 < 0.000_1
         );
+        // Com 2R, a escala corporal da tração é 2³; 20% move o predador e
+        // 80% aproxima a presa. A distância inicial evita captura instantânea.
+        assert!((size_capture_scale - 8.0).abs() < 0.000_1);
+        assert!((world.organisms[0].position.x - (1_000.0 + expected_pull * 0.20)).abs() < 0.000_1);
+        assert!((world.organisms[1].position.x - (1_020.0 - expected_pull * 0.80)).abs() < 0.000_1);
     }
 
     #[test]

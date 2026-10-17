@@ -35,13 +35,19 @@ Use `r = raio físico / CELL_RADIUS`. Para uma célula com 2R:
 | --- | --- | --- |
 | Velocidade própria máxima | `8 / √r` | `5,66` unidades/tick |
 | Custo basal e de motor | `r^0,485` | `1,40×` |
-| Alcance alimentar efetivo | `alelo × √r` | `1,41×` |
-| Custo do sensor alimentar | quadrado do alcance efetivo | `2×` |
+| Alcance alimentar efetivo | `alelo × r³` | `8×` |
+| Custo do sensor alimentar | `custo-base × alelo² × r²` | `4×` |
 | Emissão PG e química genérica | `r³` | `8×` |
 | Custo químico | `r²` | `4×` |
-| Tração de fagocitose | vantagem geométrica × `r` | `2×` antes da vantagem |
+| Tração de fagocitose | vantagem geométrica × `r³` | `8×` antes da vantagem |
 | Custo de fagocitose | `r^0,485` | `1,40×` |
 
 A corrente ambiental não é reduzida pelo corpo: apenas o nado próprio recebe o
-teto de velocidade. Assim, tamanho vira uma estratégia: corpo grande é mais
-lento, mas melhor emissor, sensor e fagocitador por energia investida.
+teto de velocidade. O sensor alimentar segue a mesma eficiência da emissão
+química: o alcance cresce com o **volume relativo** do corpo (`r³`), enquanto
+o custo corporal cresce somente com a **área** (`r²`). O alelo hereditário
+(120–480) multiplica o alcance e cobra seu próprio custo quadrático, mas não
+transforma a vantagem do corpo em punição energética. A tração de fagocitose
+também usa `r³`, enquanto seu custo permanece sublinear (`r^0,485`). Assim,
+corpo grande é mais lento, mas melhor emissor, sensor e fagocitador por energia
+investida.
