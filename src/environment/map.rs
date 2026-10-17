@@ -77,6 +77,66 @@ impl MapDefinition {
         let distance = from.distance(to);
         let step = self.cell_size().x.min(self.cell_size().y) * 0.5;
         let samples = (distance / step).ceil().max(1.0) as usize;
+        let delta = to - from;
+        for sample_index in 1..=samples {
+            // Equivale a `from.lerp(to, fraction)`, mas evita criar Vec2,
+            // Option e chamar `is_wall` para cada amostra. Esta rotina é
+            // quente tanto para sensores de alimento quanto para a malha
+            // química de feromônios.
+            let fraction = sample_index as f32 / samples as f32;
+            let sample_x = from.x + delta.x * fraction;
+            let sample_y = from.y + delta.y * fraction;
+            if !(0.0..WORLD_WIDTH).contains(&sample_x) || !(0.0..WORLD_HEIGHT).contains(&sample_y) {
+                continue;
+            }
+            let x = (sample_x / WORLD_WIDTH * MAP_GRID_WIDTH as f32) as usize;
+            let y = (sample_y / WORLD_HEIGHT * MAP_GRID_HEIGHT as f32) as usize;
+            if self.walls[y * MAP_GRID_WIDTH + x] != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Indica se algum pixel de parede pode tocar o disco informado. É uma
+    /// consulta conservadora: `true` pode incluir uma parede que a linha não
+    /// alcançará, mas `false` garante que nenhuma linha inteiramente dentro
+    /// desse disco pode ser bloqueada.
+    pub fn has_wall_within_distance(&self, position: Vec2, distance: f32) -> bool {
+        let cell_size = self.cell_size();
+        let min_x = ((position.x - distance) / cell_size.x).floor().max(0.0) as usize;
+        let max_x = ((position.x + distance) / cell_size.x)
+            .ceil()
+            .min(MAP_GRID_WIDTH as f32 - 1.0) as usize;
+        let min_y = ((position.y - distance) / cell_size.y).floor().max(0.0) as usize;
+        let max_y = ((position.y + distance) / cell_size.y)
+            .ceil()
+            .min(MAP_GRID_HEIGHT as f32 - 1.0) as usize;
+        let distance_squared = distance * distance;
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                if self.walls[self.index(x, y)] == 0 {
+                    continue;
+                }
+                let left = x as f32 * cell_size.x;
+                let right = left + cell_size.x;
+                let top = y as f32 * cell_size.y;
+                let bottom = top + cell_size.y;
+                let nearest_x = position.x.clamp(left, right);
+                let nearest_y = position.y.clamp(top, bottom);
+                if position.distance_squared(vec2(nearest_x, nearest_y)) <= distance_squared {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[cfg(test)]
+    fn has_clear_line_reference(&self, from: Vec2, to: Vec2) -> bool {
+        let distance = from.distance(to);
+        let step = self.cell_size().x.min(self.cell_size().y) * 0.5;
+        let samples = (distance / step).ceil().max(1.0) as usize;
         (1..=samples).all(|index| !self.is_wall(from.lerp(to, index as f32 / samples as f32)))
     }
 
@@ -468,5 +528,32 @@ mod tests {
 
         assert!(map.is_fertile(vec2(1_500.0, 1_500.0)));
         assert!(!map.is_fertile(vec2(3_000.0, 1_500.0)));
+    }
+
+    #[test]
+    fn optimized_line_of_sight_keeps_the_original_sampling_decision() {
+        let map = MapDefinition::default();
+        let mut state = 0x4d59_5df4_d0f3_3173u64;
+        let next_unit = |state: &mut u64| {
+            *state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            (*state >> 40) as f32 / (1u32 << 24) as f32
+        };
+        for _ in 0..1_024 {
+            let from = vec2(
+                next_unit(&mut state) * WORLD_WIDTH,
+                next_unit(&mut state) * WORLD_HEIGHT,
+            );
+            let to = vec2(
+                next_unit(&mut state) * WORLD_WIDTH,
+                next_unit(&mut state) * WORLD_HEIGHT,
+            );
+            assert_eq!(
+                map.has_clear_line(from, to),
+                map.has_clear_line_reference(from, to),
+                "a linha entre {from:?} e {to:?} mudou de resultado"
+            );
+        }
     }
 }

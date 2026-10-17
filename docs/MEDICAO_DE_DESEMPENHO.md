@@ -100,9 +100,28 @@ primeiros custos passaram para 3.043,1 µs e 1.249,8 µs, respectivamente.
 
 ## Leitura e próximo passo
 
-O primeiro alvo técnico é `PheromoneField::rebuild()`: ele reconstrói o campo
-químico inteiro e deposita a contribuição de cada organismo. O segundo é
-`World::update_sensors()`, que consulta alimento, organismos, linha de visão e
-o campo químico. Antes de alterar qualquer um deles, devemos criar uma medição
-mais fina dentro dessas duas funções e comparar a mesma tabela acima após cada
-mudança.
+## Otimização aplicada — 17 de outubro de 2026
+
+`PheromoneField::rebuild()` repetia a mesma geometria para cada uma das até
+quatro emissões de uma célula: PG e os três canais genéricos. A implementação
+agora percorre cada vizinhança uma única vez e acumula todas as camadas nela.
+Além disso, ela só consulta linha de visão contra paredes quando existe uma
+parede dentro do alcance químico da emissora. Longe das paredes, nenhuma linha
+até uma amostra do campo pode ser bloqueada; perto delas, a amostragem original
+continua integralmente em vigor.
+
+| Cenário | Antes | Depois | Efeito |
+|---|---:|---:|---|
+| Realista: feromônios | 808,7 µs/tick | 527,7 µs/tick | −34,7% |
+| Realista: mediana global | 805,5 ticks/s | 1.052,7 ticks/s | +30,7% |
+| Estresse: feromônios | 3.043,1 µs/tick | 1.781,8 µs/tick | −41,4% |
+| Estresse: mediana global | 201,5 ticks/s | 261,1 ticks/s | +29,6% |
+
+Ambas as medições usaram a mesma carga Val 2, seed e número de repetições da
+linha de base. Os hashes finais continuaram iguais entre tick normal e
+perfilado, e o teste de regressão compara o campo otimizado com a implementação
+anterior, camada por camada.
+
+O próximo alvo é `World::update_sensors()`, agora o maior custo no cenário de
+estresse (33,6%). Antes de alterá-lo, devemos separar no perfil as consultas de
+alimento, contato, corrente e química para não otimizar o componente errado.

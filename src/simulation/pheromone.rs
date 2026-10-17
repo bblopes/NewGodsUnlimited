@@ -20,6 +20,7 @@ pub const GENERIC_PPM: f32 = 0.85;
 pub const BASAL_PG_COST: f32 = 0.0004;
 pub const GENERIC_PPM_COST: f32 = 0.0010;
 const SENSOR_PPM_SCALE: f32 = 1.25;
+const PHEROMONE_RANGE_SQUARED: f32 = PHEROMONE_RANGE * PHEROMONE_RANGE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PheromoneDisplay {
@@ -83,22 +84,29 @@ impl PheromoneField {
             let area_scale = (organism.physical_radius() / CELL_RADIUS).powi(2);
             let signature = organism.genome.pheromone_signature();
             let pg_amount = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * area_scale;
-            self.deposit_pg(organism.position, pg_amount, signature, map);
-
             let channels = organism.genome.pheromone_channels();
+            let mut generic_emissions = [None; 3];
             for (index, activation) in organism.motors.pheromone_activation()[1..]
                 .iter()
                 .enumerate()
             {
                 if *activation > 0.01 {
-                    self.deposit_generic(
-                        organism.position,
+                    generic_emissions[index] = Some((
                         channels[index] as usize,
                         GENERIC_PPM * *activation * area_scale,
-                        map,
-                    );
+                    ));
                 }
             }
+            // PG e os três canais genéricos percorrem a mesma vizinhança.
+            // Unir os depósitos evita repetir distância, exponencial e linha
+            // de visão para cada sinal, preservando o mesmo campo resultante.
+            self.deposit_emissions(
+                organism.position,
+                pg_amount,
+                signature,
+                generic_emissions,
+                map,
+            );
         }
     }
 
@@ -142,47 +150,58 @@ impl PheromoneField {
             .fold(0.0, f32::max)
     }
 
-    fn deposit_pg(&mut self, source: Vec2, amount: f32, signature: Vec2, map: &MapDefinition) {
-        for (index, weight) in Self::deposition_samples(source, map) {
-            let contribution = amount * weight;
+    fn deposit_emissions(
+        &mut self,
+        source: Vec2,
+        pg_amount: f32,
+        signature: Vec2,
+        generic_emissions: [Option<(usize, f32)>; 3],
+        map: &MapDefinition,
+    ) {
+        for_each_deposition_sample(source, map, |index, weight| {
+            let contribution = pg_amount * weight;
             self.pg[index] += contribution;
             self.pg_signature_x[index] += contribution * signature.x;
             self.pg_signature_y[index] += contribution * signature.y;
-        }
+            for (channel, amount) in generic_emissions.into_iter().flatten() {
+                self.generic[channel % GENERIC_CHANNEL_COUNT][index] += amount * weight;
+            }
+        });
     }
 
-    fn deposit_generic(&mut self, source: Vec2, channel: usize, amount: f32, map: &MapDefinition) {
-        let field = &mut self.generic[channel % GENERIC_CHANNEL_COUNT];
-        for (index, weight) in Self::deposition_samples(source, map) {
-            field[index] += amount * weight;
+    #[cfg(test)]
+    fn rebuild_reference(&mut self, organisms: &[Organism], map: &MapDefinition) {
+        self.pg.fill(0.0);
+        self.pg_signature_x.fill(0.0);
+        self.pg_signature_y.fill(0.0);
+        for field in &mut self.generic {
+            field.fill(0.0);
         }
-    }
 
-    fn deposition_samples(source: Vec2, map: &MapDefinition) -> Vec<(usize, f32)> {
-        let mut samples = Vec::with_capacity(121);
-        let step = cell_size();
-        let min_x = ((source.x - PHEROMONE_RANGE) / step.x).floor().max(0.0) as usize;
-        let max_x = ((source.x + PHEROMONE_RANGE) / step.x)
-            .ceil()
-            .min(FIELD_WIDTH as f32 - 1.0) as usize;
-        let min_y = ((source.y - PHEROMONE_RANGE) / step.y).floor().max(0.0) as usize;
-        let max_y = ((source.y + PHEROMONE_RANGE) / step.y)
-            .ceil()
-            .min(FIELD_HEIGHT as f32 - 1.0) as usize;
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let position = cell_center(x, y);
-                let distance_squared = source.distance_squared(position);
-                if distance_squared > PHEROMONE_RANGE * PHEROMONE_RANGE
-                    || !map.has_clear_line(source, position)
-                {
-                    continue;
+        for organism in organisms {
+            let area_scale = (organism.physical_radius() / CELL_RADIUS).powi(2);
+            let signature = organism.genome.pheromone_signature();
+            let pg_amount = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * area_scale;
+            for (index, weight) in deposition_samples_reference(organism.position, map) {
+                let contribution = pg_amount * weight;
+                self.pg[index] += contribution;
+                self.pg_signature_x[index] += contribution * signature.x;
+                self.pg_signature_y[index] += contribution * signature.y;
+            }
+            let channels = organism.genome.pheromone_channels();
+            for (index, activation) in organism.motors.pheromone_activation()[1..]
+                .iter()
+                .enumerate()
+            {
+                if *activation > 0.01 {
+                    let field = &mut self.generic[channels[index] as usize % GENERIC_CHANNEL_COUNT];
+                    let amount = GENERIC_PPM * *activation * area_scale;
+                    for (sample, weight) in deposition_samples_reference(organism.position, map) {
+                        field[sample] += amount * weight;
+                    }
                 }
-                let weight = (-distance_squared / (2.0 * (PHEROMONE_RANGE * 0.38).powi(2))).exp();
-                samples.push((y * FIELD_WIDTH + x, weight));
             }
         }
-        samples
     }
 
     fn sensors_at(&self, field: &[f32], position: Vec2, override_center: f32) -> ChemicalSensors {
@@ -224,6 +243,70 @@ impl PheromoneField {
     }
 }
 
+/// Visita uma única vez cada célula química alcançável pela emissora. A mesma
+/// geometria serve a PG e aos três canais genéricos; o chamador só decide em
+/// quais camadas acumular a contribuição.
+fn for_each_deposition_sample(
+    source: Vec2,
+    map: &MapDefinition,
+    mut visit: impl FnMut(usize, f32),
+) {
+    let step = cell_size();
+    let gaussian_denominator = 2.0 * (PHEROMONE_RANGE * 0.38).powi(2);
+    // Toda linha de uma emissora até o alcance químico fica dentro deste
+    // disco. Sem paredes nele, a linha de visão é necessariamente livre.
+    let must_check_walls = map.has_wall_within_distance(source, PHEROMONE_RANGE);
+    let min_x = ((source.x - PHEROMONE_RANGE) / step.x).floor().max(0.0) as usize;
+    let max_x = ((source.x + PHEROMONE_RANGE) / step.x)
+        .ceil()
+        .min(FIELD_WIDTH as f32 - 1.0) as usize;
+    let min_y = ((source.y - PHEROMONE_RANGE) / step.y).floor().max(0.0) as usize;
+    let max_y = ((source.y + PHEROMONE_RANGE) / step.y)
+        .ceil()
+        .min(FIELD_HEIGHT as f32 - 1.0) as usize;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let position = cell_center(x, y);
+            let distance_squared = source.distance_squared(position);
+            if distance_squared > PHEROMONE_RANGE_SQUARED
+                || (must_check_walls && !map.has_clear_line(source, position))
+            {
+                continue;
+            }
+            let weight = (-distance_squared / gaussian_denominator).exp();
+            visit(y * FIELD_WIDTH + x, weight);
+        }
+    }
+}
+
+#[cfg(test)]
+fn deposition_samples_reference(source: Vec2, map: &MapDefinition) -> Vec<(usize, f32)> {
+    let mut samples = Vec::with_capacity(121);
+    let step = cell_size();
+    let min_x = ((source.x - PHEROMONE_RANGE) / step.x).floor().max(0.0) as usize;
+    let max_x = ((source.x + PHEROMONE_RANGE) / step.x)
+        .ceil()
+        .min(FIELD_WIDTH as f32 - 1.0) as usize;
+    let min_y = ((source.y - PHEROMONE_RANGE) / step.y).floor().max(0.0) as usize;
+    let max_y = ((source.y + PHEROMONE_RANGE) / step.y)
+        .ceil()
+        .min(FIELD_HEIGHT as f32 - 1.0) as usize;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let position = cell_center(x, y);
+            let distance_squared = source.distance_squared(position);
+            if distance_squared > PHEROMONE_RANGE * PHEROMONE_RANGE
+                || !map.has_clear_line(source, position)
+            {
+                continue;
+            }
+            let weight = (-distance_squared / (2.0 * (PHEROMONE_RANGE * 0.38).powi(2))).exp();
+            samples.push((y * FIELD_WIDTH + x, weight));
+        }
+    }
+    samples
+}
+
 fn cell_size() -> Vec2 {
     vec2(
         WORLD_WIDTH / FIELD_WIDTH as f32,
@@ -242,4 +325,36 @@ pub fn pheromone_energy_cost(organism: &Organism) -> f32 {
     let motors = organism.motors.pheromone_activation();
     (BASAL_PG_COST * (1.0 + motors[0]) + GENERIC_PPM_COST * (motors[1] + motors[2] + motors[3]))
         * area_scale
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::simulation::world::World;
+
+    #[test]
+    fn combined_deposition_matches_the_previous_per_channel_passes() {
+        let mut world = World::new(4_242, 32);
+        for (index, organism) in world.organisms.iter_mut().enumerate() {
+            let phase = index as f32 / 31.0;
+            organism.motors.emit_pg = phase;
+            organism.motors.emit_p1 = (phase + 0.23).fract();
+            organism.motors.emit_p2 = (phase + 0.47).fract();
+            organism.motors.emit_p3 = (phase + 0.71).fract();
+        }
+
+        let mut optimized = PheromoneField::default();
+        let mut reference = PheromoneField::default();
+        optimized.rebuild(&world.organisms, &world.map);
+        reference.rebuild_reference(&world.organisms, &world.map);
+
+        assert_eq!(optimized.pg, reference.pg);
+        assert_eq!(optimized.pg_signature_x, reference.pg_signature_x);
+        assert_eq!(optimized.pg_signature_y, reference.pg_signature_y);
+        for (optimized_channel, reference_channel) in
+            optimized.generic.iter().zip(reference.generic.iter())
+        {
+            assert_eq!(optimized_channel, reference_channel);
+        }
+    }
 }
