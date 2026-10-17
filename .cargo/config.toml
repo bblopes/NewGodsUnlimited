@@ -1,0 +1,4 @@
+# A distribuição Windows é portátil: incorpora o runtime C/C++ no executável
+# em vez de exigir que o usuário instale o Visual C++ Redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

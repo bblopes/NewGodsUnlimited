@@ -1,0 +1,23 @@
+# Rust: saídas de compilação locais e recriáveis.
+/target/
+/target_publicacao/
+
+# Artefatos transitórios do sistema.
+*.pdb
+*.d
+*.rlib
+*.rmeta
+
+# Dados e entregas gerados localmente.
+/data/runs/
+/data/campaigns/
+/data/presets/
+/releases/windows/current/
+/releases/windows/*.zip
+/archive/releases/
+
+# Configurações pessoais de IDE e sistema.
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
