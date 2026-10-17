@@ -1,9 +1,8 @@
-# Ecossistema Neural
+# New Gods Unlimited
 
-Simulador local de ecossistema evolutivo, escrito em Rust e visualizado com
-Macroquad. O núcleo reúne organismos, ambiente, rede neural, genoma e
-persistência de sessões; a interface permite observar e configurar uma
-execução.
+Um ecossistema celular evolutivo, escrito em Rust e visualizado com Macroquad.
+O núcleo reúne organismos, ambiente, rede neural, genoma e persistência de
+sessões; a interface permite observar e configurar uma execução.
 
 ## Começar por aqui
 

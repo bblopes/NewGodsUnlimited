@@ -1,4 +1,4 @@
-# Documentação do Ecossistema Neural
+# Documentação do New Gods Unlimited
 
 Esta pasta reúne as decisões de produto e de arquitetura. O código executável
 permanece em `src/`; estes documentos explicam as regras que ele implementa ou

@@ -1,4 +1,4 @@
-# Ecossistema neural evolutivo — documentação preliminar
+# New Gods Unlimited — documentação preliminar
 
 ## Visão
 
