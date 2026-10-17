@@ -1,5 +1,5 @@
-use new_gods_unlimited::lab;
 use macroquad::prelude::*;
+use new_gods_unlimited::lab;
 
 fn window_conf() -> Conf {
     Conf {
