@@ -1206,9 +1206,21 @@ fn format_emission_display(emission_per_tick: f32) -> String {
     }
 }
 
+fn mental_cost_display(cost_per_connection: f32) -> f32 {
+    (cost_per_connection.max(0.0) * MENTAL_COST_DISPLAY_SCALE).round()
+}
+
+fn mental_cost_from_display(display_value: f32) -> f32 {
+    display_value.max(0.0) / MENTAL_COST_DISPLAY_SCALE
+}
+
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
 /// V17 adiciona os bits hereditários que habilitam nós internos e motores.
 const RUN_FORMAT_VERSION: u32 = 17;
+/// Unidade humana do controle de custo mental. O motor continua guardando o
+/// valor físico pequeno para preservar runs e presets; na interface, 100
+/// unidades equivalem ao custo-padrão de 0,0025 por conexão/tick.
+const MENTAL_COST_DISPLAY_SCALE: f32 = 40_000.0;
 
 /// Raiz portátil: os dados de uma cópia compartilhada ficam ao lado do .exe,
 /// e não dependem da estrutura `target/release` usada no desenvolvimento.
@@ -3744,13 +3756,16 @@ fn draw_session_tab(
         y(606.0),
         width,
         "Custo mental",
-        session.mental_energy_cost,
+        mental_cost_display(session.mental_energy_cost),
         0.0,
-        0.02,
-        &format!("{:.4} / conexão/tick", session.mental_energy_cost),
+        mental_cost_display(0.02),
+        &format!(
+            "{:.0} unidades / conexão/tick",
+            mental_cost_display(session.mental_energy_cost)
+        ),
         session.mental_energy_cost != session.applied.mental_energy_cost,
     ) {
-        session.mental_energy_cost = cost;
+        session.mental_energy_cost = mental_cost_from_display(cost);
     }
 
     section_title(left, y(661.0), "Fitoplâncton");
@@ -4439,13 +4454,16 @@ fn draw_session_tab_compact(
             y(cursor),
             width,
             "Custo mental",
-            session.mental_energy_cost,
+            mental_cost_display(session.mental_energy_cost),
             0.0,
-            0.02,
-            &format!("{:.4} / conexão/tick", session.mental_energy_cost),
+            mental_cost_display(0.02),
+            &format!(
+                "{:.0} unidades / conexão/tick",
+                mental_cost_display(session.mental_energy_cost)
+            ),
             session.mental_energy_cost != session.applied.mental_energy_cost,
         ) {
-            session.mental_energy_cost = cost;
+            session.mental_energy_cost = mental_cost_from_display(cost);
         }
         cursor += 53.0;
     }
@@ -6959,6 +6977,12 @@ mod tests {
 
         session.flow_enabled = true;
         assert_eq!(session.effective_flow_intensity(), 0.63);
+    }
+
+    #[test]
+    fn mental_cost_slider_uses_human_scale_without_changing_engine_value() {
+        assert_eq!(mental_cost_display(DEFAULT_MENTAL_ENERGY_COST), 100.0);
+        assert!((mental_cost_from_display(100.0) - DEFAULT_MENTAL_ENERGY_COST).abs() < 0.000_001);
     }
 
     #[test]

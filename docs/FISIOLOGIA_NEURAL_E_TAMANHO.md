@@ -18,6 +18,11 @@ fixos, pois são órgãos de entrada, não neurônios opcionais.
 - como os bits estão no `Genome`, mutação, cor, similaridade e assinatura PG
   também mudam quando a arquitetura neural muda.
 
+O controle **Custo mental** usa unidades humanas: `100` equivale ao valor
+interno padrão de `0,0025` por conexão/tick. Runs e presets continuam
+armazenando o valor físico interno, portanto não mudam de comportamento ao
+abrir nesta versão.
+
 Runs V16 são migradas com os 30 nós ligados. Isso conserva a fiação já salva.
 Na criação de fundadores, Val 1.0 reativa todos os motores e Val 2.0 reativa
 os motores, o neurônio de porta e as conexões de navegação/doação garantidas.
