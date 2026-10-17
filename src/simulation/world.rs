@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Read, Write},
+    time::{Duration, Instant},
 };
 
 use macroquad::prelude::*;
@@ -89,6 +90,154 @@ impl Default for AntiCrammingConfig {
 pub struct CrowdingMetrics {
     pub violating_pairs: usize,
     pub minimum_violation_distance: Option<f32>,
+}
+
+/// Tempos acumulados das fases de um tick. É preenchido somente por
+/// `World::tick_profiled()`, usado pelo benchmark headless; `World::tick()`
+/// normal não consulta o relógio nem altera o custo da simulação publicada.
+#[derive(Clone, Copy, Default)]
+pub struct TickProfile {
+    pub clock: Duration,
+    pub food_emission: Duration,
+    pub pheromones: Duration,
+    pub sensors: Duration,
+    pub brain: Duration,
+    pub food_movement: Duration,
+    pub organism_movement: Duration,
+    pub interactions: Duration,
+    pub energy: Duration,
+    pub deaths: Duration,
+    pub feeding: Duration,
+    pub food_cleanup: Duration,
+    pub reproduction: Duration,
+}
+
+impl TickProfile {
+    pub fn merge(&mut self, other: &Self) {
+        self.clock += other.clock;
+        self.food_emission += other.food_emission;
+        self.pheromones += other.pheromones;
+        self.sensors += other.sensors;
+        self.brain += other.brain;
+        self.food_movement += other.food_movement;
+        self.organism_movement += other.organism_movement;
+        self.interactions += other.interactions;
+        self.energy += other.energy;
+        self.deaths += other.deaths;
+        self.feeding += other.feeding;
+        self.food_cleanup += other.food_cleanup;
+        self.reproduction += other.reproduction;
+    }
+
+    pub fn total(&self) -> Duration {
+        self.clock
+            + self.food_emission
+            + self.pheromones
+            + self.sensors
+            + self.brain
+            + self.food_movement
+            + self.organism_movement
+            + self.interactions
+            + self.energy
+            + self.deaths
+            + self.feeding
+            + self.food_cleanup
+            + self.reproduction
+    }
+
+    pub fn phases(&self) -> [(&'static str, Duration); 13] {
+        [
+            ("tempo", self.clock),
+            ("emissão de alimento", self.food_emission),
+            ("feromônios", self.pheromones),
+            ("sensores", self.sensors),
+            ("cérebro", self.brain),
+            ("movimento do alimento", self.food_movement),
+            ("movimento das células", self.organism_movement),
+            ("interações", self.interactions),
+            ("energia", self.energy),
+            ("mortes", self.deaths),
+            ("alimentação", self.feeding),
+            ("limpeza de alimento", self.food_cleanup),
+            ("reprodução", self.reproduction),
+        ]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TickPhase {
+    Clock,
+    FoodEmission,
+    Pheromones,
+    Sensors,
+    Brain,
+    FoodMovement,
+    OrganismMovement,
+    Interactions,
+    Energy,
+    Deaths,
+    Feeding,
+    FoodCleanup,
+    Reproduction,
+}
+
+trait TickObserver {
+    fn begin(&mut self, phase: TickPhase);
+    fn end(&mut self, phase: TickPhase);
+}
+
+struct NoopTickObserver;
+
+impl TickObserver for NoopTickObserver {
+    #[inline(always)]
+    fn begin(&mut self, _: TickPhase) {}
+
+    #[inline(always)]
+    fn end(&mut self, _: TickPhase) {}
+}
+
+#[derive(Default)]
+struct ProfileTickObserver {
+    profile: TickProfile,
+    started: Option<(TickPhase, Instant)>,
+}
+
+impl ProfileTickObserver {
+    fn into_profile(mut self) -> TickProfile {
+        debug_assert!(self.started.is_none());
+        std::mem::take(&mut self.profile)
+    }
+}
+
+impl TickObserver for ProfileTickObserver {
+    fn begin(&mut self, phase: TickPhase) {
+        debug_assert!(self.started.is_none());
+        self.started = Some((phase, Instant::now()));
+    }
+
+    fn end(&mut self, phase: TickPhase) {
+        let Some((started_phase, started_at)) = self.started.take() else {
+            debug_assert!(false, "fase de benchmark encerrada sem início");
+            return;
+        };
+        debug_assert_eq!(started_phase, phase);
+        let elapsed = started_at.elapsed();
+        match phase {
+            TickPhase::Clock => self.profile.clock += elapsed,
+            TickPhase::FoodEmission => self.profile.food_emission += elapsed,
+            TickPhase::Pheromones => self.profile.pheromones += elapsed,
+            TickPhase::Sensors => self.profile.sensors += elapsed,
+            TickPhase::Brain => self.profile.brain += elapsed,
+            TickPhase::FoodMovement => self.profile.food_movement += elapsed,
+            TickPhase::OrganismMovement => self.profile.organism_movement += elapsed,
+            TickPhase::Interactions => self.profile.interactions += elapsed,
+            TickPhase::Energy => self.profile.energy += elapsed,
+            TickPhase::Deaths => self.profile.deaths += elapsed,
+            TickPhase::Feeding => self.profile.feeding += elapsed,
+            TickPhase::FoodCleanup => self.profile.food_cleanup += elapsed,
+            TickPhase::Reproduction => self.profile.reproduction += elapsed,
+        }
+    }
 }
 
 /// Regra usada somente quando a população inicial é construída. Não é uma
@@ -459,12 +608,70 @@ impl World {
         reproduction_minimum: f32,
         reproduction_limit: f32,
     ) {
+        let mut observer = NoopTickObserver;
+        self.tick_with_observer(
+            flow,
+            desert_emission_per_tick,
+            fertile_emission_per_tick,
+            lifetime_ticks,
+            food_energy,
+            mental_energy_cost,
+            reproduction_minimum,
+            reproduction_limit,
+            &mut observer,
+        );
+    }
+
+    /// Executa exatamente as mesmas regras de [`Self::tick`], medindo o
+    /// tempo gasto em cada etapa. Destinado ao benchmark headless, nunca ao
+    /// loop normal da interface.
+    pub fn tick_profiled(
+        &mut self,
+        flow: &FlowField,
+        desert_emission_per_tick: f32,
+        fertile_emission_per_tick: f32,
+        lifetime_ticks: u32,
+        food_energy: f32,
+        mental_energy_cost: f32,
+        reproduction_minimum: f32,
+        reproduction_limit: f32,
+    ) -> TickProfile {
+        let mut observer = ProfileTickObserver::default();
+        self.tick_with_observer(
+            flow,
+            desert_emission_per_tick,
+            fertile_emission_per_tick,
+            lifetime_ticks,
+            food_energy,
+            mental_energy_cost,
+            reproduction_minimum,
+            reproduction_limit,
+            &mut observer,
+        );
+        observer.into_profile()
+    }
+
+    fn tick_with_observer<Observer: TickObserver>(
+        &mut self,
+        flow: &FlowField,
+        desert_emission_per_tick: f32,
+        fertile_emission_per_tick: f32,
+        lifetime_ticks: u32,
+        food_energy: f32,
+        mental_energy_cost: f32,
+        reproduction_minimum: f32,
+        reproduction_limit: f32,
+        observer: &mut Observer,
+    ) {
         // ── Etapa 1: tempo e limites desta rodada ────────────────────────
+        observer.begin(TickPhase::Clock);
         self.tick += 1;
         let reproduction_minimum = reproduction_minimum.max(1.0);
         let reproduction_limit = reproduction_limit.max(reproduction_minimum);
         self.energy_capacity = reproduction_limit;
+        observer.end(TickPhase::Clock);
         // ── Etapa 2: emissão de fitoplâncton ─────────────────────────────
+        observer.begin(TickPhase::FoodEmission);
         // O crédito fracionário permite uma taxa média estável de emissão.
         self.desert_spawn_credit += desert_emission_per_tick.max(0.0);
         while self.desert_spawn_credit >= 1.0 {
@@ -480,17 +687,23 @@ impl World {
         } else {
             self.fertile_spawn_credit = 0.0;
         }
+        observer.end(TickPhase::FoodEmission);
 
         // ── Etapa 3: fotografia química ──────────────────────────────────
         // Primeiro construímos o campo químico a partir da emissão basal e
         // dos motores decididos no tick anterior. Assim, não há persistência
         // química, mas existe uma defasagem causal de um tick.
+        observer.begin(TickPhase::Pheromones);
         self.pheromones.rebuild(&self.organisms, &self.map);
+        observer.end(TickPhase::Pheromones);
 
         // ── Etapas 4 e 5: perceber e decidir ─────────────────────────────
         // Sensores veem o retrato do mundo no início do tick. O cérebro
         // decide usando este mesmo retrato antes do movimento.
+        observer.begin(TickPhase::Sensors);
         self.update_sensors(flow, reproduction_limit);
+        observer.end(TickPhase::Sensors);
+        observer.begin(TickPhase::Brain);
         for organism in &mut self.organisms {
             organism.motors = organism.brain.tick(organism.sensors);
             organism.age_ticks += 1;
@@ -498,8 +711,10 @@ impl World {
             // acumulamos a força que ele perceberá no próximo tick.
             organism.external_force = Vec2::ZERO;
         }
+        observer.end(TickPhase::Brain);
 
         // ── Etapa 6: deslocar e envelhecer o alimento ────────────────────
+        observer.begin(TickPhase::FoodMovement);
         for particle in &mut self.food {
             let previous_position = particle.position;
             particle.position +=
@@ -517,9 +732,11 @@ impl World {
                     .constrain_to_walls(particle.position, previous_position, FOOD_RADIUS);
             particle.age_ticks += 1;
         }
+        observer.end(TickPhase::FoodMovement);
 
         // ── Etapa 7: deslocar as células ─────────────────────────────────
         // Posição nova = corrente ambiental + velocidade escolhida pelo cérebro.
+        observer.begin(TickPhase::OrganismMovement);
         for organism in &mut self.organisms {
             let previous_position = organism.position;
             let environment_velocity =
@@ -534,18 +751,22 @@ impl World {
                 self.map
                     .constrain_to_walls(organism.position, previous_position, radius);
         }
+        observer.end(TickPhase::OrganismMovement);
 
         // ── Etapa 8: interações entre células ────────────────────────────
         // A fagocitose pode relaxar a repulsão somente para o par que está
         // em sucção válida. Todos os outros pares continuam anti-cramming.
+        observer.begin(TickPhase::Interactions);
         let phagocytosis_pairs = self.apply_phagocytosis();
         self.apply_anti_cramming(&phagocytosis_pairs.protected_pairs);
         self.consume_phagocytosed(&phagocytosis_pairs.capture_candidates, reproduction_limit);
         self.apply_donations(reproduction_limit);
+        observer.end(TickPhase::Interactions);
 
         // ── Etapa 9: cobrar o custo de existir e agir ────────────────────
         // O custo de existir e de nadar é pago antes do ganho alimentar.
         // Assim, alcançar o teto de energia após comer realmente dispara a divisão.
+        observer.begin(TickPhase::Energy);
         for organism in &mut self.organisms {
             let body_cost_scale = organism.physical_area_scale();
             organism.energy -= ((BASAL_ENERGY_COST
@@ -555,7 +776,9 @@ impl World {
                 + pheromone_energy_cost(organism))
                 * organism.energy_cost_multiplier();
         }
+        observer.end(TickPhase::Energy);
         // ── Etapa 10: remover mortes por energia ou idade ────────────────
+        observer.begin(TickPhase::Deaths);
         let population_before_deaths = self.organisms.len();
         let mut starvation_deaths = 0u64;
         let mut age_deaths = 0u64;
@@ -573,12 +796,14 @@ impl World {
         self.deaths_total += (population_before_deaths - self.organisms.len()) as u64;
         self.deaths_by_starvation_total += starvation_deaths;
         self.deaths_by_age_total += age_deaths;
+        observer.end(TickPhase::Deaths);
 
         // ── Etapa 11: encontrar a vencedora de cada alimento ─────────────
         // Para cada comida, só a célula mais próxima que a contém vence.
         // A grade espacial evita testar cada partícula contra toda a população.
         // Como a interação tem alcance CELL_RADIUS, bastam os nove quadrados
         // vizinhos à partícula.
+        observer.begin(TickPhase::Feeding);
         let organism_grid = self.organism_grid();
         // A regra de contato é deliberadamente pelo centro da comida, não pela
         // sobreposição de dois raios: distância(centro comida, centro célula) ≤ raio célula.
@@ -593,8 +818,10 @@ impl World {
             organism.energy = (organism.energy + food_energy).min(reproduction_limit);
         }
         self.clamp_organisms_to_physical_bounds();
+        observer.end(TickPhase::Feeding);
 
         // ── Etapa 12: remover alimento consumido ou vencido ──────────────
+        observer.begin(TickPhase::FoodCleanup);
         self.food = self
             .food
             .drain(..)
@@ -603,9 +830,12 @@ impl World {
                 (winner.is_none() && particle.age_ticks < lifetime_ticks).then_some(particle)
             })
             .collect();
+        observer.end(TickPhase::FoodCleanup);
 
         // ── Etapa 13: dividir células aptas e criar descendentes ─────────
+        observer.begin(TickPhase::Reproduction);
         self.reproduce_ready_organisms(reproduction_minimum, reproduction_limit);
+        observer.end(TickPhase::Reproduction);
     }
 
     /// Atualiza a configuração; não executa uma etapa biológica por si só.
@@ -2238,6 +2468,41 @@ mod tests {
 
         assert!(world.organisms.is_empty());
         assert_eq!(world.deaths_total, 1);
+    }
+
+    #[test]
+    fn profiled_tick_preserves_the_same_world_state_as_a_normal_tick() {
+        let mut normal = World::new(84, 8);
+        let mut profiled = normal.clone();
+        let flow = FlowField::new(84).with_intensity(0.0);
+
+        normal.tick(
+            &flow,
+            0.12,
+            0.24,
+            600,
+            FOOD_ENERGY,
+            DEFAULT_MENTAL_ENERGY_COST,
+            MAX_ENERGY,
+            1_000.0,
+        );
+        let profile = profiled.tick_profiled(
+            &flow,
+            0.12,
+            0.24,
+            600,
+            FOOD_ENERGY,
+            DEFAULT_MENTAL_ENERGY_COST,
+            MAX_ENERGY,
+            1_000.0,
+        );
+
+        let mut normal_checkpoint = Vec::new();
+        normal.write_checkpoint(&mut normal_checkpoint).unwrap();
+        let mut profiled_checkpoint = Vec::new();
+        profiled.write_checkpoint(&mut profiled_checkpoint).unwrap();
+        assert_eq!(normal_checkpoint, profiled_checkpoint);
+        assert!(!profile.total().is_zero());
     }
 
     #[test]

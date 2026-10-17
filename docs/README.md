@@ -10,6 +10,7 @@ as propostas que ainda aguardam aprovação.
 | [Estrutura de arquivos](ESTRUTURA_DE_ARQUIVOS_PROPOSTA.md) | responsabilidades dos módulos Rust |
 | [Estrutura do repositório](ESTRUTURA_DO_REPOSITORIO.md) | finalidade de cada pasta e regra de organização |
 | [Guia de leitura do tick](GUIA_DE_LEITURA_DO_TICK.md) | ordem de cálculo, chamadas entre módulos e como estudar `World::tick()` |
+| [Medição de desempenho](MEDICAO_DE_DESEMPENHO.md) | benchmark reproduzível, cenários e primeira linha de base |
 | [Sessão reproduzível](ESPECIFICACAO_SESSAO_REPRODUZIVEL.md) | telemetria, salvar e restaurar uma execução |
 | [Laboratório](DOCUMENTACAO_LABORATORIO.md) | campanhas, cenários e execuções em lote |
 | [Análise genética](DOCUMENTACAO_ANALISE_GENETICA.md) | cor, similaridade, linhagens e KPIs |

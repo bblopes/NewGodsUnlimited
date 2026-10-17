@@ -12,6 +12,7 @@
 /data/runs/
 /data/campaigns/
 /data/presets/
+/data/benchmarks/
 /releases/windows/current/
 /releases/windows/*.zip
 /archive/releases/
