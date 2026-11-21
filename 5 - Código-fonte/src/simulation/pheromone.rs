@@ -61,6 +61,50 @@ pub struct PheromoneField {
     /// identidade genética nem um canal escolhido pelo receptor.
     food: Vec<f32>,
     generic: Vec<Vec<f32>>,
+    /// Geometria de depósito do PF por célula da malha. Não é estado do
+    /// mundo: é derivada do mapa e refeita quando as paredes mudam.
+    food_kernels: FoodKernelCache,
+}
+
+/// Para cada célula da malha química, a lista `(destino, peso)` que o PF
+/// emitido do seu centro alcança, já filtrada por linha de visão. A lista é
+/// calculada na primeira vez que a célula tem alimento e reaproveitada até o
+/// mapa mudar. Os pesos e a ordem são os mesmos de
+/// `for_each_deposition_sample`, portanto o campo resultante é idêntico.
+#[derive(Default)]
+struct FoodKernelCache {
+    walls: Vec<u8>,
+    kernels: Vec<Option<Box<[(u32, f32)]>>>,
+}
+
+impl Clone for FoodKernelCache {
+    /// Cópias do mundo (salvar, telas) não precisam carregar ~9 MB de cache:
+    /// a cópia o recalcula sob demanda.
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl FoodKernelCache {
+    fn prepare(&mut self, map: &MapDefinition) {
+        if self.kernels.len() != FIELD_WIDTH * FIELD_HEIGHT || self.walls != map.wall_mask() {
+            self.walls.clear();
+            self.walls.extend_from_slice(map.wall_mask());
+            self.kernels.clear();
+            self.kernels.resize(FIELD_WIDTH * FIELD_HEIGHT, None);
+        }
+    }
+
+    fn kernel(&mut self, source: usize, map: &MapDefinition) -> &[(u32, f32)] {
+        self.kernels[source].get_or_insert_with(|| {
+            let mut samples = Vec::with_capacity(128);
+            let center = cell_center(source % FIELD_WIDTH, source / FIELD_WIDTH);
+            for_each_deposition_sample(center, map, |index, weight| {
+                samples.push((index as u32, weight));
+            });
+            samples.into_boxed_slice()
+        })
+    }
 }
 
 impl Default for PheromoneField {
@@ -74,6 +118,7 @@ impl Default for PheromoneField {
             generic: (0..GENERIC_CHANNEL_COUNT)
                 .map(|_| vec![0.0; cells])
                 .collect(),
+            food_kernels: FoodKernelCache::default(),
         }
     }
 }
@@ -145,13 +190,14 @@ impl PheromoneField {
         for particle in phytoplankton {
             food_sources[self.nearest_index(particle.position)] += FOOD_PHEROMONE_PPM;
         }
-        for (index, amount) in food_sources.into_iter().enumerate() {
+        self.food_kernels.prepare(map);
+        for (source, amount) in food_sources.into_iter().enumerate() {
             if amount <= 0.0 {
                 continue;
             }
-            let x = index % FIELD_WIDTH;
-            let y = index / FIELD_WIDTH;
-            self.deposit_food(cell_center(x, y), amount, map);
+            for &(index, weight) in self.food_kernels.kernel(source, map) {
+                self.food[index as usize] += amount * weight;
+            }
         }
     }
 
@@ -215,12 +261,6 @@ impl PheromoneField {
             for (channel, amount) in generic_emissions.into_iter().flatten() {
                 self.generic[channel % GENERIC_CHANNEL_COUNT][index] += amount * weight;
             }
-        });
-    }
-
-    fn deposit_food(&mut self, source: Vec2, amount: f32, map: &MapDefinition) {
-        for_each_deposition_sample(source, map, |index, weight| {
-            self.food[index] += amount * weight;
         });
     }
 
@@ -438,6 +478,42 @@ mod tests {
         {
             assert_eq!(optimized_channel, reference_channel);
         }
+    }
+
+    #[test]
+    fn cached_food_field_matches_the_reference_and_follows_map_edits() {
+        let mut world = World::new(4_245, 4);
+        world.food.clear();
+        // Partículas espalhadas pelo mundo inteiro, inclusive junto às
+        // paredes do oásis, onde a linha de visão importa.
+        for index in 0..900 {
+            let fx = (index as f32 * 0.618_034).fract();
+            let fy = (index as f32 * 0.414_214).fract();
+            world.food.push(Phytoplankton {
+                position: vec2(fx * WORLD_WIDTH, fy * WORLD_HEIGHT),
+                age_ticks: 0,
+            });
+        }
+        let mut cached = PheromoneField::default();
+        let mut reference = PheromoneField::default();
+        for _ in 0..2 {
+            cached.rebuild(&world.organisms, &world.food, &world.map);
+            reference.rebuild_reference(&world.organisms, &world.food, &world.map);
+            assert_eq!(cached.food, reference.food);
+        }
+        // Uma parede nova invalida o cache.
+        for step in 0..40 {
+            world
+                .map
+                .paint_wall(vec2(2_000.0 + step as f32 * 40.0, 2_400.0), true);
+        }
+        cached.rebuild(&world.organisms, &world.food, &world.map);
+        reference.rebuild_reference(&world.organisms, &world.food, &world.map);
+        assert_eq!(cached.food, reference.food);
+        // Uma cópia começa sem cache e chega ao mesmo campo.
+        let mut copy = cached.clone();
+        copy.rebuild(&world.organisms, &world.food, &world.map);
+        assert_eq!(copy.food, reference.food);
     }
 
     #[test]

@@ -8,6 +8,7 @@ grande mudança dela:
 | --- | --- | --- |
 | `V1 - Interface original/` | V1.x | o programa com a interface original (Macroquad) |
 | `V2 - Revamp da interface/` | V2.x | **revamp da interface de usuário**: interface nova (Tauri) sobre o mesmo motor |
+| `V3 - Otimização/` | V3.x | **otimização**: motor mais rápido, com o mesmo resultado de simulação |
 
 ```text
 2 - Versões de teste/

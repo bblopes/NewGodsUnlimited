@@ -26,6 +26,7 @@ título das Releases do GitHub:
 | --- | --- | --- |
 | V1 | **Interface original** | o programa com a interface desenhada em Macroquad |
 | V2 | **Revamp da interface** | interface de usuário refeita (Tauri), mesmo motor de simulação |
+| V3 | **Otimização** | motor mais rápido com o mesmo resultado; ver `Relatórios/AVALIACAO_DE_DESEMPENHO.md` |
 
 Uma nova versão maior (V3…) ganha o título da mudança grande que ela traz.
 

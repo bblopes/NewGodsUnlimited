@@ -707,8 +707,18 @@ function buildMap(m) {
   }
   wc.putImageData(wi, 0, 0); sc.putImageData(si, 0, 0);
 }
-function resize() { const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1; cv.width = Math.max(1, r.width * d); cv.height = Math.max(1, r.height * d); }
+// O canvas precisa ter o mesmo tamanho que ocupa na tela; senão o desenho é
+// esticado e o clique erra a célula. A área da arena muda sem a janela mudar
+// (painel lateral arrastado, recolhido ou alargado, tela cheia da Demografia),
+// por isso observamos o próprio canvas e ainda conferimos a cada quadro.
+function resize() {
+  const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d));
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+}
 window.addEventListener('resize', resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe(cv);
 function cellIndex(id) { return F ? F.ids.indexOf(id) : -1; }
 function computeView() {
   const d = window.devicePixelRatio || 1, cw = cv.width / d, ch = cv.height / d, pad = 24;
@@ -729,6 +739,7 @@ function isWallAt(wx, wy) {
   if (gx < 0 || gy < 0 || gx >= MAP.width || gy >= MAP.height) return true; return MAP.walls[gy * MAP.width + gx] === 1;
 }
 function draw() {
+  resize();
   const d = window.devicePixelRatio || 1;
   ctx.setTransform(d, 0, 0, d, 0, 0);
   const cw = cv.width / d, ch = cv.height / d;

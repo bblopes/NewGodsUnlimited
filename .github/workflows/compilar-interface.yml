@@ -5,7 +5,8 @@
 #   artefato do workflow, para teste.
 # - Na main, quando a versão ainda não tem Release: compila e publica
 #   "New Gods Unlimited V<versão>.exe" como pre-release, com as notas do
-#   ENTREGA.md da pasta da versão (2 - Versões de teste/V2 - .../V<versão>/).
+#   ENTREGA.md da pasta da versão (2 - Versões de teste/V<maior> - <título>/V<versão>/);
+#   o título da Release vem do nome da pasta da versão maior.
 name: Compilar interface nova
 
 on:
@@ -88,6 +89,11 @@ jobs:
           NUMERO: ${{ steps.versao.outputs.numero }}
           ARQUIVO: ${{ steps.versao.outputs.arquivo }}
         run: |
-          $notas = "../../2 - Versões de teste/V2 - Revamp da interface/V$env:NUMERO/ENTREGA.md"
+          # A pasta da versão maior traz o título: "V3 - Otimização".
+          $maior = $env:NUMERO.Split('.')[0]
+          $pasta = Get-ChildItem -LiteralPath '../../2 - Versões de teste' -Directory | Where-Object { $_.Name -like "V$maior - *" } | Select-Object -First 1
+          if (-not $pasta) { throw "Falta a pasta '2 - Versões de teste/V$maior - <título>'" }
+          $titulo = $pasta.Name.Substring($pasta.Name.IndexOf(' - ') + 3)
+          $notas = Join-Path $pasta.FullName "V$env:NUMERO/ENTREGA.md"
           if (-not (Test-Path -LiteralPath $notas)) { throw "Falta o documento da entrega: $notas" }
-          gh release create "v$env:NUMERO" "../../saida/$env:ARQUIVO" --repo $env:GITHUB_REPOSITORY --title "New Gods Unlimited V$env:NUMERO — Revamp da interface" --notes-file $notas --target $env:GITHUB_SHA --prerelease
+          gh release create "v$env:NUMERO" "../../saida/$env:ARQUIVO" --repo $env:GITHUB_REPOSITORY --title "New Gods Unlimited V$env:NUMERO — $titulo" --notes-file $notas --target $env:GITHUB_SHA --prerelease
