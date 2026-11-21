@@ -173,7 +173,9 @@ function tabSessao() {
       <button class="btn icon ghost" style="height:auto;width:38px;border-radius:0 8px 8px 0" data-act="viewInd" data-v="${esc(o.key)}" title="Ver o indivíduo">${ic('eye')}</button></div>`;
   const body = `
     ${section('s-exec', 'Execução', `
-      <div class="readouts">${ro('Tick', fmt(F?.tick), '', 'tick')}${ro('Células vivas', fmt(F?.population), '', 'cells')}${ro('Ticks/s', fmt(F?.tps), '', 'tps')}${ro('Publicação', fmt(F?.publish_hz) + ' Hz', '', 'pub')}</div>
+      <div class="readouts">${ro('Tick', fmt(F?.tick), '', 'tick')}${ro('Células vivas', fmt(F?.population), '', 'cells')}${ro('Ticks/s', fmt(F?.tps), '', 'tps')}${ro('Publicação', fmt(F?.publish_hz) + ' Hz', '', 'pub')}${ro('Teto de cálculo (sem limitador)', fmt(F?.capacity_tps) + ' ticks/s', 'wide', 'cap')}</div>
+      <div class="hint">Ticks/s é a velocidade real da sessão (1× ≈ 10 ticks/s). O teto é quanto o motor conseguiria sem o limitador de velocidade.</div>
+      ${threadsControl()}
       <button class="btn block" data-act="modal" data-v="headless">${ic('bolt')}Modo headless · medir teto de cálculo</button>
       ${toggle('keepAwake', 'Manter Windows ativo', 'Impede a suspensão enquanto a simulação calcula')}
     `)}
@@ -437,6 +439,13 @@ function histogram(h) {
   const m = Math.max(...counts, 1), bw = w / b;
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px">${counts.map((k, i) => `<rect x="${i * bw + 1}" y="${h - k / m * (h - 6)}" width="${bw - 2}" height="${k / m * (h - 6)}" rx="2" fill="var(--ac)" fill-opacity=".75"><title>${fmt(i * cap / b)}–${fmt((i + 1) * cap / b)}: ${k}</title></rect>`).join('')}</svg>`;
 }
+function threadsControl() {
+  const max = F?.max_threads || 1, req = F?.threads_requested ?? 1;
+  const opts = [[0, 'Auto']].concat([1, 2, 4, 8, 16].filter(n => n < max).map(n => [n, String(n)])).concat(max > 1 ? [[max, String(max)]] : []);
+  return `<div class="field"><div class="field-top"><label>Threads de cálculo</label><span class="unit mono" style="margin-left:auto" data-live="threads">em uso: ${fmt(F?.threads ?? 1)} de ${fmt(max)}</span></div>
+    <div class="seg">${opts.map(([n, l]) => `<button class="${n === req ? 'on' : ''}" data-act="threads" data-v="${n}">${l}</button>`).join('')}</div>
+    <div class="hint">O resultado da simulação é o mesmo com qualquer número de threads; só muda a velocidade. Padrão: 1. Com o tick curto, mais threads podem até atrasar; compare o "Teto de cálculo" acima.</div></div>`;
+}
 const SAMPLING = [250, 500, 1000, 2000, 5000];
 function samplingControl() {
   const cur = F?.telemetry_interval ?? 500;
@@ -611,6 +620,7 @@ const ACT = {
   fit() { cam.zoom = 1; cam.cx = INFO.world_width / 2; cam.cy = INFO.world_height / 2; S.follow = false; renderStage(); },
   openRep(v) { selectCell(+v); S.cellsView = 'ind'; renderPanel(); },
   demoFull() { S.demoFull = !S.demoFull; renderStage(); },
+  threads(v) { send({ type: 'threads', count: +v }); setTimeout(() => { if (S.tab === 'sessao') renderPanel(); }, 200); },
   sampling(v) { send({ type: 'telemetry_interval', ticks: +v }); setTimeout(() => { if (S.tab === 'demografia') renderPanel(); if (S.demoFull) renderStage(); }, 150); },
   toggleRecords() { S.showRecords = !S.showRecords; if (S.drawer === 'individual') renderLayer(); else renderPanel(); },
   askSave() { S.modal = 'saveInd'; S.drawer = null; renderLayer(); setTimeout(() => { const i = $('#saveName'); if (i) { i.focus(); i.select(); } }, 30); },
@@ -916,7 +926,7 @@ async function pollGenetics(force) {
 function updateLive() {
   if (!F) return;
   const set = (k, v) => document.querySelectorAll(`[data-live="${k}"]`).forEach(el => { if (el.textContent !== v) el.textContent = v; });
-  set('tick', fmt(F.tick)); set('cells', fmt(F.population)); set('tps', fmt(F.tps)); set('food', fmt(F.food_count));
+  set('tick', fmt(F.tick)); set('cells', fmt(F.population)); set('tps', fmt(F.tps)); set('food', fmt(F.food_count)); set('cap', fmt(F.capacity_tps) + ' ticks/s'); set('threads', `em uso: ${fmt(F.threads ?? 1)} de ${fmt(F.max_threads ?? 1)}`);
   set('fps', fps + ' FPS'); set('pubhz', `pub. ${fmt(F.publish_hz)} Hz`); set('pub', `${fmt(F.publish_hz)} Hz`);
   set('run', '#' + String(F.run_id).slice(-7)); set('conflicts', `${fmt(F.crowding_pairs)} pares em conflito`);
   if (F.chem) set('peak', 'pico ' + fmt(F.chem.max, 2) + ' ppm');

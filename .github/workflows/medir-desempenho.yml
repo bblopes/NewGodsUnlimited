@@ -37,7 +37,9 @@ jobs:
         run: cargo test --release --lib
 
       - name: Compilar benchmark (branch)
-        run: cargo build --release --bin benchmark_simulacao
+        run: |
+          cargo build --release --bin benchmark_simulacao
+          Write-Host "INICIO_LOCK"; git diff -- Cargo.lock; Write-Host "FIM_LOCK"
 
       - name: Compilar benchmark (main, referência)
         run: |
@@ -76,6 +78,16 @@ jobs:
             $r = [math]::Max($r1.tps, $r2.tps); $n = [math]::Max($n1.tps, $n2.tps)
             $igual = if ($r1.hash -eq $n1.hash) { 'sim' } else { "NÃO ($($r1.hash) × $($n1.hash))" }
             $linhas += "| $($c.nome) | $([math]::Round($r,1)) | $([math]::Round($n,1)) | $([math]::Round($n / $r, 2))× | $igual |"
+          }
+          # Ganho só do paralelismo: a branch com 1 thread × todos os núcleos.
+          $linhas += ''
+          $linhas += '| Caso (branch) | 1 thread | todos os núcleos | Ganho do paralelismo | Estado igual |'
+          $linhas += '|---|---:|---:|---:|---|'
+          foreach ($c in $casos) {
+            $um = @{ nome = $c.nome; args = $c.args + @('--threads','1') }
+            $a = Medir $novo $um 'um1'; $b = Medir $novo $c 'todos'
+            $igual = if ($a.hash -eq $b.hash) { 'sim' } else { 'NÃO' }
+            $linhas += "| $($c.nome) | $([math]::Round($a.tps,1)) | $([math]::Round($b.tps,1)) | $([math]::Round($b.tps / $a.tps, 2))× | $igual |"
           }
           $tabela = $linhas -join "`n"
           Write-Host "`nCOMPARACAO`n$tabela`nFIM_COMPARACAO"

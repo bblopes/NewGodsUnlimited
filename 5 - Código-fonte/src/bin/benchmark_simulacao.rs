@@ -140,6 +140,8 @@ struct Options {
     seed: u64,
     validated_run: Option<PathBuf>,
     write_report: bool,
+    /// Threads de cálculo; 0 = todos os núcleos.
+    threads: usize,
 }
 
 impl Default for Options {
@@ -153,6 +155,7 @@ impl Default for Options {
             seed: 46_349_581_402_012_806_50,
             validated_run: None,
             write_report: true,
+            threads: 0,
         }
     }
 }
@@ -183,6 +186,12 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let options = parse_options(env::args().skip(1))?;
+    if options.threads > 0 {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(options.threads)
+            .build_global()
+            .map_err(|error| format!("não foi possível criar {} threads: {error}", options.threads))?;
+    }
     let defaults = options.scenario.defaults();
     let population = options.population.unwrap_or(defaults.population);
     if population == 0 || options.ticks == 0 || options.repetitions == 0 {
@@ -203,6 +212,7 @@ fn run() -> Result<(), String> {
 
     println!("New Gods Unlimited — medição de desempenho");
     println!("Cenário: {}", options.scenario.name());
+    println!("Threads de cálculo: {}", rayon::current_num_threads());
     println!(
         "Fundadores: Val 2 + {} genomas extraídos de {}",
         founder_genomes.len(),
@@ -621,6 +631,10 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Str
                 )?))
             }
             "--sem-arquivo" => options.write_report = false,
+            "--threads" => {
+                options.threads =
+                    parse_number("--threads", option_value("--threads", &mut arguments)?)?
+            }
             "--ajuda" | "-h" => {
                 return Err("a ajuda é tratada antes do benchmark iniciar.".into());
             }
@@ -636,6 +650,7 @@ fn print_usage() {
     println!("  --populacao N --ticks N --aquecimento N --repeticoes N --seed N");
     println!("  --run-validado CAMINHO   usa esta população salva como fundadora Val 2");
     println!("  --sem-arquivo             não grava JSON em ../4 - Dados/benchmarks");
+    println!("  --threads N               threads de cálculo (0 = todos os núcleos)");
 }
 
 fn option_value(
