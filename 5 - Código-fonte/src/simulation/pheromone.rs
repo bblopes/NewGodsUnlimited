@@ -2,6 +2,7 @@
 //! persistência, difusão acumulada nem memória fora das emissões em curso.
 
 use macroquad::prelude::*;
+use rayon::prelude::*;
 
 use crate::{
     config::{WORLD_HEIGHT, WORLD_WIDTH},
@@ -66,6 +67,44 @@ pub struct PheromoneField {
     food_kernels: FoodKernelCache,
     /// Distância até a parede mais próxima; também usada pela visão.
     clearance: WallClearance,
+}
+
+/// Emissão de uma célula num tick: quantidades e as amostras da malha que
+/// ela alcança, na ordem de `for_each_deposition_sample`.
+struct OrganismEmission {
+    pg_amount: f32,
+    signature: Vec2,
+    generic: [Option<(usize, f32)>; 3],
+    samples: Vec<(u32, f32)>,
+}
+
+impl OrganismEmission {
+    fn of(organism: &Organism, map: &MapDefinition, clearance: &WallClearance) -> Self {
+        let emission_scale = chemical_emission_scale(organism);
+        let channels = organism.genome.pheromone_channels();
+        let mut generic = [None; 3];
+        for (index, activation) in organism.motors.pheromone_activation()[1..]
+            .iter()
+            .enumerate()
+        {
+            if *activation > 0.01 {
+                generic[index] = Some((
+                    channels[index] as usize,
+                    GENERIC_PPM * *activation * emission_scale,
+                ));
+            }
+        }
+        let mut samples = Vec::with_capacity(128);
+        for_each_deposition_sample(organism.position, map, clearance, |index, weight| {
+            samples.push((index as u32, weight));
+        });
+        Self {
+            pg_amount: BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * emission_scale,
+            signature: organism.genome.pheromone_signature(),
+            generic,
+            samples,
+        }
+    }
 }
 
 /// Para cada célula da malha química, a lista `(destino, peso)` que o PF
@@ -172,6 +211,32 @@ impl PheromoneField {
 
     pub fn deposit_organisms(&mut self, organisms: &[Organism], map: &MapDefinition) {
         self.prepare_geometry(map);
+        // A parte cara (distâncias, exponenciais, linhas de visão) é calculada
+        // em paralelo, uma lista de amostras por célula. A soma nas camadas
+        // continua sequencial e na mesma ordem: o campo é idêntico bit a bit.
+        let clearance = &self.clearance;
+        let emissions: Vec<OrganismEmission> = organisms
+            .par_iter()
+            .with_min_len(16)
+            .map(|organism| OrganismEmission::of(organism, map, clearance))
+            .collect();
+        for emission in &emissions {
+            for &(index, weight) in &emission.samples {
+                let index = index as usize;
+                let contribution = emission.pg_amount * weight;
+                self.pg[index] += contribution;
+                self.pg_signature_x[index] += contribution * emission.signature.x;
+                self.pg_signature_y[index] += contribution * emission.signature.y;
+                for (channel, amount) in emission.generic.into_iter().flatten() {
+                    self.generic[channel % GENERIC_CHANNEL_COUNT][index] += amount * weight;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn deposit_organisms_sequential(&mut self, organisms: &[Organism], map: &MapDefinition) {
+        self.prepare_geometry(map);
         for organism in organisms {
             let emission_scale = chemical_emission_scale(organism);
             let signature = organism.genome.pheromone_signature();
@@ -267,6 +332,7 @@ impl PheromoneField {
             .fold(0.0, f32::max)
     }
 
+    #[cfg(test)]
     fn deposit_emissions(
         &mut self,
         source: Vec2,
@@ -546,6 +612,27 @@ mod tests {
         let mut copy = cached.clone();
         copy.rebuild(&world.organisms, &world.food, &world.map);
         assert_eq!(copy.food, reference.food);
+    }
+
+    #[test]
+    fn parallel_organism_deposition_matches_the_sequential_one() {
+        let mut world = World::new(4_246, 64);
+        for (index, organism) in world.organisms.iter_mut().enumerate() {
+            let phase = index as f32 / 63.0;
+            organism.motors.emit_pg = phase;
+            organism.motors.emit_p1 = (phase + 0.31).fract();
+            organism.motors.emit_p3 = (phase + 0.62).fract();
+        }
+        let mut parallel = PheromoneField::default();
+        let mut sequential = PheromoneField::default();
+        parallel.clear();
+        parallel.deposit_organisms(&world.organisms, &world.map);
+        sequential.clear();
+        sequential.deposit_organisms_sequential(&world.organisms, &world.map);
+        assert_eq!(parallel.pg, sequential.pg);
+        assert_eq!(parallel.pg_signature_x, sequential.pg_signature_x);
+        assert_eq!(parallel.pg_signature_y, sequential.pg_signature_y);
+        assert_eq!(parallel.generic, sequential.generic);
     }
 
     #[test]

@@ -6,6 +6,7 @@ use std::{
 };
 
 use macroquad::prelude::*;
+use rayon::prelude::*;
 
 use crate::{
     config::{DEFAULT_FOOD_SENSOR_RANGE, MAX_FLOW_SPEED, WORLD_HEIGHT, WORLD_WIDTH},
@@ -892,21 +893,26 @@ impl World {
         // decide usando este mesmo retrato antes do movimento.
         self.update_sensors(flow, reproduction_limit, observer);
         observer.begin(TickPhase::Brain);
-        for organism in &mut self.organisms {
+        // Cada cérebro só lê os próprios sensores: paralelo sem efeito no
+        // resultado.
+        self.organisms.par_iter_mut().with_min_len(32).for_each(|organism| {
             organism.motors = organism.brain.tick(organism.sensors);
             organism.age_ticks += 1;
             // O sensor já leu a força do tick anterior. A partir daqui
             // acumulamos a força que ele perceberá no próximo tick.
             organism.external_force = Vec2::ZERO;
-        }
+        });
         observer.end(TickPhase::Brain);
 
         // ── Etapa 6: deslocar, iluminar e reproduzir o alimento ──────────
         observer.begin(TickPhase::FoodMovement);
-        for particle in &mut self.food {
+        // Cada partícula se move sozinha (corrente + paredes): paralelo.
+        let map = &self.map;
+        let clearance = self.pheromones.wall_clearance();
+        self.food.par_iter_mut().with_min_len(256).for_each(|particle| {
             let previous_position = particle.position;
             particle.position +=
-                flow.sample_with_map(particle.position, Some(&self.map)) * FOOD_FLOW_COUPLING;
+                flow.sample_with_map(particle.position, Some(map)) * FOOD_FLOW_COUPLING;
             particle.position.x = particle
                 .position
                 .x
@@ -915,16 +921,16 @@ impl World {
                 .position
                 .y
                 .clamp(FOOD_RADIUS, WORLD_HEIGHT - FOOD_RADIUS);
-            particle.position = self.map.constrain_to_walls_fast(
+            particle.position = map.constrain_to_walls_fast(
                 particle.position,
                 previous_position,
                 FOOD_RADIUS,
-                self.pheromones.wall_clearance(),
+                clearance,
             );
             // A luz prolonga a vida, mas não suspende o envelhecimento: todo
             // fitoplâncton eventualmente sai do ciclo, até sob sol pleno.
             particle.age_ticks = particle.age_ticks.saturating_add(1);
-        }
+        });
         self.reproduce_sunlit_phytoplankton();
         observer.end(TickPhase::FoodMovement);
 
@@ -1013,7 +1019,8 @@ impl World {
             vec![None; self.food.len()]
         } else {
             self.food
-                .iter()
+                .par_iter()
+                .with_min_len(256)
                 .map(|particle| self.closest_organism_containing(particle.position, &organism_grid))
                 .collect()
         };
@@ -1027,18 +1034,22 @@ impl World {
 
         // ── Etapa 12: remover alimento consumido ou vencido ──────────────
         observer.begin(TickPhase::FoodCleanup);
-        self.food = self
+        let map = &self.map;
+        let keep: Vec<bool> = self
             .food
-            .drain(..)
-            .zip(winners)
-            .filter_map(|(particle, winner)| {
-                let sunlight = self.map.sunlight_intensity(particle.position);
+            .par_iter()
+            .with_min_len(512)
+            .zip(winners.par_iter())
+            .map(|(particle, winner)| {
+                let sunlight = map.sunlight_intensity(particle.position);
                 let lifespan_multiplier =
                     1.0 + (SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER - 1.0) * sunlight;
                 let lifetime = (lifetime_ticks as f32 * lifespan_multiplier).ceil() as u32;
-                (winner.is_none() && particle.age_ticks < lifetime).then_some(particle)
+                winner.is_none() && particle.age_ticks < lifetime
             })
             .collect();
+        let mut keep = keep.into_iter();
+        self.food.retain(|_| keep.next().unwrap_or(false));
         observer.end(TickPhase::FoodCleanup);
 
         // ── Etapa 13: dividir células aptas e criar descendentes ─────────
@@ -1674,6 +1685,8 @@ impl World {
         // alterar qualquer SensorInput, para todos verem o mesmo tick.
         let organism_grid = self.organism_grid();
         let contacts: Vec<bool> = (0..self.organisms.len())
+            .into_par_iter()
+            .with_min_len(32)
             .map(|index| self.has_contact(index, &organism_grid))
             .collect();
         observer.end(TickPhase::Sensors);
@@ -1682,7 +1695,8 @@ impl World {
         observer.begin(TickPhase::SensorVision);
         let visions: Vec<[Option<f32>; 4]> = self
             .organisms
-            .iter()
+            .par_iter()
+            .with_min_len(16)
             .map(|organism| {
                 nearest_visible_in_cones(
                     &visible_grid,
@@ -1697,7 +1711,8 @@ impl World {
         observer.begin(TickPhase::SensorChemical);
         let chemicals: Vec<[ChemicalSensors; 5]> = self
             .organisms
-            .iter()
+            .par_iter()
+            .with_min_len(32)
             .map(|organism| self.pheromones.sensors_for(organism))
             .collect();
         observer.end(TickPhase::SensorChemical);
@@ -3120,6 +3135,40 @@ mod tests {
 
         assert!(world.organisms.is_empty());
         assert_eq!(world.deaths_total, 1);
+    }
+
+    #[test]
+    fn thread_count_does_not_change_the_world() {
+        let start = World::new(85, 120);
+        let flow = FlowField::new(85);
+        let run = |threads: usize| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            let mut world = start.clone();
+            pool.install(|| {
+                for _ in 0..300 {
+                    world.tick(
+                        &flow,
+                        2.0,
+                        2.0,
+                        600,
+                        FOOD_ENERGY,
+                        DEFAULT_MENTAL_ENERGY_COST,
+                        MAX_ENERGY,
+                        1_000.0,
+                    );
+                }
+            });
+            let mut checkpoint = Vec::new();
+            world.write_checkpoint(&mut checkpoint).unwrap();
+            (checkpoint, world.food.len())
+        };
+        let (single, food) = run(1);
+        assert!(food > 0);
+        assert_eq!(single, run(4).0);
+        assert_eq!(single, run(3).0);
     }
 
     #[test]

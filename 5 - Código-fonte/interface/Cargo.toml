@@ -1,6 +1,6 @@
 [package]
 name = "new_gods_unlimited_interface"
-version = "3.0.2"
+version = "3.0.3"
 edition = "2021"
 description = "Interface nova do New Gods Unlimited (Tauri), sobre o mesmo motor de simulação."
 
@@ -20,6 +20,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 macroquad = "0.4"
 new_gods_unlimited = { path = ".." }
+rayon = "1"
 
 [features]
 default = ["custom-protocol"]

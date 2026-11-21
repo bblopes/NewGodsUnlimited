@@ -38,6 +38,18 @@ pub const SPEED_MULTIPLIERS: [f32; 7] = [
 ];
 /// Intervalo padrão de coleta da Demografia; a interface pode trocar (mínimo 250).
 const DEFAULT_TELEMETRY_INTERVAL_TICKS: u64 = 500;
+
+fn max_threads() -> usize {
+    thread::available_parallelism().map_or(1, |count| count.get())
+}
+
+/// 0 = um thread por núcleo lógico.
+fn build_pool(threads: usize) -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|index| format!("motor-{index}"))
+        .build()
+}
 const MIN_TELEMETRY_INTERVAL_TICKS: u64 = 250;
 const MAX_TELEMETRY_INTERVAL_TICKS: u64 = 100_000;
 const MAX_TELEMETRY_SAMPLES: usize = 12_000;
@@ -217,6 +229,8 @@ pub enum UiCommand {
     SaveIndividual { id: u64, name: String },
     /// Intervalo de coleta da Demografia, em ticks.
     TelemetryInterval { ticks: u64 },
+    /// Threads de cálculo do motor; 0 = todos os núcleos.
+    Threads { count: u64 },
     DeleteIndividual { key: String },
 }
 
@@ -340,6 +354,10 @@ pub struct Frame {
     pub map_dirty: bool,
     pub bank_version: u64,
     pub telemetry_interval: u64,
+    /// Threads de cálculo em uso, o pedido (0 = automático) e o máximo.
+    pub threads: usize,
+    pub threads_requested: usize,
+    pub max_threads: usize,
     pub notice: Notice,
 }
 
@@ -881,6 +899,10 @@ struct WorkerState {
     estimated_tps: f32,
     last_telemetry_tick: u64,
     telemetry_interval: u64,
+    /// Pool próprio do motor. O resultado é o mesmo com qualquer número de
+    /// threads; só muda a velocidade.
+    pool: Arc<rayon::ThreadPool>,
+    threads_requested: usize,
 }
 
 impl WorkerState {
@@ -1091,6 +1113,25 @@ impl WorkerState {
                 let interval = self.telemetry_interval;
                 self.say(format!("Demografia coletando a cada {interval} ticks"), true);
             }
+            UiCommand::Threads { count } => {
+                let requested = (count as usize).min(max_threads());
+                match build_pool(requested) {
+                    Ok(pool) => {
+                        self.pool = Arc::new(pool);
+                        self.threads_requested = requested;
+                        let used = self.pool.current_num_threads();
+                        self.say(
+                            if requested == 0 {
+                                format!("Cálculo em todos os núcleos ({used} threads)")
+                            } else {
+                                format!("Cálculo em {used} thread(s)")
+                            },
+                            true,
+                        );
+                    }
+                    Err(error) => self.say(format!("Não foi possível trocar as threads: {error}"), false),
+                }
+            }
             UiCommand::DeleteIndividual { .. } | UiCommand::WantGenetics => {}
         }
     }
@@ -1124,6 +1165,9 @@ impl WorkerState {
             map_version: self.map_version,
             map_dirty: self.map_is_dirty,
             telemetry_interval: self.telemetry_interval,
+            threads: self.pool.current_num_threads(),
+            threads_requested: self.threads_requested,
+            max_threads: max_threads(),
             notice: self.notice.clone(),
             ..Frame::default()
         };
@@ -1211,6 +1255,8 @@ fn worker(
         estimated_tps: 1_000.0,
         last_telemetry_tick: 0,
         telemetry_interval: DEFAULT_TELEMETRY_INTERVAL_TICKS,
+        pool: Arc::new(build_pool(0).expect("pool de threads do motor")),
+        threads_requested: 0,
     };
     set_windows_keep_awake(true);
     state.reset_telemetry(&shared);
@@ -1273,7 +1319,10 @@ fn worker(
             (requested_tps / publish_hz).ceil().max(1.0) as u32
         };
         let started = Instant::now();
-        for _ in 0..batch {
+        // O lote inteiro roda dentro do pool do motor: as etapas paralelas do
+        // tick usam essas threads sem trocar de thread a cada tick.
+        let pool = Arc::clone(&state.pool);
+        pool.install(|| for _ in 0..batch {
             state.world.tick(
                 &state.flow,
                 state.env.emission,
@@ -1298,7 +1347,7 @@ fn worker(
                 }
                 state.last_telemetry_tick = state.world.tick;
             }
-        }
+        });
         let elapsed = started.elapsed().as_secs_f32().max(0.000_001);
         let observed_tps = batch as f32 / elapsed;
         state.estimated_tps = state.estimated_tps * 0.85 + observed_tps * 0.15;
