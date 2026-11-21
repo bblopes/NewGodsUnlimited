@@ -31,8 +31,9 @@ O benchmark lê as runs de `../4 - Dados/runs/` e grava relatórios em
 
 ## Compilar uma versão
 
-O caminho padrão é o GitHub Actions: criar a tag `v1.2.0` (ou
-`v1.2.0-teste.1`) compila no Windows e publica a Release. A reserva local é:
+O caminho padrão é o GitHub Actions: mudar o campo `version` do `Cargo.toml`
+(por exemplo `1.2.0-teste.1`) e levar a mudança para a `main` compila no
+Windows e publica a Release. A reserva local é:
 
 ```powershell
 scripts\COMPILAR_VERSAO.bat 1.2.0-teste.1

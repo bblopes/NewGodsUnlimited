@@ -30,13 +30,15 @@ outubro de 2026 ("Ecossistema Neural") estão em `2 - Versões de teste/_histór
 
 O padrão é o **GitHub Actions** (`.github/workflows/compilar-windows.yml`):
 
-1. Criar e enviar a tag da versão, por exemplo `v1.1.0-teste.1`.
-2. O GitHub compila no Windows (MSVC, `crt-static`) a partir de `5 - Código-fonte/`.
-3. O `.exe` sai já com o nome final e é publicado na Release da tag.
-4. O `.exe` é baixado e colocado na pasta certa do computador.
+1. A versão é escrita no campo `version` de `5 - Código-fonte/Cargo.toml`
+   (por exemplo `1.1.0-teste.1`).
+2. Quando essa mudança entra na `main`, o GitHub compila no Windows (MSVC,
+   `crt-static`), cria a tag `v1.1.0-teste.1` e publica a Release com o `.exe`
+   já no nome final. Se a versão já tiver Release, nada é recompilado.
+3. O `.exe` é baixado e colocado na pasta certa do computador.
 
-Também dá para rodar o workflow manualmente pela aba **Actions**, informando a
-versão.
+Também dá para rodar o workflow manualmente pela aba **Actions**; nesse caso ele
+recompila a versão atual e substitui o `.exe` da Release.
 
 **Reserva local** (sem internet): `5 - Código-fonte/scripts/COMPILAR_VERSAO.bat <versão>`.
 Precisa de Rust e do Visual Studio Build Tools 2022 instalados. O script coloca

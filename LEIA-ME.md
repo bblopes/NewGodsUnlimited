@@ -43,7 +43,8 @@ As versões seguem o padrão **`New Gods Unlimited V<maior>.<média>.<correção
 - `V2.0.0` — mudança grande de produto (por exemplo, a interface nova);
 - `V1.2.0-teste.3` — terceiro build de teste da futura `V1.2.0`.
 
-Cada versão é compilada no GitHub (Actions, Windows) e publicada em
+A versão fica no `Cargo.toml`; cada versão nova que entra na `main` é compilada
+no GitHub (Actions, Windows) e publicada em
 [Releases](https://github.com/bblopes/NewGodsUnlimited/releases). A regra completa
 está em [`3 - Documentos/Documentação/VERSOES_E_DISTRIBUICAO.md`](3%20-%20Documentos/Documentação/VERSOES_E_DISTRIBUICAO.md).
 
