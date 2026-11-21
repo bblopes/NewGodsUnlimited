@@ -36,12 +36,14 @@ ECOSSYSTEM/
 
 ## Versões
 
-As versões seguem o padrão **`New Gods Unlimited V<maior>.<média>.<correção>`**:
+Toda versão tem só número: **`New Gods Unlimited V<maior>.<média>.<correção>`**.
 
-- `V1.1.0` — versão oficial com novidades;
-- `V1.1.1` — só correções sobre a `V1.1.0`;
-- `V2.0.0` — mudança grande de produto (por exemplo, a interface nova);
-- `V1.2.0-teste.3` — terceiro build de teste da futura `V1.2.0`.
+- **média** sobe quando entra novidade: `V1.0.0` → `V1.1.0`;
+- **correção** sobe a cada ajuste ou novo build da mesma novidade: `V1.1.0` → `V1.1.1`;
+- **maior** sobe numa mudança grande de produto, como a interface nova: `V2.0.0`.
+
+Cada build novo vai primeiro para `2 - Versões de teste/`. Quando você aprova,
+o mesmo arquivo, com o mesmo nome, passa para `1 - Versão oficial/`.
 
 A versão fica no `Cargo.toml`; cada versão nova que entra na `main` é compilada
 no GitHub (Actions, Windows) e publicada em
