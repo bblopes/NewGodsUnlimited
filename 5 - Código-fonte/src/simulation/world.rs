@@ -1,5 +1,6 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
+    hash::{BuildHasherDefault, Hasher},
     io::{self, Read, Write},
     time::{Duration, Instant},
 };
@@ -18,6 +19,98 @@ use crate::{
     },
     simulation::pheromone::{ChemicalSensors, PheromoneField, pheromone_energy_cost},
 };
+
+/// Hasher simples (multiplicação estilo Fx) para as grades espaciais. As
+/// grades só são consultadas, nunca percorridas em ordem, então trocar o
+/// SipHash padrão não muda nenhum resultado; só deixa cada consulta barata.
+#[derive(Default, Clone, Copy)]
+struct GridHasher(u64);
+
+impl Hasher for GridHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.write_u64(*byte as u64);
+        }
+    }
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(value as u64);
+    }
+    fn write_i32(&mut self, value: i32) {
+        self.write_u64(value as u32 as u64);
+    }
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
+type GridMap<K, V> = HashMap<K, V, BuildHasherDefault<GridHasher>>;
+type CellGrid = GridMap<(i32, i32), Vec<usize>>;
+
+/// Grade plana (lista compacta por célula) das posições visíveis. A ordem
+/// dentro de cada célula é a de inserção, como na grade anterior.
+struct PointGrid {
+    columns: i32,
+    rows: i32,
+    starts: Vec<u32>,
+    points: Vec<Vec2>,
+}
+
+impl PointGrid {
+    fn from_points(positions: impl Iterator<Item = Vec2> + Clone) -> Self {
+        let columns = (WORLD_WIDTH / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).floor() as i32 + 2;
+        let rows = (WORLD_HEIGHT / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).floor() as i32 + 2;
+        let cells = (columns * rows) as usize;
+        // Posições sempre ficam dentro do mundo; uma fora da grade cairia na
+        // célula de borda mais próxima, o que nunca acontece na prática.
+        let slot = |position: Vec2| -> usize {
+            let (x, y) = sensor_grid_cell(position);
+            (y.clamp(0, rows - 1) * columns + x.clamp(0, columns - 1)) as usize
+        };
+        let mut starts = vec![0u32; cells + 1];
+        for position in positions.clone() {
+            starts[slot(position) + 1] += 1;
+        }
+        for index in 0..cells {
+            starts[index + 1] += starts[index];
+        }
+        let mut fill = starts.clone();
+        let mut points = vec![Vec2::ZERO; starts[cells] as usize];
+        for position in positions {
+            let cell = slot(position);
+            points[fill[cell] as usize] = position;
+            fill[cell] += 1;
+        }
+        Self {
+            columns,
+            rows,
+            starts,
+            points,
+        }
+    }
+
+    fn cell(&self, x: i32, y: i32) -> &[Vec2] {
+        if !(0..self.columns).contains(&x) || !(0..self.rows).contains(&y) {
+            return &[];
+        }
+        let index = (y * self.columns + x) as usize;
+        &self.points[self.starts[index] as usize..self.starts[index + 1] as usize]
+    }
+}
+
+fn next_random_unit_from(random_state: &mut u64) -> f32 {
+    *random_state = random_state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1);
+    // Usa 32 bits completos: a versão anterior extraía 24 bits e dividia
+    // por um máximo de 32, concentrando todos os nascimentos perto de 0.
+    ((*random_state >> 32) as u32) as f32 / (u32::MAX as f32)
+}
 
 pub const FOOD_RADIUS: f32 = 5.0;
 pub const CELL_RADIUS: f32 = 14.0;
@@ -822,9 +915,12 @@ impl World {
                 .position
                 .y
                 .clamp(FOOD_RADIUS, WORLD_HEIGHT - FOOD_RADIUS);
-            particle.position =
-                self.map
-                    .constrain_to_walls(particle.position, previous_position, FOOD_RADIUS);
+            particle.position = self.map.constrain_to_walls_fast(
+                particle.position,
+                previous_position,
+                FOOD_RADIUS,
+                self.pheromones.wall_clearance(),
+            );
             // A luz prolonga a vida, mas não suspende o envelhecimento: todo
             // fitoplâncton eventualmente sai do ciclo, até sob sol pleno.
             particle.age_ticks = particle.age_ticks.saturating_add(1);
@@ -847,9 +943,12 @@ impl World {
                 clamp_coordinate_to_world(organism.position.x, radius, WORLD_WIDTH);
             organism.position.y =
                 clamp_coordinate_to_world(organism.position.y, radius, WORLD_HEIGHT);
-            organism.position =
-                self.map
-                    .constrain_to_walls(organism.position, previous_position, radius);
+            organism.position = self.map.constrain_to_walls_fast(
+                organism.position,
+                previous_position,
+                radius,
+                self.pheromones.wall_clearance(),
+            );
         }
         observer.end(TickPhase::OrganismMovement);
 
@@ -910,11 +1009,14 @@ impl World {
         let organism_grid = self.organism_grid();
         // A regra de contato é deliberadamente pelo centro da comida, não pela
         // sobreposição de dois raios: distância(centro comida, centro célula) ≤ raio célula.
-        let winners: Vec<Option<usize>> = self
-            .food
-            .iter()
-            .map(|particle| self.closest_organism_containing(particle.position, &organism_grid))
-            .collect();
+        let winners: Vec<Option<usize>> = if self.organisms.is_empty() {
+            vec![None; self.food.len()]
+        } else {
+            self.food
+                .iter()
+                .map(|particle| self.closest_organism_containing(particle.position, &organism_grid))
+                .collect()
+        };
 
         for index in winners.iter().flatten() {
             let organism = &mut self.organisms[*index];
@@ -1556,19 +1658,17 @@ impl World {
         // A visão responde a qualquer entidade visível, não a uma categoria
         // de alimento. A grade limita a busca ao alcance anatômico e junta
         // fitoplâncton e outras células no mesmo retrato espacial.
-        let mut visible_grid: HashMap<(i32, i32), Vec<Vec2>> = HashMap::new();
-        for particle in &self.food {
-            visible_grid
-                .entry(sensor_grid_cell(particle.position))
-                .or_default()
-                .push(particle.position);
-        }
-        for organism in &self.organisms {
-            visible_grid
-                .entry(sensor_grid_cell(organism.position))
-                .or_default()
-                .push(organism.position);
-        }
+        // Sem células não há quem veja: a grade nem é montada.
+        let visible_grid = if self.organisms.is_empty() {
+            PointGrid::from_points(std::iter::empty())
+        } else {
+            PointGrid::from_points(
+                self.food
+                    .iter()
+                    .map(|particle| particle.position)
+                    .chain(self.organisms.iter().map(|organism| organism.position)),
+            )
+        };
         // A mesma grade que acelera o anti-cramming encontra contatos físicos
         // sem comparar toda a população. O retrato é calculado antes de
         // alterar qualquer SensorInput, para todos verem o mesmo tick.
@@ -1643,9 +1743,10 @@ impl World {
         observer.end(TickPhase::Sensors);
     }
 
-    fn organism_grid(&self) -> HashMap<(i32, i32), Vec<usize>> {
+    fn organism_grid(&self) -> CellGrid {
         let cell_size = self.contact_grid_cell_size();
-        let mut grid = HashMap::with_capacity(self.organisms.len() * 2);
+        let mut grid =
+            CellGrid::with_capacity_and_hasher(self.organisms.len() * 2, Default::default());
         for (index, organism) in self.organisms.iter().enumerate() {
             grid.entry(grid_cell_with_size(organism.position, cell_size))
                 .or_insert_with(Vec::new)
@@ -1656,7 +1757,7 @@ impl World {
 
     /// Similaridade da célula em contato com núcleo mais próximo. Empate por
     /// ID torna o sinal estável entre execuções com a mesma seed.
-    fn has_contact(&self, index: usize, grid: &HashMap<(i32, i32), Vec<usize>>) -> bool {
+    fn has_contact(&self, index: usize, grid: &CellGrid) -> bool {
         let organism = &self.organisms[index];
         let origin = grid_cell_with_size(organism.position, self.contact_grid_cell_size());
         (-1..=1)
@@ -1755,7 +1856,7 @@ impl World {
     fn closest_phagocytosis_target(
         &self,
         index: usize,
-        grid: &HashMap<(i32, i32), Vec<usize>>,
+        grid: &CellGrid,
     ) -> Option<usize> {
         let organism = &self.organisms[index];
         let cell_size = self.contact_grid_cell_size() * (1.0 + PHAGOCYTOSIS_INTERACTION_MARGIN);
@@ -1794,7 +1895,10 @@ impl World {
         capture_candidates: &[(usize, usize)],
         reproduction_limit: f32,
     ) {
-        let mut winner_by_prey: HashMap<usize, usize> = HashMap::new();
+        // BTreeMap: percorrida em ordem de índice. Com HashMap a ordem mudava
+        // a cada execução, e um predador que engolisse duas presas no mesmo
+        // tick podia somar as energias em ordem diferente.
+        let mut winner_by_prey: BTreeMap<usize, usize> = BTreeMap::new();
         for &(predator_index, prey_index) in capture_candidates {
             let Some(predator) = self.organisms.get(predator_index) else {
                 continue;
@@ -1903,7 +2007,7 @@ impl World {
     fn closest_contact_target(
         &self,
         index: usize,
-        grid: &HashMap<(i32, i32), Vec<usize>>,
+        grid: &CellGrid,
     ) -> Option<usize> {
         let organism = &self.organisms[index];
         let origin = grid_cell_with_size(organism.position, self.contact_grid_cell_size());
@@ -1956,8 +2060,9 @@ impl World {
         self.measure_crowding(phagocytosis_pairs);
     }
 
-    fn organism_grid_for_distance(&self, cell_size: f32) -> HashMap<(i32, i32), Vec<usize>> {
-        let mut grid = HashMap::with_capacity(self.organisms.len() * 2);
+    fn organism_grid_for_distance(&self, cell_size: f32) -> CellGrid {
+        let mut grid =
+            CellGrid::with_capacity_and_hasher(self.organisms.len() * 2, Default::default());
         for (index, organism) in self.organisms.iter().enumerate() {
             grid.entry(grid_cell_with_size(organism.position, cell_size))
                 .or_insert_with(Vec::new)
@@ -1968,7 +2073,7 @@ impl World {
 
     fn resolve_cramming_pairs(
         &mut self,
-        grid: &HashMap<(i32, i32), Vec<usize>>,
+        grid: &CellGrid,
         phagocytosis_pairs: &HashSet<(usize, usize)>,
     ) {
         let grid_size = self.max_pair_exclusion_distance();
@@ -2073,7 +2178,7 @@ impl World {
     fn closest_organism_containing(
         &self,
         food_position: Vec2,
-        grid: &HashMap<(i32, i32), Vec<usize>>,
+        grid: &CellGrid,
     ) -> Option<usize> {
         let cell = grid_cell_with_size(food_position, self.contact_grid_cell_size());
         (-1..=1)
@@ -2182,8 +2287,10 @@ impl World {
     }
 
     fn spawn_food_anywhere(&mut self) -> bool {
-        let map = self.map.clone();
-        let position = map.random_free_point(|| self.next_random_unit(), FOOD_RADIUS);
+        let random_state = &mut self.random_state;
+        let position = self
+            .map
+            .random_free_point(|| next_random_unit_from(random_state), FOOD_RADIUS);
         self.food.push(Phytoplankton {
             position,
             age_ticks: 0,
@@ -2192,8 +2299,11 @@ impl World {
     }
 
     fn reproduce_sunlit_phytoplankton(&mut self) {
-        let map = self.map.clone();
-        let mut density: HashMap<(i32, i32), usize> = HashMap::new();
+        let map = &self.map;
+        let clearance = self.pheromones.wall_clearance();
+        let random_state = &mut self.random_state;
+        let reproduction_rate = self.phytoplankton_reproduction_rate;
+        let mut density: GridMap<(i32, i32), usize> = GridMap::default();
         for particle in &self.food {
             *density
                 .entry(phytoplankton_density_cell(particle.position))
@@ -2206,17 +2316,18 @@ impl World {
             let parent_position = self.food[index].position;
             let sunlight = map.sunlight_intensity(parent_position);
             if sunlight <= 0.0
-                || self.next_random_unit() >= self.phytoplankton_reproduction_rate * sunlight
+                || next_random_unit_from(random_state) >= reproduction_rate * sunlight
             {
                 continue;
             }
-            let angle = self.next_random_unit() * std::f32::consts::TAU;
+            let angle = next_random_unit_from(random_state) * std::f32::consts::TAU;
             let distance =
-                PHYTOPLANKTON_REPRODUCTION_RADIUS * (0.35 + self.next_random_unit() * 0.65);
+                PHYTOPLANKTON_REPRODUCTION_RADIUS * (0.35 + next_random_unit_from(random_state) * 0.65);
             let mut position = parent_position + vec2(angle.cos(), angle.sin()) * distance;
             position.x = position.x.clamp(FOOD_RADIUS, WORLD_WIDTH - FOOD_RADIUS);
             position.y = position.y.clamp(FOOD_RADIUS, WORLD_HEIGHT - FOOD_RADIUS);
-            position = map.constrain_to_walls(position, parent_position, FOOD_RADIUS);
+            position =
+                map.constrain_to_walls_fast(position, parent_position, FOOD_RADIUS, clearance);
             let cell = phytoplankton_density_cell(position);
             if map.sunlight_intensity(position) <= 0.0
                 || density.get(&cell).copied().unwrap_or_default()
@@ -2393,13 +2504,7 @@ impl World {
     }
 
     fn next_random_unit(&mut self) -> f32 {
-        self.random_state = self
-            .random_state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1);
-        // Usa 32 bits completos: a versão anterior extraía 24 bits e dividia
-        // por um máximo de 32, concentrando todos os nascimentos perto de 0.
-        ((self.random_state >> 32) as u32) as f32 / (u32::MAX as f32)
+        next_random_unit_from(&mut self.random_state)
     }
 }
 
@@ -2657,7 +2762,7 @@ fn phytoplankton_density_cell(position: Vec2) -> (i32, i32) {
 /// esquerda, direita, cima e baixo. O empate diagonal pertence ao cone
 /// horizontal; assim, nenhuma entidade ativa dois sensores no mesmo tick.
 fn nearest_visible_in_cones(
-    grid: &HashMap<(i32, i32), Vec<Vec2>>,
+    grid: &PointGrid,
     origin: Vec2,
     range: f32,
     map: &MapDefinition,
@@ -2677,10 +2782,7 @@ fn nearest_visible_in_cones(
     let grid_radius = (range / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).ceil() as i32;
     for grid_y in base.1 - grid_radius..=base.1 + grid_radius {
         for grid_x in base.0 - grid_radius..=base.0 + grid_radius {
-            let Some(visible_positions) = grid.get(&(grid_x, grid_y)) else {
-                continue;
-            };
-            for &visible_position in visible_positions {
+            for &visible_position in grid.cell(grid_x, grid_y) {
                 let relative = visible_position - origin;
                 let distance_squared = relative.length_squared();
                 if distance_squared > range_squared
@@ -2821,12 +2923,9 @@ mod tests {
     #[test]
     fn visible_entity_is_reported_by_one_directional_cone_only() {
         let origin = vec2(1_000.0, 1_000.0);
-        let mut grid = HashMap::new();
         // Esquerda e levemente acima: a componente horizontal domina.
         let food = origin + vec2(-60.0, -20.0);
-        grid.entry(sensor_grid_cell(food))
-            .or_insert_with(Vec::new)
-            .push(food);
+        let grid = PointGrid::from_points(std::iter::once(food));
 
         let nearest = nearest_visible_in_cones(
             &grid,
@@ -2846,10 +2945,7 @@ mod tests {
     fn wall_blocks_vision_line_of_sight() {
         let origin = vec2(1_000.0, 1_000.0);
         let food = origin + vec2(120.0, 0.0);
-        let mut grid = HashMap::new();
-        grid.entry(sensor_grid_cell(food))
-            .or_insert_with(Vec::new)
-            .push(food);
+        let grid = PointGrid::from_points(std::iter::once(food));
         let mut map = MapDefinition::empty();
         map.paint_wall(origin + vec2(60.0, 0.0), true);
 
@@ -2878,10 +2974,7 @@ mod tests {
     fn longer_vision_reaches_entity_outside_the_default_range() {
         let origin = vec2(1_000.0, 1_000.0);
         let food = origin + vec2(360.0, 0.0);
-        let mut grid = HashMap::new();
-        grid.entry(sensor_grid_cell(food))
-            .or_insert_with(Vec::new)
-            .push(food);
+        let grid = PointGrid::from_points(std::iter::once(food));
 
         let default_range = nearest_visible_in_cones(
             &grid,

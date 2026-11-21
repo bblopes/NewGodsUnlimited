@@ -28,6 +28,9 @@ pub struct FlowField {
     seed: u64,
     intensity: f32,
     preset: FlowPreset,
+    /// Centro, raio e força dos dois redemoinhos do Clássico. Dependem só da
+    /// seed; antes eram refeitos a cada amostra (milhares por tick).
+    classic_eddies: [(Vec2, f32, f32); 2],
 }
 
 impl FlowField {
@@ -36,6 +39,18 @@ impl FlowField {
             seed,
             intensity: 1.0,
             preset: FlowPreset::Classic,
+            classic_eddies: std::array::from_fn(|index| {
+                let index = index as u32;
+                let seed_x = seeded_fraction(seed, index * 2);
+                let seed_y = seeded_fraction(seed, index * 2 + 1);
+                let center = vec2(
+                    WORLD_WIDTH * (0.38 + seed_x * 0.36),
+                    WORLD_HEIGHT * (0.22 + seed_y * 0.56),
+                );
+                let radius = 150.0 + seed_x * 90.0;
+                let strength = if index == 0 { 1.65 } else { -1.35 };
+                (center, radius, strength)
+            }),
         }
     }
 
@@ -98,15 +113,7 @@ impl FlowField {
         let turns_right = smoothstep(0.70, 0.94, nx);
         let turns_left = 1.0 - smoothstep(0.06, 0.28, nx);
         flow.y += ny.signum() * (2.8 * turns_right - 1.4 * turns_left);
-        for index in 0..2 {
-            let seed_x = seeded_fraction(self.seed, index * 2);
-            let seed_y = seeded_fraction(self.seed, index * 2 + 1);
-            let center = vec2(
-                WORLD_WIDTH * (0.38 + seed_x * 0.36),
-                WORLD_HEIGHT * (0.22 + seed_y * 0.56),
-            );
-            let radius = 150.0 + seed_x * 90.0;
-            let strength = if index == 0 { 1.65 } else { -1.35 };
+        for &(center, radius, strength) in &self.classic_eddies {
             flow += eddy(position, center, radius, strength);
         }
         flow
