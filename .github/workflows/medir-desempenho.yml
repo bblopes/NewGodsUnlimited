@@ -61,7 +61,7 @@ jobs:
           )
           function Medir($exe, $c, $rotulo) {
             $log = "../4 - Dados/benchmarks/$($c.nome)-$rotulo.txt"
-            & $exe @($c.args) --run-validado $run --sem-arquivo *>&1 | Tee-Object -FilePath $log | Out-Host
+            & $exe @($c.args) --run-validado $run --sem-arquivo *>&1 | Tee-Object -FilePath $log | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "benchmark $($c.nome) ($rotulo) falhou" }
             $texto = Get-Content $log -Raw
             $tps = [double]([regex]::Match($texto, 'mediana ([0-9.]+) ticks/s').Groups[1].Value)

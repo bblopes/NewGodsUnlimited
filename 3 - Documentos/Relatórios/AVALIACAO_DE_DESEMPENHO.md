@@ -174,3 +174,10 @@ Medições ainda por fazer:
 | V3.0.1 — assinatura em cache + distância às paredes | 1.412 ticks/s* | 1.137 ticks/s | sim (4 cenários) |
 
 \* Parte do ganho na sessão é variação entre máquinas do GitHub: o movimento do fitoplâncton, que não mudou, saiu ~40% mais rápido.
+
+Desde a V3.0.2 a medição compara a versão anterior e a nova na mesma
+máquina (as máquinas do GitHub variam até 1,7× entre execuções):
+
+| Entrega | Sessão | Estresse | Realista | Estado igual |
+|---|---:|---:|---:|---|
+| V3.0.2 × V3.0.1 — grades leves e fitoplâncton | 2,08× | 1,44× | 1,61× | sim |
