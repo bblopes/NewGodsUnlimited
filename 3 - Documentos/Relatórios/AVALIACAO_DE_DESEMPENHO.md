@@ -181,3 +181,13 @@ máquina (as máquinas do GitHub variam até 1,7× entre execuções):
 | Entrega | Sessão | Estresse | Realista | Estado igual |
 |---|---:|---:|---:|---|
 | V3.0.2 × V3.0.1 — grades leves e fitoplâncton | 2,08× | 1,44× | 1,61× | sim |
+| V3.0.3 — paralelismo (todos os núcleos × 1 thread) | 0,87× | 1,07× | 0,90× | sim |
+
+**Lição da V3.0.3:** com o tick em ~0,5 ms, acordar as threads a cada etapa
+custa tanto quanto o trabalho dividido; numa medição anterior o mesmo código
+deu até 1,2× em outra máquina. O paralelismo fica opcional (padrão 1 thread).
+O caminho para ganhos grandes daqui em diante passa pelo modelo do
+fitoplâncton, não por mais núcleos.
+
+Também na V3.0.3: o "Ticks/s" da interface mostrava o teto de cálculo, não a
+velocidade real (por isso 1× aparecia como ~200 ticks/s). Corrigido.

@@ -440,11 +440,11 @@ function histogram(h) {
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px">${counts.map((k, i) => `<rect x="${i * bw + 1}" y="${h - k / m * (h - 6)}" width="${bw - 2}" height="${k / m * (h - 6)}" rx="2" fill="var(--ac)" fill-opacity=".75"><title>${fmt(i * cap / b)}–${fmt((i + 1) * cap / b)}: ${k}</title></rect>`).join('')}</svg>`;
 }
 function threadsControl() {
-  const max = F?.max_threads || 1, req = F?.threads_requested ?? 0;
+  const max = F?.max_threads || 1, req = F?.threads_requested ?? 1;
   const opts = [[0, 'Auto']].concat([1, 2, 4, 8, 16].filter(n => n < max).map(n => [n, String(n)])).concat(max > 1 ? [[max, String(max)]] : []);
   return `<div class="field"><div class="field-top"><label>Threads de cálculo</label><span class="unit mono" style="margin-left:auto" data-live="threads">em uso: ${fmt(F?.threads ?? 1)} de ${fmt(max)}</span></div>
     <div class="seg">${opts.map(([n, l]) => `<button class="${n === req ? 'on' : ''}" data-act="threads" data-v="${n}">${l}</button>`).join('')}</div>
-    <div class="hint">O resultado da simulação é o mesmo com qualquer número de threads; só muda a velocidade.</div></div>`;
+    <div class="hint">O resultado da simulação é o mesmo com qualquer número de threads; só muda a velocidade. Padrão: 1. Com o tick curto, mais threads podem até atrasar; compare o "Teto de cálculo" acima.</div></div>`;
 }
 const SAMPLING = [250, 500, 1000, 2000, 5000];
 function samplingControl() {

@@ -1269,8 +1269,11 @@ fn worker(
         rate_window_ticks: 0,
         last_telemetry_tick: 0,
         telemetry_interval: DEFAULT_TELEMETRY_INTERVAL_TICKS,
-        pool: Arc::new(build_pool(0).expect("pool de threads do motor")),
-        threads_requested: 0,
+        // Padrão: 1 thread. Na medição da V3.0.3 o tick (~0,5 ms) é curto
+        // demais para compensar acordar várias threads a cada etapa; o
+        // seletor da Sessão permite testar mais núcleos em cada máquina.
+        pool: Arc::new(build_pool(1).expect("pool de threads do motor")),
+        threads_requested: 1,
     };
     set_windows_keep_awake(true);
     state.reset_telemetry(&shared);
