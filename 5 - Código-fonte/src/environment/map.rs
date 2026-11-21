@@ -215,6 +215,22 @@ impl MapDefinition {
             })
     }
 
+    /// Igual a `constrain_to_walls`, mas pula todo o teste quando a parede
+    /// mais próxima está além do raio do corpo: nesse caso nenhum dos pontos
+    /// que `overlaps_wall` examina pode cair numa parede.
+    pub fn constrain_to_walls_fast(
+        &self,
+        position: Vec2,
+        previous: Vec2,
+        radius: f32,
+        clearance: &WallClearance,
+    ) -> Vec2 {
+        if clearance.lower_bound(position) > radius {
+            return position;
+        }
+        self.constrain_to_walls(position, previous, radius)
+    }
+
     pub fn constrain_to_walls(&self, position: Vec2, previous: Vec2, radius: f32) -> Vec2 {
         if !self.overlaps_wall(position, radius) {
             return position;
