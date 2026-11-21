@@ -2,7 +2,7 @@
 #
 # Uso:  scripts\COMPILAR_VERSAO.bat 1.2.0
 #
-# O .exe vai para "2 - Versões de teste". Ao aprovar, ele é movido para
+# O .exe vai para "2 - Versões de teste\V1 - Interface original". Ao aprovar, ele é movido para
 # "1 - Versão oficial".
 param(
     [Parameter(Mandatory = $true)][string]$Versao
@@ -15,7 +15,7 @@ if ($Versao -notmatch '^\d+\.\d+\.\d+$') {
 
 $codigo = Split-Path -Parent $PSScriptRoot
 $raiz = Split-Path -Parent $codigo
-$testes = Join-Path $raiz '2 - Versões de teste'
+$testes = Join-Path $raiz '2 - Versões de teste\V1 - Interface original'
 $vsDevCmd = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat'
 $cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
 $nome = "New Gods Unlimited V$Versao.exe"

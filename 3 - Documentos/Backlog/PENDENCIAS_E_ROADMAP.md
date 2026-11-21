@@ -6,7 +6,7 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 ## Ordem sugerida
 
 1. ~~Reorganização das pastas e fluxo de versões~~ (feito em 21/11/2026)
-2. Nova interface: V2.0.0 em teste; faltam salvar/carregar, presets e Laboratório
+2. **V2 — Revamp da interface**: V2.0.0 em teste; faltam salvar/carregar, presets e Laboratório
 3. Publicar visão + PF na versão oficial
 4. Livro-caixa de energia e marcos na Demografia
 5. Calibração de custos com campanhas

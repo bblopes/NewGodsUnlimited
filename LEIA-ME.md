@@ -9,7 +9,7 @@ comportamento é programado: a seleção natural decide o que funciona.
 | Quero… | Abra |
 | --- | --- |
 | **Rodar a versão oficial** | [`1 - Versão oficial/`](1%20-%20Versão%20oficial/) → `New Gods Unlimited V1.0.0.exe` |
-| Experimentar a interface nova | [`2 - Versões de teste/`](2%20-%20Versões%20de%20teste/) → `New Gods Unlimited V2.0.0.exe` |
+| Experimentar o revamp da interface (V2) | [`2 - Versões de teste/V2 - Revamp da interface/`](2%20-%20Versões%20de%20teste/) → `New Gods Unlimited V2.0.0.exe` |
 | Testar uma versão em validação | [`2 - Versões de teste/`](2%20-%20Versões%20de%20teste/) |
 | Mostrar o projeto para alguém | [`3 - Documentos/Apresentação/`](3%20-%20Documentos/Apresentação/) |
 | Ver o que vem a seguir | [`3 - Documentos/Backlog/`](3%20-%20Documentos/Backlog/) |
@@ -24,6 +24,8 @@ ECOSSYSTEM/
 ├── LEIA-ME.md               este arquivo
 ├── 1 - Versão oficial/      a última versão aprovada, pronta para abrir
 ├── 2 - Versões de teste/    builds para validar antes de virarem oficiais
+│   ├── V1 - Interface original/
+│   ├── V2 - Revamp da interface/
 │   └── _histórico/          entregas antigas, só para consulta
 ├── 3 - Documentos/
 │   ├── Apresentação/        o que mostrar para outras pessoas
@@ -41,7 +43,7 @@ Toda versão tem só número: **`New Gods Unlimited V<maior>.<média>.<correçã
 
 - **média** sobe quando entra novidade: `V1.0.0` → `V1.1.0`;
 - **correção** sobe a cada ajuste ou novo build da mesma novidade: `V1.1.0` → `V1.1.1`;
-- **maior** sobe numa mudança grande de produto, como a interface nova: `V2.0.0`.
+- **maior** sobe numa mudança grande de produto e ganha um título: **V1 — Interface original**, **V2 — Revamp da interface**.
 
 Cada build novo vai primeiro para `2 - Versões de teste/`. Quando você aprova,
 o mesmo arquivo, com o mesmo nome, passa para `1 - Versão oficial/`.

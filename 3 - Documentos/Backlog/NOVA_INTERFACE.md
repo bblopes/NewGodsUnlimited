@@ -1,4 +1,4 @@
-# Nova interface
+# V2 — Revamp da interface
 
 **Estado:** primeira versão publicada para teste como `V2.0.0` (21/11/2026),
 em `5 - Código-fonte/interface/`. Salvar/carregar runs, presets e Laboratório
