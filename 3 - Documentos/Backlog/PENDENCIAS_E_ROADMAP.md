@@ -19,7 +19,7 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 
 ## 1. Pronto, fora da versão oficial
 
-- **Visão genérica + quimiorrecepção PF**: está no código (commit `516e938`) e na versão de teste `V1.1.0-teste.1`. Falta validar e publicar.
+- **Visão genérica + quimiorrecepção PF**: está no código (commit `516e938`) e na versão `V1.1.0`, em validação. Falta validar e publicar.
 
 ## 2. Ambiente: luz → temperatura → correntes
 

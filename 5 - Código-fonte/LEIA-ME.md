@@ -32,14 +32,12 @@ O benchmark lê as runs de `../4 - Dados/runs/` e grava relatórios em
 ## Compilar uma versão
 
 O caminho padrão é o GitHub Actions: mudar o campo `version` do `Cargo.toml`
-(por exemplo `1.2.0-teste.1`) e levar a mudança para a `main` compila no
+(por exemplo `1.2.0`) e levar a mudança para a `main` compila no
 Windows e publica a Release. A reserva local é:
 
 ```powershell
-scripts\COMPILAR_VERSAO.bat 1.2.0-teste.1
+scripts\COMPILAR_VERSAO.bat 1.2.0
 ```
 
-que gera `New Gods Unlimited V1.2.0-teste.1.exe` direto em
-`2 - Versões de teste/` (ou em `1 - Versão oficial/`, se a versão não tiver
-`-teste`). Detalhes em
+que gera `New Gods Unlimited V1.2.0.exe` direto em `2 - Versões de teste/`. Detalhes em
 [`VERSOES_E_DISTRIBUICAO.md`](../3%20-%20Documentos/Documentação/VERSOES_E_DISTRIBUICAO.md).

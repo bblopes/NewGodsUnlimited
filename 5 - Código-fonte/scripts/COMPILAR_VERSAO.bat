@@ -1,7 +1,7 @@
 @echo off
-rem Uso: COMPILAR_VERSAO.bat 1.2.0-teste.1
+rem Uso: COMPILAR_VERSAO.bat 1.2.0
 if "%~1"=="" (
-  echo Informe a versao. Exemplo: COMPILAR_VERSAO.bat 1.2.0-teste.1
+  echo Informe a versao. Exemplo: COMPILAR_VERSAO.bat 1.2.0
   pause
   exit /b 1
 )
