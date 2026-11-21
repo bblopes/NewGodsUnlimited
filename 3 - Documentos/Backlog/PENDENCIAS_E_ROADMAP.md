@@ -12,6 +12,9 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
    Roteiro: V3.0.0 PF pré-calculado · V3.0.1 assinatura PG em cache ·
    V3.0.2 grades planas · V3.0.3 paralelismo (rayon) · V3.0.4 interações em
    duas fases, se necessário.
+   Sugestão de 21/11/2026 a incluir: não calcular sensores que nenhuma
+   ligação ativa lê (visão e químicos por célula). Exige decidir o que a
+   interface mostra nesses sensores, já que hoje eles são exibidos e salvos.
 4. Publicar visão + PF na versão oficial
 5. Livro-caixa de energia e marcos na Demografia
 6. Calibração de custos com campanhas
@@ -19,6 +22,8 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 
 ## 0. Interface
 
+- **Bug: clique desalinhado em X** (relatado na V2.0.3, 21/11/2026): numa instância recém-aberta o clique acerta a célula; depois de um tempo rodando, o eixo Y continua certo, mas o X desvia (é preciso clicar mais à direita para pegar uma célula à esquerda). Causa provável, vista no código: o canvas da arena só recalcula o tamanho quando a janela do Windows muda (`resize` em `app.js`). Quando a área da arena muda de largura sem a janela mudar (painel lateral arrastado, recolhido ou alargado pelo conteúdo, tela cheia da Demografia), o desenho fica esticado na horizontal, mas o mouse é lido pelo tamanho real. Correção: observar o próprio canvas (`ResizeObserver`) e recalcular sempre. Entra como fix na próxima versão.
+- **Rede neural ao vivo: deixar claro o que está ligado** (pedido de 21/11/2026): os nós inativos já aparecem em cinza, mas falta mostrar as ligações que existem no genoma e não funcionam (registro desligado, ilegal ou apontando para nó desligado), e destacar os sensores que nenhuma ligação lê.
 - **Melhorar a apresentação das informações da célula** (pedido de 21/11/2026): a forma como Células › Indivíduo descreve a célula e o código genético ainda não está boa; revisitar numa próxima ocasião.
 - **Aba Física** (pedido de 21/11/2026, a avaliar): ao lado de Biologia e Ambiente, com sol e intensidade do sol. Conversa com a luz contínua do item 2.
 - **Nova interface** em Tauri + React, com o motor intocado. Ver [NOVA_INTERFACE.md](NOVA_INTERFACE.md).
