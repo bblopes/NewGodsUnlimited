@@ -76,6 +76,7 @@ impl Scenario {
                 reproduction_minimum: 1_000_000.0,
                 reproduction_limit: MAX_ENERGY,
                 anti_cramming: AntiCrammingConfig::default(),
+                full_sensors: false,
             },
             Self::Realistic => ScenarioDefaults {
                 population: 100,
@@ -86,6 +87,7 @@ impl Scenario {
                 reproduction_minimum: MAX_ENERGY,
                 reproduction_limit: 5_000.0,
                 anti_cramming: AntiCrammingConfig::default(),
+                full_sensors: false,
             },
             Self::Session => ScenarioDefaults {
                 population: 100,
@@ -100,6 +102,7 @@ impl Scenario {
                     force: 1.0,
                     exclusion_distance: MIN_EXCLUSION_DISTANCE,
                 },
+                full_sensors: false,
             },
             Self::Stress => ScenarioDefaults {
                 population: 300,
@@ -114,6 +117,7 @@ impl Scenario {
                     force: 1.0,
                     exclusion_distance: MIN_EXCLUSION_DISTANCE,
                 },
+                full_sensors: false,
             },
         }
     }
@@ -129,6 +133,7 @@ struct ScenarioDefaults {
     reproduction_minimum: f32,
     reproduction_limit: f32,
     anti_cramming: AntiCrammingConfig,
+    full_sensors: bool,
 }
 
 struct Options {
@@ -142,6 +147,8 @@ struct Options {
     write_report: bool,
     /// Threads de cálculo; 0 = todos os núcleos.
     threads: usize,
+    /// Calcula também sensores que nenhuma ligação lê (como antes da V3.0.4).
+    full_sensors: bool,
 }
 
 impl Default for Options {
@@ -156,6 +163,7 @@ impl Default for Options {
             validated_run: None,
             write_report: true,
             threads: 0,
+            full_sensors: false,
         }
     }
 }
@@ -165,6 +173,9 @@ struct Measurement {
     final_population: usize,
     final_food: usize,
     digest: u64,
+    /// Hash só do que as células e o alimento fazem (posições, energia,
+    /// idade, motores, contadores), sem os valores de sensores.
+    behavior: u64,
 }
 
 fn main() -> ExitCode {
@@ -192,7 +203,8 @@ fn run() -> Result<(), String> {
             .build_global()
             .map_err(|error| format!("não foi possível criar {} threads: {error}", options.threads))?;
     }
-    let defaults = options.scenario.defaults();
+    let mut defaults = options.scenario.defaults();
+    defaults.full_sensors = options.full_sensors;
     let population = options.population.unwrap_or(defaults.population);
     if population == 0 || options.ticks == 0 || options.repetitions == 0 {
         return Err("população, ticks e repetições precisam ser maiores que zero.".into());
@@ -254,12 +266,13 @@ fn run() -> Result<(), String> {
         profile_elapsed += profiled_measurement.elapsed;
         profiled.merge(&profile);
         println!(
-            "  repetição {}: {:.1} ticks/s; população final {}; alimento final {}; estado {:016x}",
+            "  repetição {}: {:.1} ticks/s; população final {}; alimento final {}; estado {:016x}; comportamento {:016x}",
             repetition + 1,
             ticks_per_second(options.ticks, measured.elapsed),
             measured.final_population,
             measured.final_food,
             measured.digest,
+            measured.behavior,
         );
         unprofiled.push(measured);
     }
@@ -320,6 +333,7 @@ fn make_world(
         founders,
     );
     world.set_anti_cramming(defaults.anti_cramming);
+    world.full_sensors = defaults.full_sensors;
     world
 }
 
@@ -402,11 +416,37 @@ fn measurement(world: World, elapsed: Duration) -> Measurement {
     world
         .write_checkpoint(&mut checkpoint)
         .expect("Vec não falha ao receber checkpoint");
+    let mut behavior = Vec::new();
+    behavior.extend_from_slice(&world.tick.to_le_bytes());
+    behavior.extend_from_slice(&world.births_total.to_le_bytes());
+    behavior.extend_from_slice(&world.deaths_total.to_le_bytes());
+    for organism in &world.organisms {
+        behavior.extend_from_slice(&organism.id.to_le_bytes());
+        for value in [
+            organism.position.x,
+            organism.position.y,
+            organism.energy,
+            organism.motors.left,
+            organism.motors.right,
+            organism.motors.up,
+            organism.motors.down,
+        ] {
+            behavior.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        behavior.extend_from_slice(&organism.age_ticks.to_le_bytes());
+        behavior.extend_from_slice(&organism.generation.to_le_bytes());
+    }
+    for particle in &world.food {
+        behavior.extend_from_slice(&particle.position.x.to_bits().to_le_bytes());
+        behavior.extend_from_slice(&particle.position.y.to_bits().to_le_bytes());
+        behavior.extend_from_slice(&particle.age_ticks.to_le_bytes());
+    }
     Measurement {
         elapsed,
         final_population: world.organisms.len(),
         final_food: world.food.len(),
         digest: fnv1a(&checkpoint),
+        behavior: fnv1a(&behavior),
     }
 }
 
@@ -631,6 +671,7 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Str
                 )?))
             }
             "--sem-arquivo" => options.write_report = false,
+            "--sensores-completos" => options.full_sensors = true,
             "--threads" => {
                 options.threads =
                     parse_number("--threads", option_value("--threads", &mut arguments)?)?
@@ -651,6 +692,7 @@ fn print_usage() {
     println!("  --run-validado CAMINHO   usa esta população salva como fundadora Val 2");
     println!("  --sem-arquivo             não grava JSON em ../4 - Dados/benchmarks");
     println!("  --threads N               threads de cálculo (0 = todos os núcleos)");
+    println!("  --sensores-completos      calcula também sensores não lidos (estado igual ao anterior à V3.0.4)");
 }
 
 fn option_value(

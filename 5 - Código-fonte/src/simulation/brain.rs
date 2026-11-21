@@ -90,7 +90,7 @@ impl Default for SensorInput {
 }
 
 impl SensorInput {
-    fn slot_values(self) -> [f32; EXTERNAL_SLOT_COUNT] {
+    pub fn slot_values(self) -> [f32; EXTERNAL_SLOT_COUNT] {
         [
             self.vision_left,
             self.vision_right,
@@ -185,6 +185,10 @@ pub struct Brain {
     connections: Vec<DecodedConnection>,
     last_slots: [f32; SLOT_COUNT],
     connection_signals: Vec<f32>,
+    /// Bit `n` ligado = alguma ligação efetiva lê o sensor externo `n`.
+    /// Sensores que nenhuma ligação lê não influenciam o cérebro, então o
+    /// mundo pode deixar de calculá-los.
+    external_reads: u32,
 }
 
 impl Default for Brain {
@@ -195,6 +199,7 @@ impl Default for Brain {
             connections: Vec::new(),
             last_slots: [0.0; SLOT_COUNT],
             connection_signals: Vec::new(),
+            external_reads: 0,
         }
     }
 }
@@ -277,9 +282,18 @@ impl Brain {
         connections: Vec<DecodedConnection>,
         active_nodes: [bool; NEURAL_NODE_COUNT],
     ) {
+        self.external_reads = connections
+            .iter()
+            .filter(|connection| connection.source < EXTERNAL_SLOT_COUNT)
+            .fold(0, |mask, connection| mask | (1 << connection.source));
         self.connections = connections;
         self.active_nodes = active_nodes;
         self.connection_signals = vec![0.0; self.connections.len()];
+    }
+
+    /// Máscara dos sensores externos lidos por alguma ligação efetiva.
+    pub fn external_reads(&self) -> u32 {
+        self.external_reads
     }
 
     pub fn internal_state(&self) -> &[f32; INTERNAL_COUNT] {

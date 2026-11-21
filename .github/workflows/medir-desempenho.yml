@@ -61,33 +61,36 @@ jobs:
             @{ nome = 'sessao-100';   args = @('--cenario','sessao','--populacao','100','--ticks','1000','--aquecimento','15000','--repeticoes','1') },
             @{ nome = 'sessao-200';   args = @('--cenario','sessao','--populacao','200','--ticks','1000','--aquecimento','15000','--repeticoes','1') }
           )
-          function Medir($exe, $c, $rotulo) {
+          function Medir($exe, $c, $rotulo, $extra = @()) {
             $log = "../4 - Dados/benchmarks/$($c.nome)-$rotulo.txt"
-            & $exe @($c.args) --run-validado $run --sem-arquivo *>&1 | Tee-Object -FilePath $log | Out-Null
+            & $exe @($c.args + $extra) --run-validado $run --sem-arquivo *>&1 | Tee-Object -FilePath $log | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "benchmark $($c.nome) ($rotulo) falhou" }
             $texto = Get-Content $log -Raw
             $tps = [double]([regex]::Match($texto, 'mediana ([0-9.]+) ticks/s').Groups[1].Value)
             $hash = [regex]::Match($texto, 'estado ([0-9a-f]{16})').Groups[1].Value
-            return @{ tps = $tps; hash = $hash }
+            $comp = [regex]::Match($texto, 'comportamento ([0-9a-f]{16})').Groups[1].Value
+            return @{ tps = $tps; hash = $hash; comp = $comp }
           }
-          $linhas = @('| Caso | main (ticks/s) | branch (ticks/s) | Ganho | Estado igual |', '|---|---:|---:|---:|---|')
+          # A branch entende --sensores-completos? (para comparar o estado salvo)
+          $ajuda = & $novo --ajuda | Out-String
+          $completos = if ($ajuda -match 'sensores-completos') { @('--sensores-completos') } else { @() }
+          $linhas = @('| Caso | main (ticks/s) | branch (ticks/s) | Ganho | Estado igual à main | Comportamento igual |', '|---|---:|---:|---:|---|---|')
           foreach ($c in $casos) {
             # Alterna referência e branch duas vezes e fica com a melhor de cada.
             $r1 = Medir $ref $c 'ref1'; $n1 = Medir $novo $c 'novo1'
             $n2 = Medir $novo $c 'novo2'; $r2 = Medir $ref $c 'ref2'
             $r = [math]::Max($r1.tps, $r2.tps); $n = [math]::Max($n1.tps, $n2.tps)
-            $igual = if ($r1.hash -eq $n1.hash) { 'sim' } else { "NÃO ($($r1.hash) × $($n1.hash))" }
-            $linhas += "| $($c.nome) | $([math]::Round($r,1)) | $([math]::Round($n,1)) | $([math]::Round($n / $r, 2))× | $igual |"
-          }
-          # Ganho só do paralelismo: a branch com 1 thread × todos os núcleos.
-          $linhas += ''
-          $linhas += '| Caso (branch) | 1 thread | todos os núcleos | Ganho do paralelismo | Estado igual |'
-          $linhas += '|---|---:|---:|---:|---|'
-          foreach ($c in $casos) {
-            $um = @{ nome = $c.nome; args = $c.args + @('--threads','1') }
-            $a = Medir $novo $um 'um1'; $b = Medir $novo $c 'todos'
-            $igual = if ($a.hash -eq $b.hash) { 'sim' } else { 'NÃO' }
-            $linhas += "| $($c.nome) | $([math]::Round($a.tps,1)) | $([math]::Round($b.tps,1)) | $([math]::Round($b.tps / $a.tps, 2))× | $igual |"
+            if ($completos.Count -gt 0) {
+              # Estado salvo: branch calculando todos os sensores × main.
+              # Comportamento: branch normal × branch com todos os sensores.
+              $f = Medir $novo $c 'completo' $completos
+              $igual = if ($r1.hash -eq $f.hash) { 'sim' } else { "NÃO" }
+              $comp = if ($n1.comp -eq $f.comp) { 'sim' } else { 'NÃO' }
+            } else {
+              $igual = if ($r1.hash -eq $n1.hash) { 'sim' } else { "NÃO ($($r1.hash) × $($n1.hash))" }
+              $comp = '—'
+            }
+            $linhas += "| $($c.nome) | $([math]::Round($r,1)) | $([math]::Round($n,1)) | $([math]::Round($n / $r, 2))× | $igual | $comp |"
           }
           $tabela = $linhas -join "`n"
           Write-Host "`nCOMPARACAO`n$tabela`nFIM_COMPARACAO"

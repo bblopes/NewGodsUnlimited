@@ -113,6 +113,16 @@ fn next_random_unit_from(random_state: &mut u64) -> f32 {
     ((*random_state >> 32) as u32) as f32 / (u32::MAX as f32)
 }
 
+// Grupos de sensores externos, pelos índices de `SensorInput::slot_values`.
+const SENSOR_VISION: u32 = 0b1111;
+const SENSOR_CURRENT: u32 = 0b11 << 4;
+const SENSOR_CONTACT: u32 = 1 << 8;
+const SENSOR_PG: u32 = 0b111 << 9;
+const SENSOR_P1: u32 = 0b111 << 12;
+const SENSOR_P2: u32 = 0b111 << 15;
+const SENSOR_P3: u32 = 0b111 << 18;
+const SENSOR_PF: u32 = 0b111 << 23;
+
 pub const FOOD_RADIUS: f32 = 5.0;
 pub const CELL_RADIUS: f32 = 14.0;
 /// Referência da curva corporal: com esta energia o raio chega a 2R.
@@ -628,6 +638,10 @@ pub struct World {
     random_state: u64,
     anti_cramming: AntiCrammingConfig,
     pub crowding: CrowdingMetrics,
+    /// Calcular também os sensores que nenhuma ligação lê (comportamento
+    /// anterior à V3.0.4). Não muda o que as células fazem; só serve para
+    /// comparar o estado salvo com versões antigas. Não é gravado em saves.
+    pub full_sensors: bool,
 }
 
 impl World {
@@ -691,6 +705,7 @@ impl World {
             random_state: seed,
             anti_cramming: AntiCrammingConfig::default(),
             crowding: CrowdingMetrics::default(),
+            full_sensors: false,
         };
 
         let mut validated_order: Vec<usize> = (0..validated_genomes.len()).collect();
@@ -1573,6 +1588,7 @@ impl World {
             random_state,
             anti_cramming,
             crowding: CrowdingMetrics::default(),
+            full_sensors: false,
         })
     }
 
@@ -1661,11 +1677,26 @@ impl World {
         observer: &mut Observer,
     ) {
         observer.begin(TickPhase::Sensors);
+        // Sensores que nenhuma ligação efetiva lê não mudam o cérebro: não
+        // são calculados e ficam zerados (a constante continua 1). Com
+        // `full_sensors` tudo é calculado, como antes da V3.0.4.
+        let reads: Vec<u32> = self
+            .organisms
+            .iter()
+            .map(|organism| {
+                if self.full_sensors {
+                    u32::MAX
+                } else {
+                    organism.brain.external_reads()
+                }
+            })
+            .collect();
+        let any_reads = |mask: u32| reads.iter().any(|read| read & mask != 0);
         // A visão responde a qualquer entidade visível, não a uma categoria
         // de alimento. A grade limita a busca ao alcance anatômico e junta
         // fitoplâncton e outras células no mesmo retrato espacial.
-        // Sem células não há quem veja: a grade nem é montada.
-        let visible_grid = if self.organisms.is_empty() {
+        // Sem ninguém que veja, a grade nem é montada.
+        let visible_grid = if !any_reads(SENSOR_VISION) {
             PointGrid::from_points(std::iter::empty())
         } else {
             PointGrid::from_points(
@@ -1678,10 +1709,14 @@ impl World {
         // A mesma grade que acelera o anti-cramming encontra contatos físicos
         // sem comparar toda a população. O retrato é calculado antes de
         // alterar qualquer SensorInput, para todos verem o mesmo tick.
-        let organism_grid = self.organism_grid();
-        let contacts: Vec<bool> = map_indices(self.organisms.len(), 512, 128, |index| {
-            self.has_contact(index, &organism_grid)
-        });
+        let contacts: Vec<bool> = if any_reads(SENSOR_CONTACT) {
+            let organism_grid = self.organism_grid();
+            map_indices(self.organisms.len(), 512, 128, |index| {
+                reads[index] & SENSOR_CONTACT != 0 && self.has_contact(index, &organism_grid)
+            })
+        } else {
+            vec![false; self.organisms.len()]
+        };
         observer.end(TickPhase::Sensors);
         // Visão e química só leem o retrato; separá-las em passadas próprias
         // não muda o resultado e permite medir cada custo.
@@ -1689,6 +1724,9 @@ impl World {
         let visions: Vec<[Option<f32>; 4]> =
             map_indices(self.organisms.len(), 64, 16, |index| {
                 let organism = &self.organisms[index];
+                if reads[index] & SENSOR_VISION == 0 {
+                    return [None; 4];
+                }
                 nearest_visible_in_cones(
                     &visible_grid,
                     organism.position,
@@ -1701,12 +1739,26 @@ impl World {
         observer.begin(TickPhase::SensorChemical);
         let chemicals: Vec<[ChemicalSensors; 5]> =
             map_indices(self.organisms.len(), 1_024, 256, |index| {
-                self.pheromones.sensors_for(&self.organisms[index])
+                let read = reads[index];
+                self.pheromones.sensors_for_groups(
+                    &self.organisms[index],
+                    [
+                        read & SENSOR_PG != 0,
+                        read & SENSOR_P1 != 0,
+                        read & SENSOR_P2 != 0,
+                        read & SENSOR_P3 != 0,
+                        read & SENSOR_PF != 0,
+                    ],
+                )
             });
         observer.end(TickPhase::SensorChemical);
         observer.begin(TickPhase::Sensors);
         for (index, organism) in self.organisms.iter_mut().enumerate() {
-            let current = flow.sample_with_map(organism.position, Some(&self.map)) / MAX_FLOW_SPEED;
+            let current = if reads[index] & SENSOR_CURRENT != 0 {
+                flow.sample_with_map(organism.position, Some(&self.map)) / MAX_FLOW_SPEED
+            } else {
+                Vec2::ZERO
+            };
             let vision_range = organism.food_sensor_range();
             let nearest = visions[index];
             let chemical = chemicals[index];
@@ -3072,6 +3124,8 @@ mod tests {
         world.organisms[0].position = vec2(1_000.0, 1_000.0);
         world.organisms[1].position = world.organisms[0].position;
         world.organisms[1].genome = world.organisms[0].genome.clone();
+        // O teste confere os valores dos sensores, lidos ou não pela rede.
+        world.full_sensors = true;
         let still_water = FlowField::new(17).with_intensity(0.0);
 
         world
@@ -3123,6 +3177,52 @@ mod tests {
 
         assert!(world.organisms.is_empty());
         assert_eq!(world.deaths_total, 1);
+    }
+
+    #[test]
+    fn skipping_unread_sensors_does_not_change_behavior() {
+        let start = World::new(86, 300);
+        let flow = FlowField::new(86);
+        let run = |full_sensors: bool| {
+            let mut world = start.clone();
+            world.full_sensors = full_sensors;
+            for _ in 0..400 {
+                world.tick(
+                    &flow,
+                    2.0,
+                    2.0,
+                    600,
+                    FOOD_ENERGY,
+                    DEFAULT_MENTAL_ENERGY_COST,
+                    MAX_ENERGY,
+                    1_000.0,
+                );
+            }
+            world
+        };
+        let skipped = run(false);
+        let full = run(true);
+        assert!(!skipped.organisms.is_empty());
+        assert_eq!(skipped.tick, full.tick);
+        assert_eq!(skipped.organisms.len(), full.organisms.len());
+        for (left, right) in skipped.organisms.iter().zip(&full.organisms) {
+            assert_eq!(left.id, right.id);
+            assert_eq!(left.position.to_array(), right.position.to_array());
+            assert_eq!(left.energy.to_bits(), right.energy.to_bits());
+            assert_eq!(left.motors.left.to_bits(), right.motors.left.to_bits());
+            // Cada sensor lido tem o mesmo valor nos dois modos.
+            let reads = left.brain.external_reads();
+            let (a, b) = (left.sensors.slot_values(), right.sensors.slot_values());
+            for slot in 0..a.len() {
+                if reads & (1 << slot) != 0 {
+                    assert_eq!(a[slot].to_bits(), b[slot].to_bits());
+                }
+            }
+        }
+        assert_eq!(skipped.food.len(), full.food.len());
+        for (left, right) in skipped.food.iter().zip(&full.food) {
+            assert_eq!(left.position.to_array(), right.position.to_array());
+        }
     }
 
     #[test]

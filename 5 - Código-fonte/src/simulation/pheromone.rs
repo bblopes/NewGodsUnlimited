@@ -287,6 +287,36 @@ impl PheromoneField {
     }
 
     pub fn sensors_for(&self, organism: &Organism) -> [ChemicalSensors; 5] {
+        self.sensors_for_groups(organism, [true; 5])
+    }
+
+    /// Como `sensors_for`, mas só calcula os grupos pedidos (PG, P1, P2, P3,
+    /// PF); os demais ficam zerados. Cada grupo é calculado exatamente como
+    /// antes, então os valores pedidos não mudam.
+    pub fn sensors_for_groups(
+        &self,
+        organism: &Organism,
+        groups: [bool; 5],
+    ) -> [ChemicalSensors; 5] {
+        let mut result = [ChemicalSensors::default(); 5];
+        if groups[0] {
+            result[0] = self.pg_sensors(organism);
+        }
+        if groups[1..4].iter().any(|wanted| *wanted) {
+            for (slot, channel) in organism.genome.pheromone_channels().into_iter().enumerate() {
+                if groups[slot + 1] {
+                    result[slot + 1] =
+                        self.sensors_at(&self.generic[channel as usize], organism.position, -1.0);
+                }
+            }
+        }
+        if groups[4] {
+            result[4] = self.sensors_at(&self.food, organism.position, -1.0);
+        }
+        result
+    }
+
+    fn pg_sensors(&self, organism: &Organism) -> ChemicalSensors {
         let emission_scale = chemical_emission_scale(organism);
         let own_pg = BASAL_PG_PPM * (1.0 + organism.motors.emit_pg) * emission_scale;
         let index = self.nearest_index(organism.position);
@@ -298,14 +328,7 @@ impl PheromoneField {
         } else {
             0.0
         };
-        let mut result = [ChemicalSensors::default(); 5];
-        result[0] = self.sensors_at(&self.pg, organism.position, total_pg * affinity);
-        for (slot, channel) in organism.genome.pheromone_channels().into_iter().enumerate() {
-            result[slot + 1] =
-                self.sensors_at(&self.generic[channel as usize], organism.position, -1.0);
-        }
-        result[4] = self.sensors_at(&self.food, organism.position, -1.0);
-        result
+        self.sensors_at(&self.pg, organism.position, total_pg * affinity)
     }
 
     pub fn display_value(&self, display: PheromoneDisplay, x: usize, y: usize) -> f32 {

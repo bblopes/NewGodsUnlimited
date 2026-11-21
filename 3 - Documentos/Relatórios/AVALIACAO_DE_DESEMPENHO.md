@@ -191,3 +191,9 @@ fitoplâncton, não por mais núcleos.
 
 Também na V3.0.3: o "Ticks/s" da interface mostrava o teto de cálculo, não a
 velocidade real (por isso 1× aparecia como ~200 ticks/s). Corrigido.
+
+| V3.0.4 × V3.0.3 — sensores sob demanda | 1,01× | 1,02× | 0,99× | estado completo igual; comportamento igual |
+
+Ganho dentro do ruído, como previsto: depois da V3.0.1 os sensores já
+custavam pouco. O maior custo restante da sessão é o fitoplâncton
+(movimento, PF e limpeza), e reduzi-lo exige mudar regras.
