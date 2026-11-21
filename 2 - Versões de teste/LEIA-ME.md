@@ -37,6 +37,7 @@ e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão p
 
 | Arquivo | O que validar | Data |
 | --- | --- | --- |
+| `V3 - Otimização/V3.0.1/` | Assinatura PG em cache e distância às paredes (células 4× mais rápidas); fitoplâncton e ticks/s na Demografia | 21/11/2026 |
 | `V3 - Otimização/V3.0.0/` | PF pré-calculado (sessão 7× mais rápida) e clique da arena alinhado | 21/11/2026 |
 | `V2 - Revamp da interface/V2.0.3/` | Demografia corrigida (sem dados na V2.0.0–V2.0.2) e coleta configurável | 21/11/2026 |
 | `V2 - Revamp da interface/V2.0.2/` | aba Biologia e código genético explicado (canais de P1/P2/P3) | 21/11/2026 |

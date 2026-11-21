@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use macroquad::prelude::*;
 
 use crate::{
@@ -39,12 +41,24 @@ const DEFAULT_FOOD_SENSOR_ALLELE: u32 = 16;
 #[derive(Clone)]
 pub struct Genome {
     bits: [u8; GENOME_BYTES],
+    /// Assinatura PG e canais P1–P3 derivados dos bits. Calcular a
+    /// assinatura percorre o genoma inteiro duas vezes; ela era refeita duas
+    /// vezes por célula a cada tick. Agora é calculada uma vez e descartada
+    /// sempre que um bit muda (`set_bit`/`flip_bit`).
+    chemistry: OnceLock<ChemicalIdentity>,
+}
+
+#[derive(Clone, Copy)]
+struct ChemicalIdentity {
+    signature: Vec2,
+    channels: [u8; 3],
 }
 
 impl Genome {
     pub fn random(random_state: &mut u64) -> Self {
         let mut genome = Self {
             bits: [0; GENOME_BYTES],
+            chemistry: OnceLock::new(),
         };
         let mut used_pairs = Vec::with_capacity(CONNECTION_RECORDS / 2);
 
@@ -252,7 +266,10 @@ impl Genome {
 
     /// Reconstrói um genoma salvo sem reinterpretar ou mutar seus bits.
     pub fn from_bytes(bits: [u8; GENOME_BYTES]) -> Self {
-        Self { bits }
+        Self {
+            bits,
+            chemistry: OnceLock::new(),
+        }
     }
 
     /// Migra a topologia V18 (53 slots) para a V19 (56 slots). As quatro
@@ -260,7 +277,10 @@ impl Genome {
     /// ocupam 23–25. Internos e motores são deslocados em três posições sem
     /// mudar sua identidade funcional.
     pub fn from_pre_food_pheromone_bytes(bits: [u8; GENOME_BYTES]) -> Self {
-        let mut genome = Self { bits };
+        let mut genome = Self {
+            bits,
+            chemistry: OnceLock::new(),
+        };
         for record_index in 0..CONNECTION_RECORDS {
             let (source, destination, weight, active) = genome.read_record(record_index);
             let valid = source < PRE_FOOD_PHEROMONE_SLOT_COUNT
@@ -290,6 +310,7 @@ impl Genome {
     ) -> Self {
         let mut genome = Self::empty_with_default_sensor();
         genome.bits[..PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES].copy_from_slice(&bits);
+        genome.chemistry = OnceLock::new();
         genome.enable_all_neural_nodes();
         genome
     }
@@ -301,6 +322,7 @@ impl Genome {
     ) -> Self {
         let mut genome = Self::empty_with_default_sensor();
         genome.bits[..PRE_FOOD_SENSOR_RANGE_GENOME_BYTES].copy_from_slice(&bits);
+        genome.chemistry = OnceLock::new();
         genome.write_bits(
             FOOD_SENSOR_ALLELE_OFFSET,
             FOOD_SENSOR_ALLELE_BITS,
@@ -442,6 +464,17 @@ impl Genome {
     /// genoma. Colisões são normalizadas para que P1/P2/P3 sempre apontem a
     /// canais distintos.
     pub fn pheromone_channels(&self) -> [u8; 3] {
+        self.chemistry().channels
+    }
+
+    fn chemistry(&self) -> ChemicalIdentity {
+        *self.chemistry.get_or_init(|| ChemicalIdentity {
+            signature: self.compute_pheromone_signature(),
+            channels: self.compute_pheromone_channels(),
+        })
+    }
+
+    fn compute_pheromone_channels(&self) -> [u8; 3] {
         let mut channels = [
             self.read_bits(PHEROMONE_CHANNEL_OFFSET, 3) as u8,
             self.read_bits(PHEROMONE_CHANNEL_OFFSET + 3, 3) as u8,
@@ -459,6 +492,10 @@ impl Genome {
     /// projeção dos bits, por isso mutações pequenas só deslocam levemente o
     /// sinal químico, como já acontece com a cor genética.
     pub fn pheromone_signature(&self) -> Vec2 {
+        self.chemistry().signature
+    }
+
+    fn compute_pheromone_signature(&self) -> Vec2 {
         let signature = vec2(
             self.color_projection(0xE1A3_7C5D_92F0_4B16),
             self.color_projection(0x7B10_CE34_6D8A_215F),
@@ -487,6 +524,7 @@ impl Genome {
     fn empty_with_default_sensor() -> Self {
         let mut genome = Self {
             bits: [0; GENOME_BYTES],
+            chemistry: OnceLock::new(),
         };
         genome.write_bits(
             FOOD_SENSOR_ALLELE_OFFSET,
@@ -596,6 +634,7 @@ impl Genome {
     }
 
     fn set_bit(&mut self, bit_index: usize, value: bool) {
+        self.chemistry = OnceLock::new();
         let byte_index = bit_index / 8;
         let mask = 1 << (7 - bit_index % 8);
         if value {
@@ -606,6 +645,7 @@ impl Genome {
     }
 
     fn flip_bit(&mut self, bit_index: usize) {
+        self.chemistry = OnceLock::new();
         let byte_index = bit_index / 8;
         self.bits[byte_index] ^= 1 << (7 - bit_index % 8);
     }

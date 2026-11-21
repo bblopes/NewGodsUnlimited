@@ -171,3 +171,6 @@ Medições ainda por fazer:
 |---|---:|---:|---|
 | V2.0.3 (linha de base) | 111,8 ticks/s | 243 ticks/s | — |
 | V3.0.0 — PF pré-calculado | 793,1 ticks/s | 265 ticks/s | sim (4 cenários) |
+| V3.0.1 — assinatura em cache + distância às paredes | 1.412 ticks/s* | 1.137 ticks/s | sim (4 cenários) |
+
+\* Parte do ganho na sessão é variação entre máquinas do GitHub: o movimento do fitoplâncton, que não mudou, saiu ~40% mais rápido.

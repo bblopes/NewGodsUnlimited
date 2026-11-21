@@ -465,6 +465,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wall_clearance_never_overstates_the_distance_to_a_wall() {
+        let map = MapDefinition::default();
+        let mut clearance = WallClearance::default();
+        assert!(clearance.refresh(&map));
+        assert!(!clearance.refresh(&map));
+        let pixel = WORLD_WIDTH / MAP_GRID_WIDTH as f32;
+        for step in 0..4_000 {
+            let position = vec2(
+                (step as f32 * 0.618_034).fract() * WORLD_WIDTH,
+                (step as f32 * 0.414_214).fract() * WORLD_HEIGHT,
+            );
+            let bound = clearance.lower_bound(position);
+            if bound.is_finite() && bound > 0.0 {
+                assert!(!map.has_wall_within_distance(position, bound - 0.01));
+            }
+            // Toda linha mais curta que o limite é livre.
+            for angle in 0..8 {
+                let direction = Vec2::from_angle(angle as f32 * 0.785_4);
+                let length = bound.min(700.0) * 0.999;
+                if length > pixel {
+                    assert!(map.has_clear_line(position, position + direction * length));
+                }
+            }
+        }
+        let mut empty = WallClearance::default();
+        empty.refresh(&MapDefinition::empty());
+        assert_eq!(empty.lower_bound(vec2(100.0, 100.0)), f32::INFINITY);
+    }
+
+    #[test]
     fn oasis_center_is_sunlit_and_corner_is_unlit() {
         assert!(is_sunlit(OASIS_CENTER));
         assert!(!is_sunlit(Vec2::ZERO));
@@ -528,5 +558,106 @@ mod tests {
                 "a linha entre {from:?} e {to:?} mudou de resultado"
             );
         }
+    }
+}
+
+/// Distância, em pixels lógicos (métrica de Chebyshev), de cada pixel do mapa
+/// até o pixel de parede mais próximo. Serve para provar, sem traçar a linha,
+/// que um segmento curto não encontra parede: se todo pixel de parede está a
+/// mais de `d` unidades, nenhuma linha de comprimento menor que `d` saindo
+/// daquele ponto pode tocar uma parede. O resultado das consultas de linha de
+/// visão continua o mesmo; só deixamos de calcular as que já sabemos livres.
+#[derive(Default)]
+pub struct WallClearance {
+    walls: Vec<u8>,
+    cells: Vec<u16>,
+}
+
+impl Clone for WallClearance {
+    /// Cópias do mundo recalculam sob demanda.
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl WallClearance {
+    /// Recalcula somente se as paredes mudaram desde a última chamada.
+    /// Retorna `true` quando recalculou.
+    pub fn refresh(&mut self, map: &MapDefinition) -> bool {
+        if !self.cells.is_empty() && self.walls == map.walls {
+            return false;
+        }
+        self.walls.clear();
+        self.walls.extend_from_slice(&map.walls);
+        let (width, height) = (MAP_GRID_WIDTH, MAP_GRID_HEIGHT);
+        let far = u16::MAX;
+        self.cells = map
+            .walls
+            .iter()
+            .map(|wall| if *wall != 0 { 0 } else { far })
+            .collect();
+        // Transformada de distância de Chebyshev em duas passadas: exata
+        // para vizinhança de 8.
+        let at = |x: usize, y: usize| y * width + x;
+        for y in 0..height {
+            for x in 0..width {
+                let mut best = self.cells[at(x, y)];
+                if x > 0 {
+                    best = best.min(self.cells[at(x - 1, y)].saturating_add(1));
+                }
+                if y > 0 {
+                    best = best.min(self.cells[at(x, y - 1)].saturating_add(1));
+                    if x > 0 {
+                        best = best.min(self.cells[at(x - 1, y - 1)].saturating_add(1));
+                    }
+                    if x + 1 < width {
+                        best = best.min(self.cells[at(x + 1, y - 1)].saturating_add(1));
+                    }
+                }
+                self.cells[at(x, y)] = best;
+            }
+        }
+        for y in (0..height).rev() {
+            for x in (0..width).rev() {
+                let mut best = self.cells[at(x, y)];
+                if x + 1 < width {
+                    best = best.min(self.cells[at(x + 1, y)].saturating_add(1));
+                }
+                if y + 1 < height {
+                    best = best.min(self.cells[at(x, y + 1)].saturating_add(1));
+                    if x + 1 < width {
+                        best = best.min(self.cells[at(x + 1, y + 1)].saturating_add(1));
+                    }
+                    if x > 0 {
+                        best = best.min(self.cells[at(x - 1, y + 1)].saturating_add(1));
+                    }
+                }
+                self.cells[at(x, y)] = best;
+            }
+        }
+        true
+    }
+
+    /// Limite inferior da distância, em unidades do mundo, entre `position`
+    /// e qualquer pixel de parede. `f32::INFINITY` quando não há parede.
+    /// Conservador: o valor real é sempre maior ou igual.
+    pub fn lower_bound(&self, position: Vec2) -> f32 {
+        if self.cells.is_empty()
+            || !(0.0..WORLD_WIDTH).contains(&position.x)
+            || !(0.0..WORLD_HEIGHT).contains(&position.y)
+        {
+            return 0.0;
+        }
+        let x = (position.x / WORLD_WIDTH * MAP_GRID_WIDTH as f32) as usize;
+        let y = (position.y / WORLD_HEIGHT * MAP_GRID_HEIGHT as f32) as usize;
+        let steps = self.cells[y.min(MAP_GRID_HEIGHT - 1) * MAP_GRID_WIDTH + x.min(MAP_GRID_WIDTH - 1)];
+        if steps == u16::MAX {
+            return f32::INFINITY;
+        }
+        // Pixels a k passos de Chebyshev ficam separados por ao menos k−1
+        // pixels inteiros no eixo maior. A margem de 1 unidade cobre o
+        // arredondamento das amostras de `has_clear_line`.
+        let pixel = (WORLD_WIDTH / MAP_GRID_WIDTH as f32).min(WORLD_HEIGHT / MAP_GRID_HEIGHT as f32);
+        (steps.saturating_sub(1) as f32 * pixel - 1.0).max(0.0)
     }
 }

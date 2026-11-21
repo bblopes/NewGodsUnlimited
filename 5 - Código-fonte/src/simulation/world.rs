@@ -8,7 +8,10 @@ use macroquad::prelude::*;
 
 use crate::{
     config::{DEFAULT_FOOD_SENSOR_RANGE, MAX_FLOW_SPEED, WORLD_HEIGHT, WORLD_WIDTH},
-    environment::{flow::FlowField, map::MapDefinition},
+    environment::{
+        flow::FlowField,
+        map::{MapDefinition, WallClearance},
+    },
     simulation::brain::{Brain, MotorOutput, SensorInput},
     simulation::genome::{
         Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES, PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
@@ -1586,6 +1589,7 @@ impl World {
                     organism.position,
                     organism.food_sensor_range(),
                     &self.map,
+                    self.pheromones.wall_clearance(),
                 )
             })
             .collect();
@@ -2657,8 +2661,13 @@ fn nearest_visible_in_cones(
     origin: Vec2,
     range: f32,
     map: &MapDefinition,
+    clearance: &WallClearance,
 ) -> [Option<f32>; 4] {
     let mut nearest = [None; 4];
+    // Alvos mais próximos que a parede mais próxima são vistos sem traçar a
+    // linha: nenhuma parede pode estar entre eles e a célula.
+    let free_radius = clearance.lower_bound(origin);
+    let free_radius_squared = free_radius * free_radius;
     let base = sensor_grid_cell(origin);
     // O alelo tem teto próprio, mas o corpo pode ampliar o alcance efetivo.
     // A grade calcula quantas células visitar, portanto não cortamos esse
@@ -2676,7 +2685,8 @@ fn nearest_visible_in_cones(
                 let distance_squared = relative.length_squared();
                 if distance_squared > range_squared
                     || distance_squared == 0.0
-                    || !map.has_clear_line(origin, visible_position)
+                    || (distance_squared >= free_radius_squared
+                        && !map.has_clear_line(origin, visible_position))
                 {
                     continue;
                 }
@@ -2823,6 +2833,7 @@ mod tests {
             origin,
             DEFAULT_FOOD_SENSOR_RANGE,
             &MapDefinition::empty(),
+            &WallClearance::default(),
         );
 
         assert!(nearest[0].is_some());
@@ -2842,8 +2853,24 @@ mod tests {
         let mut map = MapDefinition::empty();
         map.paint_wall(origin + vec2(60.0, 0.0), true);
 
-        let nearest = nearest_visible_in_cones(&grid, origin, DEFAULT_FOOD_SENSOR_RANGE, &map);
-
+        let nearest = nearest_visible_in_cones(
+            &grid,
+            origin,
+            DEFAULT_FOOD_SENSOR_RANGE,
+            &map,
+            &WallClearance::default(),
+        );
+        assert_eq!(nearest, [None; 4]);
+        // Com a distância às paredes calculada, o muro continua bloqueando.
+        let mut clearance = WallClearance::default();
+        clearance.refresh(&map);
+        let nearest = nearest_visible_in_cones(
+            &grid,
+            origin,
+            DEFAULT_FOOD_SENSOR_RANGE,
+            &map,
+            &clearance,
+        );
         assert_eq!(nearest, [None; 4]);
     }
 
@@ -2861,8 +2888,15 @@ mod tests {
             origin,
             DEFAULT_FOOD_SENSOR_RANGE,
             &MapDefinition::empty(),
+            &WallClearance::default(),
         );
-        let long_range = nearest_visible_in_cones(&grid, origin, 400.0, &MapDefinition::empty());
+        let long_range = nearest_visible_in_cones(
+            &grid,
+            origin,
+            400.0,
+            &MapDefinition::empty(),
+            &WallClearance::default(),
+        );
 
         assert_eq!(default_range, [None; 4]);
         assert_eq!(long_range[1], Some(360.0));

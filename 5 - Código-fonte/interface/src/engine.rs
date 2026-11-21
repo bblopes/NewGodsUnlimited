@@ -360,6 +360,10 @@ pub struct Sample {
     pub max_generation: u32,
     pub genetic_diversity: f32,
     pub reproduction_minimum: f32,
+    /// Fitoplâncton vivo no momento da amostra.
+    pub phytoplankton: usize,
+    /// Velocidade da simulação (ticks/s estimados pelo worker).
+    pub tps: f32,
 }
 
 #[derive(Default, Serialize)]
@@ -1284,6 +1288,7 @@ fn worker(
                 if let Ok(mut log) = shared.telemetry.lock() {
                     let mut sample = capture_sample(&state.world);
                     sample.reproduction_minimum = state.env.min_repro;
+                    sample.tps = state.estimated_tps;
                     if log.1.len() >= MAX_TELEMETRY_SAMPLES {
                         // Mantém a série inteira com metade da resolução.
                         let kept: Vec<Sample> = log.1.iter().copied().step_by(2).collect();
@@ -1617,6 +1622,8 @@ fn capture_sample(world: &World) -> Sample {
         average_age: world.average_age_ticks(),
         average_generation: world.average_generation(),
         max_generation,
+        phytoplankton: world.food.len(),
+        tps: 0.0,
         genetic_diversity,
         reproduction_minimum: world.reproduction_minimum,
     }
