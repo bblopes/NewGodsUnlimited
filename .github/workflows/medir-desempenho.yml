@@ -31,6 +31,9 @@ jobs:
             5 - Código-fonte/target
           key: bench-${{ hashFiles('5 - Código-fonte/Cargo.lock') }}
 
+      - name: Testes do motor
+        run: cargo test --release --lib
+
       - name: Compilar benchmark
         run: cargo build --release --bin benchmark_simulacao
 

@@ -65,6 +65,12 @@ impl MapDefinition {
         self.is_sunlit(position) as u8 as f32
     }
 
+    /// Máscara de paredes crua (`MAP_GRID_WIDTH × MAP_GRID_HEIGHT`). Usada
+    /// por caches que precisam saber se a geometria mudou.
+    pub fn wall_mask(&self) -> &[u8] {
+        &self.walls
+    }
+
     pub fn is_wall(&self, position: Vec2) -> bool {
         self.cell_at(position)
             .is_some_and(|(x, y)| self.walls[self.index(x, y)] != 0)
