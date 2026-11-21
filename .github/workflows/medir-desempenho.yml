@@ -41,9 +41,9 @@ jobs:
 
       - name: Compilar benchmark (main, referência)
         run: |
+          $env:CARGO_TARGET_DIR = Join-Path (Get-Location).Path 'target-ref'
           git worktree add ../../referencia origin/main
           Push-Location '../../referencia/5 - Código-fonte'
-          $env:CARGO_TARGET_DIR = (Resolve-Path '../../5 - Código-fonte/target').Path + '-ref'
           cargo build --release --bin benchmark_simulacao
           Pop-Location
 
