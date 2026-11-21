@@ -164,3 +164,10 @@ Medições ainda por fazer:
   reponha a população ou use fundadores adaptados ao oásis.
 - O custo da própria interface: publicar o frame e, a cada 500 ticks, a
   telemetria. O modo headless já permite comparar.
+
+## 7. Acompanhamento
+
+| Entrega | Sessão (~5.400 fito) | Estresse (300 cél.) | Estado igual ao anterior |
+|---|---:|---:|---|
+| V2.0.3 (linha de base) | 111,8 ticks/s | 243 ticks/s | — |
+| V3.0.0 — PF pré-calculado | 793,1 ticks/s | 265 ticks/s | sim (4 cenários) |
