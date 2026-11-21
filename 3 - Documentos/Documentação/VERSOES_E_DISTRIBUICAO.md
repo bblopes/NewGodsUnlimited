@@ -33,10 +33,29 @@ Uma nova versão maior (V3…) ganha o título da mudança grande que ela traz.
 
 | Onde | O quê |
 | --- | --- |
-| `2 - Versões de teste/V<n> - <título>/` | todo build novo, até ser aprovado, na pasta da sua versão maior |
+| `2 - Versões de teste/V<n> - <título>/V<versão>/` | cada entrega, com o `.exe` e o `ENTREGA.md`, até ser aprovada |
 | `1 - Versão oficial/` | só a última aprovada, mais presets e runs salvas |
 | `2 - Versões de teste/_histórico/` | versões substituídas ou reprovadas |
 | GitHub → Releases | todas as versões; as ainda não aprovadas marcadas como *pre-release* |
+
+## Como cada entrega é feita
+
+Este é o jeito padrão de trabalhar no projeto:
+
+1. **Pedido.** O que você pediu vira o primeiro bloco do `ENTREGA.md`.
+2. **Número.** Ajuste ou novidade pequena sobe a correção (`V2.0.0` → `V2.0.1`);
+   novidade maior sobe a média (`V2.1.0`); mudança grande de produto abre uma
+   versão maior nova com título.
+3. **Pasta da entrega.** `2 - Versões de teste/V<n> - <título>/V<versão>/` com
+   um `ENTREGA.md` curto: *Pedido*, *Entregue*, *Como testar*, *Ficou de fora*.
+   Esse documento vai para o Git e vira as notas da Release.
+4. **Código.** Branch → Pull Request → merge na `main`.
+5. **Compilação.** O GitHub compila e publica a Release (*pre-release*); o
+   `.exe` é colocado na pasta da entrega.
+6. **Validação.** Você testa; aprovado, o `.exe` vai para `1 - Versão oficial/`.
+
+O `ENTREGA.md` tem que caber numa tela: é registro do que foi feito, não
+especificação.
 
 ## Aprovar uma versão
 

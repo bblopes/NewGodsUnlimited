@@ -36,8 +36,8 @@ O benchmark lê as runs de `../4 - Dados/runs/` e grava relatórios em
 `interface/` é um projeto Rust separado que usa este mesmo motor (a biblioteca
 `new_gods_unlimited`). `src/engine.rs` roda a simulação numa thread e expõe
 comandos para a tela; `ui/` tem o HTML, o CSS e o JavaScript da interface,
-embutidos no `.exe`. A versão dela fica em `interface/Cargo.toml` e as notas
-em `interface/NOTAS_DA_VERSAO.md`.
+embutidos no `.exe`. A versão dela fica em `interface/Cargo.toml`; o documento
+de cada entrega fica na pasta da versão, em `2 - Versões de teste/`.
 
 ## Compilar uma versão
 
@@ -50,5 +50,5 @@ scripts\COMPILAR_VERSAO.bat 1.2.0
 ```
 
 que gera `New Gods Unlimited V1.2.0.exe` direto em
-`2 - Versões de teste/V1 - Interface original/`. Detalhes em
+`2 - Versões de teste/V1 - Interface original/V1.2.0/`. Detalhes em
 [`VERSOES_E_DISTRIBUICAO.md`](../3%20-%20Documentos/Documentação/VERSOES_E_DISTRIBUICAO.md).

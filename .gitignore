@@ -6,10 +6,16 @@ target/
 *.rmeta
 
 # Versões compiladas: ficam no computador e nas Releases do GitHub.
+# Das pastas de teste, só os documentos (LEIA-ME e ENTREGA.md) vão para o Git.
 /1 - Versão oficial/*
 !/1 - Versão oficial/LEIA-ME.md
-/2 - Versões de teste/*
-!/2 - Versões de teste/LEIA-ME.md
+/2 - Versões de teste/**/*.exe
+/2 - Versões de teste/**/*.zip
+/2 - Versões de teste/**/*.ecomap
+/2 - Versões de teste/**/*.ecopreset
+/2 - Versões de teste/**/runs_salvas/
+/2 - Versões de teste/_histórico/
+# Os ENTREGA.md de cada versão entram no Git.
 
 # Dados de desenvolvimento: runs, campanhas, presets e benchmarks locais.
 /4 - Dados/*

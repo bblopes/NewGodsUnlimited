@@ -1,10 +1,14 @@
 // Sem janela de console no executável de produção.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod banco;
 mod engine;
 
-use engine::{Engine, EngineInfo, Frame, Genetics, MapData, TelemetryBatch, UiCommand};
-use tauri::State;
+use engine::{
+    Engine, EngineInfo, Frame, Genetics, IndividualView, MapData, NeuralCatalog, TelemetryBatch,
+    UiCommand,
+};
+use tauri::{Manager, State};
 
 #[tauri::command]
 fn info() -> EngineInfo {
@@ -45,6 +49,19 @@ async fn genetics(engine: State<'_, Engine>) -> Result<Option<Genetics>, String>
 }
 
 #[tauri::command]
+async fn neural_catalog(engine: State<'_, Engine>) -> Result<NeuralCatalog, String> {
+    Ok(engine.neural_catalog())
+}
+
+#[tauri::command]
+async fn individual_view(
+    engine: State<'_, Engine>,
+    key: String,
+) -> Result<Option<IndividualView>, String> {
+    Ok(engine.individual_view(&key))
+}
+
+#[tauri::command]
 async fn command(engine: State<'_, Engine>, cmd: UiCommand) -> Result<(), String> {
     engine.send(cmd);
     Ok(())
@@ -52,7 +69,17 @@ async fn command(engine: State<'_, Engine>, cmd: UiCommand) -> Result<(), String
 
 fn main() {
     tauri::Builder::default()
-        .manage(Engine::start())
+        .setup(|app| {
+            // O banco de indivíduos fica na pasta de dados do aplicativo, fora
+            // das pastas de versão, para sobreviver a qualquer versão nova.
+            let caminho = app
+                .path()
+                .app_data_dir()
+                .ok()
+                .map(|pasta| pasta.join("banco_de_individuos.json"));
+            app.manage(Engine::start(caminho));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             info,
             frame,
@@ -60,6 +87,8 @@ fn main() {
             map_data,
             flow_vectors,
             genetics,
+            neural_catalog,
+            individual_view,
             command
         ])
         .run(tauri::generate_context!())
