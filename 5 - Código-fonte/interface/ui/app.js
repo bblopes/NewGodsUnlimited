@@ -646,7 +646,7 @@ function draw() {
   // células
   const selIdx = S.selected != null ? cellIndex(S.selected) : -1;
   for (let i = 0; i < F.ids.length; i++) {
-    const [sx, sy] = toScreen(F.xs[i], F.ys[i]); const r = Math.max(1.6, F.radii[i] * view.s);
+    const [sx, sy] = toScreen(F.xs[i], F.ys[i]); const r = Math.max(2.4, F.radii[i] * view.s);
     if (sx < -r - 50 || sy < -r - 50 || sx > cw + r + 50 || sy > ch + r + 50) continue;
     const c = F.colors[i], R = c >> 16 & 255, G = c >> 8 & 255, B = c & 255;
     if (S.layers.cones) { ctx.strokeStyle = `rgba(${R},${G},${B},${i === selIdx ? .6 : .14})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx, sy, F.ranges[i] * view.s, 0, 6.283); ctx.stroke(); }
