@@ -1,9 +1,9 @@
 # Mede o desempenho do núcleo da simulação (benchmark headless).
 #
-# Roda à mão pela aba Actions ou a cada push em branches v3-*. Não publica
-# nada: o resultado fica no resumo da execução e nos artefatos (logs + JSON).
-# Os números absolutos são da máquina do GitHub (4 vCPU); o que importa é a
-# comparação entre execuções e a distribuição do custo entre as fases.
+# Roda à mão pela aba Actions ou a cada push em branches v3-*. Compara, NA
+# MESMA MÁQUINA, a main (referência) com o código da branch, alternando as
+# execuções. As máquinas do GitHub variam muito entre si; só a comparação
+# lado a lado é confiável. Também confere se o estado final (hash) é igual.
 name: Medir desempenho
 
 on:
@@ -21,6 +21,8 @@ jobs:
         working-directory: '5 - Código-fonte'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/cache@v4
         with:
@@ -34,30 +36,47 @@ jobs:
       - name: Testes do motor
         run: cargo test --release --lib
 
-      - name: Compilar benchmark
+      - name: Compilar benchmark (branch)
         run: cargo build --release --bin benchmark_simulacao
 
-      - name: Medir
+      - name: Compilar benchmark (main, referência)
+        run: |
+          git worktree add ../../referencia origin/main
+          Push-Location '../../referencia/5 - Código-fonte'
+          $env:CARGO_TARGET_DIR = (Resolve-Path '../../5 - Código-fonte/target').Path + '-ref'
+          cargo build --release --bin benchmark_simulacao
+          Pop-Location
+
+      - name: Medir lado a lado
         run: |
           New-Item -ItemType Directory -Force '../4 - Dados/benchmarks' | Out-Null
-          $run = 'dados-de-teste/populacao-referencia.ecosrun'
+          $run = (Resolve-Path 'dados-de-teste/populacao-referencia.ecosrun').Path
+          $novo = (Resolve-Path './target/release/benchmark_simulacao.exe').Path
+          $ref = (Resolve-Path './target-ref/release/benchmark_simulacao.exe').Path
           $casos = @(
-            @{ nome = 'realista-100';  args = @('--cenario','realista','--ticks','1000','--aquecimento','200') },
-            @{ nome = 'estresse-300';  args = @('--cenario','estresse','--ticks','500','--aquecimento','100') },
-            @{ nome = 'sessao-100';    args = @('--cenario','sessao','--populacao','100','--ticks','1000','--aquecimento','15000','--repeticoes','1') },
-            @{ nome = 'sessao-200';    args = @('--cenario','sessao','--populacao','200','--ticks','1000','--aquecimento','15000','--repeticoes','1') }
+            @{ nome = 'realista-100'; args = @('--cenario','realista','--ticks','1000','--aquecimento','200','--repeticoes','1') },
+            @{ nome = 'estresse-300'; args = @('--cenario','estresse','--ticks','500','--aquecimento','100','--repeticoes','1') },
+            @{ nome = 'sessao-100';   args = @('--cenario','sessao','--populacao','100','--ticks','1000','--aquecimento','15000','--repeticoes','1') },
+            @{ nome = 'sessao-200';   args = @('--cenario','sessao','--populacao','200','--ticks','1000','--aquecimento','15000','--repeticoes','1') }
           )
-          "## Medição de desempenho`n" >> $env:GITHUB_STEP_SUMMARY
-          foreach ($c in $casos) {
-            $log = "../4 - Dados/benchmarks/$($c.nome).txt"
-            & ./target/release/benchmark_simulacao.exe @($c.args) --run-validado $run *>&1 | Tee-Object -FilePath $log
-            if ($LASTEXITCODE -ne 0) { throw "benchmark $($c.nome) falhou" }
-            "### $($c.nome)`n``````" >> $env:GITHUB_STEP_SUMMARY
-            Get-Content $log >> $env:GITHUB_STEP_SUMMARY
-            "```````n" >> $env:GITHUB_STEP_SUMMARY
+          function Medir($exe, $c, $rotulo) {
+            $log = "../4 - Dados/benchmarks/$($c.nome)-$rotulo.txt"
+            & $exe @($c.args) --run-validado $run --sem-arquivo *>&1 | Tee-Object -FilePath $log | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "benchmark $($c.nome) ($rotulo) falhou" }
+            $texto = Get-Content $log -Raw
+            $tps = [double]([regex]::Match($texto, 'mediana ([0-9.]+) ticks/s').Groups[1].Value)
+            $hash = [regex]::Match($texto, 'estado ([0-9a-f]{16})').Groups[1].Value
+            return @{ tps = $tps; hash = $hash }
           }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: medicao-desempenho
-          path: '4 - Dados/benchmarks/'
+          $linhas = @('| Caso | main (ticks/s) | branch (ticks/s) | Ganho | Estado igual |', '|---|---:|---:|---:|---|')
+          foreach ($c in $casos) {
+            # Alterna referência e branch duas vezes e fica com a melhor de cada.
+            $r1 = Medir $ref $c 'ref1'; $n1 = Medir $novo $c 'novo1'
+            $n2 = Medir $novo $c 'novo2'; $r2 = Medir $ref $c 'ref2'
+            $r = [math]::Max($r1.tps, $r2.tps); $n = [math]::Max($n1.tps, $n2.tps)
+            $igual = if ($r1.hash -eq $n1.hash) { 'sim' } else { "NÃO ($($r1.hash) × $($n1.hash))" }
+            $linhas += "| $($c.nome) | $([math]::Round($r,1)) | $([math]::Round($n,1)) | $([math]::Round($n / $r, 2))× | $igual |"
+          }
+          $tabela = $linhas -join "`n"
+          Write-Host "`nCOMPARACAO`n$tabela`nFIM_COMPARACAO"
+          "## Main × branch (mesma máquina)`n`n$tabela`n" >> $env:GITHUB_STEP_SUMMARY
