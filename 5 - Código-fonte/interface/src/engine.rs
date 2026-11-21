@@ -19,8 +19,10 @@ use serde::{Deserialize, Serialize};
 use new_gods_unlimited::config::{WORLD_HEIGHT, WORLD_WIDTH};
 use new_gods_unlimited::environment::flow::{FlowField, FlowPreset};
 use new_gods_unlimited::environment::map::{MapDefinition, MAP_GRID_HEIGHT, MAP_GRID_WIDTH};
-use new_gods_unlimited::simulation::brain::{INTERNAL_START, SLOT_COUNT};
-use new_gods_unlimited::simulation::genome::{Genome, GENOME_BIT_COUNT};
+use new_gods_unlimited::simulation::brain::{INTERNAL_START, MOTOR_START, SLOT_COUNT};
+use new_gods_unlimited::simulation::genome::{
+    Genome, BITS_PER_RECORD, CONNECTION_RECORDS, GENOME_BIT_COUNT, GENOME_BYTES,
+};
 use new_gods_unlimited::simulation::pheromone::{PheromoneDisplay, FIELD_HEIGHT, FIELD_WIDTH};
 use new_gods_unlimited::simulation::world::{
     AntiCrammingConfig, InitialNeuralConfiguration, World, CELL_RADIUS,
@@ -221,6 +223,43 @@ enum Command {
 // O que a interface lê
 // ---------------------------------------------------------------------------
 
+/// Um trecho do genoma com o significado dos seus bits.
+#[derive(Clone, Default, Serialize)]
+pub struct GenomeSection {
+    pub key: String,
+    pub name: String,
+    /// Primeiro bit (0 = primeiro bit do genoma) e quantidade de bits.
+    pub start: usize,
+    pub length: usize,
+    pub bits: String,
+    pub summary: String,
+    pub note: String,
+}
+
+/// Um dos 64 registros de fiação: [origem:6][destino:6][peso:6][ativo:1].
+#[derive(Clone, Default, Serialize)]
+pub struct GenomeRecord {
+    pub index: usize,
+    pub start: usize,
+    pub bits: String,
+    pub source: usize,
+    pub destination: usize,
+    pub weight: f32,
+    pub active: bool,
+    pub legal: bool,
+    /// Ativo, legal e com os dois nós ligados: entra de fato no cérebro.
+    pub effective: bool,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct GenomeMap {
+    pub total_bits: usize,
+    /// Substância de P1, P2 e P3 (0 a 7 → C0 a C7).
+    pub channels: [u8; 3],
+    pub sections: Vec<GenomeSection>,
+    pub records: Vec<GenomeRecord>,
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct CellDetail {
     pub id: u64,
@@ -243,6 +282,7 @@ pub struct CellDetail {
     /// [origem, destino, peso, sinal]
     pub wires: Vec<[f32; 4]>,
     pub genome: String,
+    pub genome_map: GenomeMap,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -410,6 +450,7 @@ pub struct IndividualView {
     /// [origem, destino, peso]
     pub wires: Vec<[f32; 3]>,
     pub genome: String,
+    pub genome_map: GenomeMap,
     pub saved: bool,
 }
 
@@ -715,6 +756,7 @@ impl Engine {
                 })
                 .collect(),
             genome: genome.binary_string(),
+            genome_map: genome_map(&genome, None),
             saved,
         })
     }
@@ -1311,7 +1353,198 @@ fn cell_detail(world: &World, id: u64) -> Option<CellDetail> {
         active,
         wires,
         genome: organism.genome.binary_string(),
+        genome_map: genome_map(&organism.genome, Some(organism.maximum_age_ticks())),
     })
+}
+
+const SLOT_LABELS: [&str; SLOT_COUNT] = [
+    "V<", "V>", "V^", "Vv", "Cx", "Cy", "En", "+1", "Ct", "PG", "PGx", "PGy", "P1", "P1x", "P1y",
+    "P2", "P2x", "P2y", "P3", "P3x", "P3y", "Fx", "Fy", "PF", "PFx", "PFy", "I0", "I1", "I2", "I3",
+    "I4", "I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13", "I14", "I15", "T1", "T2", "T3",
+    "←", "→", "↑", "↓", "Rep", "Fag", "EG", "E1", "E2", "E3", "Doar",
+];
+
+fn slot_label(slot: usize) -> String {
+    SLOT_LABELS
+        .get(slot)
+        .map(|label| (*label).to_owned())
+        .unwrap_or_else(|| format!("#{slot}"))
+}
+
+fn bits_value(bits: &str) -> u32 {
+    bits.chars().fold(0, |value, bit| (value << 1) | (bit == '1') as u32)
+}
+
+/// Decodifica o genoma em trechos legíveis. As posições seguem `genome.rs`:
+/// 64 registros de 19 bits (0–1215), canais químicos nos 9 bits finais desse
+/// bloco (1207–1215, sobrepostos ao registro 63), alelo de alcance (1216–1220),
+/// atividade dos 30 nós (1221–1250) e 5 bits de reserva no último byte.
+fn genome_map(genome: &Genome, max_age: Option<u64>) -> GenomeMap {
+    let bits = genome.binary_string();
+    let slice = |start: usize, length: usize| -> String {
+        bits.get(start..(start + length).min(bits.len()))
+            .unwrap_or("")
+            .to_owned()
+    };
+    let neural_bits = CONNECTION_RECORDS * BITS_PER_RECORD;
+    let channel_start = neural_bits - 9;
+    let allele_start = neural_bits;
+    let activity_start = allele_start + 5;
+    let activity_length = GENOME_BIT_COUNT - activity_start;
+
+    let mut records = Vec::with_capacity(CONNECTION_RECORDS);
+    for index in 0..CONNECTION_RECORDS {
+        let start = index * BITS_PER_RECORD;
+        let record_bits = slice(start, BITS_PER_RECORD);
+        let source = bits_value(&record_bits[0..6]) as usize;
+        let destination = bits_value(&record_bits[6..12]) as usize;
+        let raw_weight = bits_value(&record_bits[12..18]) as i32;
+        let weight_steps = if raw_weight & 0b10_0000 != 0 { raw_weight - 64 } else { raw_weight };
+        let active = &record_bits[18..19] == "1";
+        let legal = source < MOTOR_START && (INTERNAL_START..SLOT_COUNT).contains(&destination);
+        let nodes_on = legal
+            && genome.neural_slot_is_active(destination)
+            && (source < INTERNAL_START || genome.neural_slot_is_active(source));
+        records.push(GenomeRecord {
+            index,
+            start,
+            bits: record_bits,
+            source,
+            destination,
+            weight: weight_steps as f32 / 8.0,
+            active,
+            legal,
+            effective: active && nodes_on,
+        });
+    }
+    let active_records = records.iter().filter(|record| record.active).count();
+    let effective_records = records.iter().filter(|record| record.effective).count();
+
+    let channels = genome.pheromone_channels();
+    let channel_bits = slice(channel_start, 9);
+    let raw_channels = [
+        bits_value(&channel_bits[0..3]),
+        bits_value(&channel_bits[3..6]),
+        bits_value(&channel_bits[6..9]),
+    ];
+    let normalized = raw_channels
+        .iter()
+        .zip(channels.iter())
+        .any(|(raw, channel)| *raw != *channel as u32);
+
+    let allele_bits = slice(allele_start, 5);
+    let activity_bits = slice(activity_start, activity_length);
+    let active_nodes = activity_bits.chars().filter(|bit| *bit == '1').count();
+    let inactive_names: Vec<String> = (0..activity_length)
+        .filter(|index| activity_bits.as_bytes().get(*index) == Some(&b'0'))
+        .map(|index| {
+            let slot = if index < MOTOR_START - INTERNAL_START {
+                INTERNAL_START + index
+            } else {
+                MOTOR_START + index - (MOTOR_START - INTERNAL_START)
+            };
+            slot_label(slot)
+        })
+        .collect();
+
+    let total_bytes_bits = GENOME_BYTES * 8;
+    let reserve: String = (GENOME_BIT_COUNT..total_bytes_bits)
+        .map(|index| {
+            let byte = genome.bytes()[index / 8];
+            if byte & (1 << (7 - index % 8)) != 0 { '1' } else { '0' }
+        })
+        .collect();
+
+    let mut sections = vec![
+        GenomeSection {
+            key: "fiacao".to_owned(),
+            name: "Fiação neural".to_owned(),
+            start: 0,
+            length: neural_bits,
+            bits: String::new(),
+            summary: format!(
+                "64 registros de 19 bits · {active_records} com o bit ativo · {effective_records} entram no cérebro"
+            ),
+            note: "Cada registro: origem (6 bits), destino (6), peso (6, de −4 a +3,875) e ativo (1). Veja a tabela de registros.".to_owned(),
+        },
+        GenomeSection {
+            key: "canais".to_owned(),
+            name: "Canais químicos de P1, P2 e P3".to_owned(),
+            start: channel_start,
+            length: 9,
+            bits: channel_bits.clone(),
+            summary: format!(
+                "P1 = C{} · P2 = C{} · P3 = C{}",
+                channels[0], channels[1], channels[2]
+            ),
+            note: format!(
+                "Três grupos de 3 bits ({}, {}, {}). Ficam nos 9 bits finais da fiação, sobrepostos ao registro 63.{}",
+                raw_channels[0],
+                raw_channels[1],
+                raw_channels[2],
+                if normalized {
+                    " Houve repetição de canal: o motor avançou para o próximo canal livre, para P1, P2 e P3 serem diferentes."
+                } else {
+                    ""
+                }
+            ),
+        },
+        GenomeSection {
+            key: "alcance".to_owned(),
+            name: "Alelo do alcance visual".to_owned(),
+            start: allele_start,
+            length: 5,
+            bits: allele_bits.clone(),
+            summary: format!(
+                "alelo {} de 31 · alcance-base {:.0} u",
+                bits_value(&allele_bits),
+                genome.food_sensor_range()
+            ),
+            note: "16 é o padrão (240 u). O corpo maior amplia o alcance efetivo.".to_owned(),
+        },
+        GenomeSection {
+            key: "atividade".to_owned(),
+            name: "Atividade dos nós neurais".to_owned(),
+            start: activity_start,
+            length: activity_length,
+            bits: activity_bits,
+            summary: format!("{active_nodes} de {activity_length} nós ligados"),
+            note: if inactive_names.is_empty() {
+                "Um bit por nó, na ordem I0–I15, T1–T3 e os 11 motores. Todos ligados.".to_owned()
+            } else {
+                format!(
+                    "Um bit por nó, na ordem I0–I15, T1–T3 e os 11 motores. Desligados: {}.",
+                    inactive_names.join(", ")
+                )
+            },
+        },
+        GenomeSection {
+            key: "reserva".to_owned(),
+            name: "Reserva".to_owned(),
+            start: GENOME_BIT_COUNT,
+            length: reserve.len(),
+            bits: reserve,
+            summary: "não usada".to_owned(),
+            note: "Bits que sobram no último byte; ficam livres para regras futuras.".to_owned(),
+        },
+    ];
+    if let Some(max_age) = max_age {
+        sections.push(GenomeSection {
+            key: "longevidade".to_owned(),
+            name: "Longevidade (fora do genoma neural)".to_owned(),
+            start: 0,
+            length: 0,
+            bits: String::new(),
+            summary: format!("idade máxima {max_age} ticks"),
+            note: "Alelo separado do genoma: não muda cor, similaridade nem PG.".to_owned(),
+        });
+    }
+    GenomeMap {
+        total_bits: GENOME_BIT_COUNT,
+        channels,
+        sections,
+        records,
+    }
 }
 
 fn ones_per_bit(world: &World) -> Vec<u32> {

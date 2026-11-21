@@ -21,8 +21,8 @@ comandos e recebe estado.
   Sessão e Laboratório.
 - **Arena:** mundo, camadas, clique para selecionar célula, zoom, seguir,
   inserir célula e editar mapa.
-- **Lateral direita com seis abas:** Sessão (a run), Ambiente (regras do
-  mundo), Mapa (editor), Células (indivíduo e genética), Demografia (gráficos,
+- **Lateral direita com sete abas:** Sessão (a run), Biologia (células e
+  fitoplâncton), Ambiente (corrente e densidade), Mapa (editor), Células (indivíduo e genética), Demografia (gráficos,
   expansível para tela cheia) e Camadas (só visualização).
 - **Barra de status:** publicação, FPS, avisos e mensagens.
 - **Laboratório** como segundo modo do mesmo app, com replay somente leitura.

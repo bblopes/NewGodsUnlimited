@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "New Gods Unlimited",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "identifier": "com.bblopes.newgodsunlimited",
   "build": {
     "frontendDist": "ui"
