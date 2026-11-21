@@ -1,23 +1,22 @@
-# Rust: saídas de compilação locais e recriáveis.
-/target/
-/target_publicacao/
-/target_pf_vision_experimental/
-
-# Artefatos transitórios do sistema.
+# Caches do compilador Rust (recriáveis a qualquer momento).
+target/
 *.pdb
 *.d
 *.rlib
 *.rmeta
 
-# Dados e entregas gerados localmente.
-/data/runs/
-/data/campaigns/
-/data/presets/
-/data/benchmarks/
-/releases/windows/current/
-/releases/windows/*/
-/releases/windows/*.zip
-/archive/releases/
+# Versões compiladas: ficam no computador e nas Releases do GitHub.
+/1 - Versão oficial/*
+!/1 - Versão oficial/LEIA-ME.md
+/2 - Versões de teste/*
+!/2 - Versões de teste/LEIA-ME.md
+
+# Dados de desenvolvimento: runs, campanhas, presets e benchmarks locais.
+/4 - Dados/*
+!/4 - Dados/LEIA-ME.md
+
+# Saída temporária do workflow de compilação.
+/saida/
 
 # Configurações pessoais de IDE e sistema.
 .idea/

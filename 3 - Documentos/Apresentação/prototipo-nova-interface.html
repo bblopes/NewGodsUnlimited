@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Gods Unlimited — protótipo de navegação</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e1012;--s1:#14171a;--s2:#1a1e22;--s3:#21262b;--s4:#2a3036;
+  --bd:#262c32;--bd2:#343b42;--tx:#e6e8ea;--mu:#8e969f;--mu2:#5f6770;
+  --ac:#5aa9e6;--acs:rgba(90,169,230,.14);--acb:rgba(90,169,230,.35);
+  --wa:#e3b341;--was:rgba(227,179,65,.13);--dg:#e5686b;--dgs:rgba(229,104,107,.14);--ok:#5fbf86;
+  --sw:360px;--r:8px;
+  font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--tx);font-size:13px;overflow:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
+input,select{font:inherit;color:inherit}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.muted{color:var(--mu)}
+svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+
+#app{display:grid;grid-template-rows:52px 1fr 28px;height:100vh}
+
+/* ---------- Barra superior ---------- */
+.top{display:flex;align-items:center;gap:10px;padding:0 10px 0 14px;border-bottom:1px solid var(--bd);background:var(--s1);min-width:0}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;white-space:nowrap;letter-spacing:-.01em}
+.logo{width:22px;height:22px;border-radius:7px;background:radial-gradient(circle at 34% 32%,#9fd3f5 0,#4a95cc 45%,#1d4f75 100%)}
+.modesw{display:flex;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:2px;margin-left:6px}
+.modesw button{border:0;background:none;padding:4px 10px;border-radius:6px;color:var(--mu);font-weight:500}
+.modesw button.on{background:var(--s4);color:var(--tx)}
+.vsep{width:1px;height:24px;background:var(--bd)}
+.runinfo{display:flex;align-items:center;gap:14px;min-width:0;overflow:hidden;white-space:nowrap}
+.kv{display:flex;flex-direction:column;line-height:1.15}
+.kv small{color:var(--mu2);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}
+.kv b{font-weight:500;font-size:13px}
+.grow{flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 11px;border-radius:7px;border:1px solid var(--bd2);background:var(--s2);color:var(--tx);font-weight:500;white-space:nowrap}
+.btn:hover{background:var(--s3)}
+.btn.pri{background:var(--ac);border-color:var(--ac);color:#06131d}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.ghost{background:none;border-color:transparent;color:var(--mu)}
+.btn.ghost:hover{background:var(--s2);color:var(--tx)}
+.btn.icon{width:30px;padding:0}
+.btn.sm{height:26px;padding:0 9px;font-size:12px}
+.btn.warn{background:var(--was);border-color:rgba(227,179,65,.45);color:var(--wa)}
+.btn.danger{color:var(--dg)}
+.btn[disabled]{opacity:.4;cursor:not-allowed}
+.btn.block{width:100%}
+.speed{position:relative}
+.speed .btn{min-width:84px;justify-content:space-between}
+.menu{position:absolute;top:34px;right:0;background:var(--s2);border:1px solid var(--bd2);border-radius:8px;padding:4px;z-index:40;min-width:140px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.menu button{display:flex;justify-content:space-between;width:100%;border:0;background:none;padding:6px 8px;border-radius:5px;text-align:left}
+.menu button:hover{background:var(--s3)}
+.menu button.on{color:var(--ac)}
+.pend{display:flex;align-items:center;gap:6px}
+.pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:10px;font-size:11px;font-weight:500;background:var(--s3);color:var(--mu)}
+.pill.wa{background:var(--was);color:var(--wa)}
+.pill.ac{background:var(--acs);color:var(--ac)}
+.pill.ok{background:rgba(95,191,134,.13);color:var(--ok)}
+.pill.dg{background:var(--dgs);color:var(--dg)}
+
+/* ---------- Área principal ---------- */
+.main{display:grid;grid-template-columns:1fr auto 56px;min-height:0;position:relative}
+.main.collapsed{grid-template-columns:1fr 0 56px}
+.stage{position:relative;min-width:0;background:#0b0d0f;overflow:hidden}
+#arena{position:absolute;inset:0;width:100%;height:100%;display:block}
+.overlay-tl{position:absolute;left:12px;top:12px;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none}
+.overlay-tl .pill{background:rgba(20,23,26,.85);backdrop-filter:blur(6px);border:1px solid var(--bd)}
+.overlay-br{position:absolute;right:12px;bottom:12px;display:flex;gap:6px}
+.overlay-br .btn{background:rgba(20,23,26,.88);backdrop-filter:blur(6px)}
+.banner{position:absolute;left:50%;top:12px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:7px 8px 7px 12px;border-radius:9px;background:rgba(20,23,26,.92);border:1px solid var(--acb);box-shadow:0 8px 24px rgba(0,0,0,.4);white-space:nowrap}
+.banner.wa{border-color:rgba(227,179,65,.5)}
+.tip{position:absolute;pointer-events:none;background:rgba(20,23,26,.95);border:1px solid var(--bd2);border-radius:7px;padding:6px 8px;font-size:12px;line-height:1.45;display:none;z-index:20;white-space:nowrap}
+
+/* ---------- Lateral ---------- */
+.side{width:var(--sw);border-left:1px solid var(--bd);background:var(--s1);display:flex;flex-direction:column;min-height:0;position:relative}
+.main.collapsed .side{display:none}
+.resizer{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:5}
+.resizer:hover,.resizer.drag{background:var(--acb)}
+.side-head{display:flex;align-items:center;gap:8px;padding:14px 16px 10px;border-bottom:1px solid var(--bd)}
+.side-head h2{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.side-head .sub{color:var(--mu);font-size:12px}
+.side-body{overflow-y:auto;flex:1;padding:4px 0 24px}
+.side-body::-webkit-scrollbar{width:10px}
+.side-body::-webkit-scrollbar-thumb{background:var(--s4);border-radius:8px;border:3px solid var(--s1)}
+.rail{background:var(--s1);border-left:1px solid var(--bd);display:flex;flex-direction:column;align-items:stretch;padding:8px 6px;gap:2px}
+.rail button{display:flex;flex-direction:column;align-items:center;gap:3px;border:0;background:none;padding:8px 0 6px;border-radius:8px;color:var(--mu);font-size:10px;font-weight:500;position:relative}
+.rail button svg.i{width:18px;height:18px}
+.rail button:hover{background:var(--s2);color:var(--tx)}
+.rail button.on{background:var(--acs);color:var(--ac)}
+.rail button .dot{position:absolute;top:6px;right:9px;width:7px;height:7px;border-radius:50%;background:var(--wa)}
+.rail .sp{flex:1}
+
+/* Seções */
+.sec{border-bottom:1px solid var(--bd)}
+.sec-h{display:flex;align-items:center;gap:8px;width:100%;border:0;background:none;padding:12px 16px;text-align:left;font-weight:600;font-size:12.5px}
+.sec-h:hover{background:var(--s2)}
+.sec-h .chev{color:var(--mu2);transition:transform .15s}
+.sec.closed .chev{transform:rotate(-90deg)}
+.sec.closed .sec-b{display:none}
+.sec-h .meta{margin-left:auto;display:flex;gap:6px;align-items:center;font-weight:400}
+.sec-b{padding:2px 16px 14px;display:flex;flex-direction:column;gap:12px}
+.hint{color:var(--mu);font-size:12px;line-height:1.45}
+
+/* Campos */
+.field{display:flex;flex-direction:column;gap:6px}
+.field-top{display:flex;align-items:center;gap:8px}
+.field-top label{color:var(--tx);font-size:12.5px}
+.field-top .unit{color:var(--mu2);font-size:11.5px}
+.field-top .num{margin-left:auto;width:86px;height:26px;border-radius:6px;border:1px solid var(--bd2);background:var(--s2);padding:0 7px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px}
+.field-top .num:focus,.txt:focus{outline:none;border-color:var(--ac)}
+.field.dirty .field-top label::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--wa);margin-right:6px;vertical-align:1px}
+.field.dirty .num{border-color:rgba(227,179,65,.55)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;background:var(--s4);outline:none;margin:4px 0}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--tx);border:3px solid var(--s1);box-shadow:0 0 0 1px var(--bd2)}
+input[type=range]::-moz-range-thumb{width:10px;height:10px;border-radius:50%;background:var(--tx);border:3px solid var(--s1)}
+.field-foot{display:flex;justify-content:space-between;color:var(--mu2);font-size:11px}
+.txt{height:30px;border-radius:7px;border:1px solid var(--bd2);background:var(--s2);padding:0 9px;width:100%}
+.row{display:flex;align-items:center;gap:8px}
+.row>.txt{flex:1}
+.tog{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+.tog input{display:none}
+.tog .sw{width:30px;height:18px;border-radius:9px;background:var(--s4);position:relative;flex:none;transition:background .15s}
+.tog .sw::after{content:'';position:absolute;left:3px;top:3px;width:12px;height:12px;border-radius:50%;background:var(--mu);transition:all .15s}
+.tog input:checked+.sw{background:var(--ac)}
+.tog input:checked+.sw::after{left:15px;background:#06131d}
+.tog .tl{display:flex;flex-direction:column;white-space:nowrap}
+.tog .tl small{color:var(--mu);font-size:11.5px}
+.tog.dirty .tl>span::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--wa);margin-right:6px;vertical-align:1px}
+.seg{display:flex;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:2px;gap:2px}
+.seg button{flex:1;border:0;background:none;padding:5px 6px;border-radius:6px;color:var(--mu);font-weight:500;font-size:12px;white-space:nowrap}
+.seg button:hover{color:var(--tx)}
+.seg button.on{background:var(--s4);color:var(--tx)}
+.seg.dirty{border-color:rgba(227,179,65,.55)}
+.choices{display:flex;flex-direction:column;gap:6px}
+.choice{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--bd);background:var(--s2);border-radius:8px;padding:9px 10px;text-align:left;width:100%}
+.choice:hover{border-color:var(--bd2)}
+.choice.on{border-color:var(--acb);background:var(--acs)}
+.choice[disabled]{opacity:.45;cursor:not-allowed}
+.choice .rd{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--mu2);margin-top:1px;flex:none}
+.choice.on .rd{border:4px solid var(--ac)}
+.choice b{font-weight:500;display:block}
+.choice small{color:var(--mu);font-size:11.5px;line-height:1.4}
+.readouts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ro{background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.ro small{color:var(--mu);font-size:11px}
+.ro b{font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ro.wide{grid-column:span 2}
+.tag{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:5px;font-size:10.5px;font-weight:500;background:var(--s3);color:var(--mu);text-transform:uppercase;letter-spacing:.04em}
+.tag.wa{background:var(--was);color:var(--wa)}
+.list{display:flex;flex-direction:column;gap:6px}
+.li{display:flex;align-items:center;gap:10px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:8px 10px}
+.li .meta{display:flex;flex-direction:column;min-width:0;flex:1}
+.li .meta b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .meta small{color:var(--mu);font-size:11.5px}
+.li.click{cursor:pointer}
+.li.click:hover{border-color:var(--bd2)}
+.sw-c{width:12px;height:12px;border-radius:4px;flex:none}
+.bar{height:6px;border-radius:3px;background:var(--s4);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ac);border-radius:3px}
+.cellhead{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--bd)}
+.cellhead .who{flex:1;display:flex;align-items:center;gap:10px;min-width:0}
+.cellhead .who .meta{display:flex;flex-direction:column;min-width:0}
+.cellhead .who b{font-weight:600}
+.cellhead .who small{color:var(--mu);font-size:11.5px}
+.cdot{width:26px;height:26px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 2px rgba(255,255,255,.12)}
+.subnav{padding:10px 16px;border-bottom:1px solid var(--bd);display:flex;flex-direction:column;gap:8px}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.chartcard{background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:10px 10px 6px}
+.chartcard .ct{display:flex;align-items:baseline;gap:6px;margin-bottom:4px}
+.chartcard .ct b{font-weight:500;font-size:12.5px}
+.chartcard .ct span{margin-left:auto;color:var(--mu);font-size:11.5px}
+.chartcard svg{display:block;width:100%}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--mu);margin-top:2px}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:0}
+.nn text{font-family:'JetBrains Mono',monospace;font-size:9.5px;fill:var(--mu)}
+.genome{display:grid;grid-template-columns:repeat(64,1fr);gap:1px}
+.genome i{aspect-ratio:1;background:var(--s4);border-radius:1px}
+.genome i.b{background:var(--ac);opacity:.75}
+.genome i.reg{outline:1px solid rgba(227,179,65,.6)}
+
+/* Drawer / modal */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:60;display:flex}
+.drawer{margin-left:auto;width:440px;max-width:94vw;height:100%;background:var(--s1);border-left:1px solid var(--bd2);display:flex;flex-direction:column;animation:slide .18s ease-out}
+@keyframes slide{from{transform:translateX(30px);opacity:.4}to{transform:none;opacity:1}}
+.drawer-h{display:flex;align-items:flex-start;gap:10px;padding:18px 18px 12px;border-bottom:1px solid var(--bd)}
+.drawer-h h3{margin:0 0 3px;font-size:15px;font-weight:600}
+.drawer-h p{margin:0;color:var(--mu);font-size:12px;line-height:1.45}
+.drawer-b{padding:14px 18px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:12px}
+.drawer-f{padding:12px 18px;border-top:1px solid var(--bd);display:flex;gap:8px;justify-content:flex-end}
+.modal{margin:auto;width:420px;max-width:92vw;background:var(--s1);border:1px solid var(--bd2);border-radius:12px;box-shadow:0 24px 64px rgba(0,0,0,.6);animation:pop .15s ease-out}
+@keyframes pop{from{transform:scale(.97);opacity:.5}to{transform:none;opacity:1}}
+.modal-b{padding:20px 20px 8px}
+.modal-b h3{margin:0 0 8px;font-size:15px;font-weight:600}
+.modal-b p{margin:0 0 8px;color:var(--mu);line-height:1.5}
+.modal-f{padding:12px 20px 18px;display:flex;justify-content:flex-end;gap:8px}
+
+/* Headless */
+.headless{position:absolute;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:30}
+.hl-card{width:420px;background:var(--s1);border:1px solid var(--bd2);border-radius:14px;padding:22px}
+.hl-card h3{margin:0 0 4px;font-size:16px}
+.hl-big{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:18px 0}
+.hl-big .ro b{font-size:18px}
+
+/* Demografia em tela cheia */
+.demofull{position:absolute;inset:0;background:var(--bg);z-index:25;overflow:auto;padding:18px 20px}
+.demofull-h{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.demofull-h h2{margin:0;font-size:17px;white-space:nowrap}
+.demogrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.demogrid .kpis{grid-column:span 3;grid-template-columns:repeat(4,1fr)}
+
+/* Laboratório */
+.lab{position:absolute;inset:0;overflow:auto;background:var(--bg);z-index:24}
+.lab-in{max-width:980px;margin:0 auto;padding:28px 24px 48px}
+.crumbs{display:flex;align-items:center;gap:8px;color:var(--mu);margin-bottom:18px}
+.crumbs a{color:var(--mu);cursor:pointer;text-decoration:none}
+.crumbs a:hover{color:var(--tx)}
+.lab h1{font-size:22px;margin:0 0 6px;letter-spacing:-.02em}
+.lab .lead{color:var(--mu);margin:0 0 22px;font-size:13.5px}
+.cards3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.bigcard{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:18px;text-align:left;display:flex;flex-direction:column;gap:8px;min-height:150px}
+.bigcard:hover{border-color:var(--acb);background:var(--s2)}
+.bigcard svg.i{width:22px;height:22px;color:var(--ac)}
+.bigcard b{font-size:14.5px;font-weight:600}
+.bigcard span{color:var(--mu);line-height:1.5}
+.bigcard[disabled]{opacity:.45}
+.panel{background:var(--s1);border:1px solid var(--bd);border-radius:12px;margin-bottom:14px}
+.panel-h{padding:14px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;gap:10px}
+.panel-h b{font-weight:600}
+.panel-b{padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:16px 24px}
+.panel-b.one{grid-template-columns:1fr}
+.vary{display:grid;grid-template-columns:150px 92px 1fr 1fr;gap:10px;align-items:center}
+.vary .txt{height:28px}
+.worlds{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.wcard{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+.wcard .row{justify-content:space-between}
+table.res{width:100%;border-collapse:collapse}
+table.res th,table.res td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--bd);white-space:nowrap}
+table.res th{color:var(--mu);font-weight:500;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+table.res tr:hover td{background:var(--s2)}
+
+/* Status */
+.status{display:flex;align-items:center;gap:14px;padding:0 12px;border-top:1px solid var(--bd);background:var(--s1);color:var(--mu);font-size:11.5px;white-space:nowrap;overflow:hidden}
+.status .msg{color:var(--tx)}
+.status .msg.ok{color:var(--ok)}
+.status .proto{margin-left:auto;color:var(--mu2)}
+.kbd{display:inline-block;padding:0 5px;border:1px solid var(--bd2);border-radius:4px;font-size:10.5px;color:var(--mu);font-family:'JetBrains Mono',monospace}
+.empty{padding:28px 16px;text-align:center;color:var(--mu)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top" id="top"></header>
+  <div class="main" id="main">
+    <div class="stage" id="stage">
+      <canvas id="arena"></canvas>
+      <div class="overlay-tl" id="layerChips"></div>
+      <div id="stageBanner"></div>
+      <div class="overlay-br" id="camCtl"></div>
+      <div class="tip" id="tip"></div>
+      <div id="stageOverlay"></div>
+    </div>
+    <aside class="side" id="side">
+      <div class="resizer" id="resizer"></div>
+      <div id="sideInner" style="display:flex;flex-direction:column;min-height:0;height:100%"></div>
+    </aside>
+    <nav class="rail" id="rail"></nav>
+  </div>
+  <footer class="status" id="status"></footer>
+</div>
+<div id="layer"></div>
+
+<script>
+/* =========================================================================
+   Protótipo de navegação — New Gods Unlimited
+   Dados fictícios. Cada função render* corresponde a um componente React
+   da versão final (TopBar, Rail, SessionTab, EnvironmentTab, MapTab,
+   CellsTab, DemographicsTab, LayersTab, ArenaCanvas, Drawer, Modal, Lab*).
+   ========================================================================= */
+
+const W = 1600, H = 900, GW = 160, GH = 90;
+const $ = s => document.querySelector(s);
+const fmt = (n, d = 0) => Number(n).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rand = (a, b) => a + Math.random() * (b - a);
+function mulberry(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+const IC = {
+  play: '<path d="M7 4.5v15l12-7.5z"/>',
+  pause: '<path d="M8 5v14M16 5v14"/>',
+  save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
+  restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/>',
+  chev: '<path d="M6 9l6 6 6-6"/>',
+  session: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+  env: '<path d="M3 9c3-3 6 3 9 0s6 3 9 0M3 15c3-3 6 3 9 0s6 3 9 0"/>',
+  map: '<path d="M9 4l-5 2v14l5-2 6 2 5-2V4l-5 2z"/><path d="M9 4v14M15 6v14"/>',
+  cells: '<circle cx="9" cy="10" r="5"/><circle cx="16.5" cy="15.5" r="3.5"/>',
+  demo: '<path d="M4 19V5M4 19h16"/><path d="M7 15l4-5 3 3 5-7"/>',
+  layers: '<path d="M12 4l9 5-9 5-9-5z"/><path d="M3 14l9 5 9-5"/>',
+  collapse: '<path d="M15 6l-6 6 6 6"/>',
+  expand: '<path d="M9 6l6 6-6 6"/>',
+  fit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  target: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  left: '<path d="M15 6l-6 6 6 6"/>',
+  right: '<path d="M9 6l6 6-6 6"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+  bolt: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>',
+  wall: '<rect x="4" y="5" width="16" height="14" rx="1"/><path d="M4 12h16M10 5v7M14 12v7"/>',
+  eraser: '<path d="M8 20h12M5 14l8-8 6 6-8 8H8z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  cursor: '<path d="M5 3l14 8-6 2-2 6z"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+  redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/>',
+  maxim: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/><path d="M7.5 15h9"/>',
+  shuffle: '<path d="M4 7h3l10 10h3M4 17h3l3-3M14 10l3-3h3"/><path d="M18 5l2 2-2 2M18 15l2 2-2 2"/>',
+  storm: '<path d="M7 16a4 4 0 1 1 .8-7.9A6 6 0 0 1 19 10a3.5 3.5 0 0 1-1 6.9"/><path d="M12 14l-2 4h3l-2 4"/>',
+  folder: '<path d="M3 6h6l2 2h10v11H3z"/>',
+  grid: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>',
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  follow: '<path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/>',
+  dna: '<path d="M7 3c0 6 10 6 10 12s-10 6-10 6M17 3c0 6-10 6-10 12"/><path d="M8 7h8M8 17h8"/>',
+};
+const ic = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24">${IC[n] || ''}</svg>`;
+
+/* ------------------------------ Estado ------------------------------ */
+const ENV_DEFAULT = { minRepro: 2500, limit: 5000, mental: 100, abio: 0.12, life: 900, mult: 0.2, food: 50, flowOn: true, flowInt: 100, flowModel: 'Clássico', acOn: true, acForce: 0.6, acSpace: 1.0 };
+const INIT_DEFAULT = { seed: '4634958140201280650', cells: 100, neural: 'val2', amadeus: false };
+const S = {
+  mode: 'sessao', tab: 'sessao', collapsed: false,
+  paused: false, speed: 3, speedMenu: false, headless: false, keepAwake: true,
+  runId: '4643592', tick: 9780201, tps: 1052,
+  insert: false, insertOk: true, selected: null, follow: false,
+  cellsView: 'ind', genView: 'resumo', circView: 'con', demoWin: '30k', demoFull: false,
+  cellGroups: { resumo: true, corpo: false, sensores: false, rede: true, genoma: false },
+  layers: { flow: false, cones: false, conflicts: false, sun: true, chem: false, chemSel: 'PF' },
+  sections: {}, mapTool: 'none', brush: 3, mapDirty: false,
+  drawer: null, modal: null,
+  init: { ...INIT_DEFAULT }, initApplied: { ...INIT_DEFAULT },
+  env: { ...ENV_DEFAULT }, envApplied: { ...ENV_DEFAULT },
+  events: [], msg: { text: 'Sessão carregada · run-4643592898594514058', kind: 'ok' },
+  lab: { view: 'home', kind: 'seeds', worlds: 8, running: false, progress: [], results: [], replayWorld: null, replayTick: 0, replayPlay: true, replayTab: 'gravada' },
+};
+const SPEEDS = ['1×', '10×', '100×', '1.000×', '10.000×', '100.000×', '1.000.000×'];
+const TABS = [
+  { id: 'sessao', label: 'Sessão', icon: 'session' },
+  { id: 'ambiente', label: 'Ambiente', icon: 'env' },
+  { id: 'mapa', label: 'Mapa', icon: 'map' },
+  { id: 'celulas', label: 'Células', icon: 'cells' },
+  { id: 'demografia', label: 'Demografia', icon: 'demo' },
+  { id: 'camadas', label: 'Camadas', icon: 'layers' },
+];
+const REPLAY_TABS = [
+  { id: 'gravada', label: 'Gravada', icon: 'session' },
+  { id: 'celulas', label: 'Células', icon: 'cells' },
+  { id: 'demografia', label: 'Demografia', icon: 'demo' },
+  { id: 'camadas', label: 'Camadas', icon: 'layers' },
+];
+const ENV_LABELS = { minRepro: 'Mínimo reprodução', limit: 'Limite obrigatório', mental: 'Custo mental', abio: 'Abiogênese', life: 'Vida-base sem sol', mult: 'Multiplicação sob luz', food: 'Energia por fito', flowOn: 'Corrente ligada', flowInt: 'Intensidade da corrente', flowModel: 'Modelo de corrente', acOn: 'Anti-cramming', acForce: 'Força anti-cramming', acSpace: 'Espaço anti-cramming' };
+const NEURAL = [
+  { id: 'classica', name: 'Clássica', desc: 'Genomas iniciais totalmente aleatórios.' },
+  { id: 'motor', name: 'Motor', desc: '4 caminhos diretos visão → motor; resto aleatório.' },
+  { id: 'val1', name: 'Val 1.0', desc: 'Pool validado salvo na última run.', needsPool: true },
+  { id: 'val2', name: 'Val 2.0', desc: 'Pool validado: visão → motor + Ct + PG → Doar.', needsPool: true },
+  { id: 'pfguia', name: 'PF guia', desc: 'Fundador experimental: segue PFx ou PFy dominante, sem diagonal.' },
+];
+const hasPool = true;
+
+/* ------------------------------ Mundo fictício ------------------------------ */
+const GROUP_HUES = [205, 152, 38, 330, 268, 12, 95];
+let cells = [], food = [], nextId = 1;
+let wallGrid = new Uint8Array(GW * GH), sunGrid = new Uint8Array(GW * GH);
+let editWall, editSun, undoStack = [], redoStack = [];
+function initMap() {
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const i = y * GW + x;
+    if ((x >= 70 && x <= 72 && y >= 18 && y <= 52) || (y >= 66 && y <= 68 && x >= 98 && x <= 140)) wallGrid[i] = 1;
+    const dx = (x - 38) / 30, dy = (y - 26) / 18; if (dx * dx + dy * dy < 1) sunGrid[i] = 1;
+    const ex = (x - 120) / 22, ey = (y - 40) / 14; if (ex * ex + ey * ey < 1) sunGrid[i] = 1;
+  }
+  editWall = wallGrid.slice(); editSun = sunGrid.slice();
+}
+const isWall = (x, y, g = wallGrid) => { const gx = Math.floor(x / 10), gy = Math.floor(y / 10); if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return true; return g[gy * GW + gx] === 1; };
+const isSun = (x, y) => { const gx = Math.floor(x / 10), gy = Math.floor(y / 10); return gx >= 0 && gy >= 0 && gx < GW && gy < GH && sunGrid[gy * GW + gx] === 1; };
+const radiusOf = c => 14 * Math.sqrt(1 + 3 * c.e / 2000) * 0.62;
+function mkCell(x, y, group, parent) {
+  const g = group ?? Math.floor(Math.random() * 6);
+  return { id: nextId++, x, y, vx: 0, vy: 0, e: parent ? parent.e : rand(300, 3200), age: parent ? 0 : Math.floor(rand(0, 90000)), gen: parent ? parent.gen + 1 : Math.floor(rand(60, 140)), kids: 0, group: g, hue: GROUP_HUES[g] + rand(-10, 10), range: rand(180, 460), life: Math.floor(rand(85000, 118000)), seed: (Math.random() * 1e9) | 0, conns: Math.floor(rand(22, 48)), inserted: false };
+}
+function spawnAround() { let x, y, k = 0; do { x = rand(40, W - 40); y = rand(40, H - 40); k++; } while (isWall(x, y) && k < 50); return [x, y]; }
+function initWorld() {
+  initMap();
+  for (let i = 0; i < 132; i++) { const [x, y] = spawnAround(); cells.push(mkCell(x, y)); }
+  for (let i = 0; i < 260; i++) { const [x, y] = spawnAround(); food.push({ x, y, age: Math.floor(rand(0, 800)) }); }
+  S.selected = cells[0].id;
+}
+function flowAt(x, y) {
+  if (!S.envApplied.flowOn) return [0, 0];
+  const k = S.envApplied.flowInt / 100;
+  if (S.envApplied.flowModel === 'Esquerda') return [-2.2 * k, 0.2 * k * Math.sin(x / 140)];
+  if (S.envApplied.flowModel === 'Oásis') { const dx = x - W / 2, dy = y - H / 2, d = Math.hypot(dx, dy) + 1; return [(-dy / d) * 1.8 * k, (dx / d) * 1.8 * k]; }
+  const fx = 2.3 * Math.cos(2 * Math.PI * (y / H - 0.5));
+  const fy = -1.5 * Math.sin(2 * Math.PI * (x / W - 0.5)) * Math.sign(y / H - 0.5 || 1) * -1;
+  return [fx * k + 0.35 * Math.sin(y / 90 + x / 170) * k, fy * k * 0.7];
+}
+function stepWorld() {
+  const env = S.envApplied;
+  for (const f of food) { const [fx, fy] = flowAt(f.x, f.y); let nx = f.x + fx * 0.6, ny = f.y + fy * 0.6; if (!isWall(nx, ny)) { f.x = nx; f.y = ny; } f.age++; }
+  food = food.filter(f => f.age < env.life * (isSun(f.x, f.y) ? 1.5 : 1));
+  const spawn = env.abio * 9; let acc = spawn; while (acc > 0) { if (Math.random() < acc) { const [x, y] = spawnAround(); food.push({ x, y, age: 0 }); } acc -= 1; }
+  if (food.length < 900) for (let i = 0, n = food.length; i < n; i += 7) { const f = food[i]; if (isSun(f.x, f.y) && Math.random() < env.mult * 0.01) food.push({ x: f.x + rand(-30, 30), y: f.y + rand(-30, 30), age: 0 }); }
+  const born = [];
+  for (const c of cells) {
+    const [fx, fy] = flowAt(c.x, c.y);
+    let tx = 0, ty = 0, best = c.range * 0.5;
+    for (let i = 0; i < food.length; i += 3) { const f = food[i]; const d = Math.abs(f.x - c.x) + Math.abs(f.y - c.y); if (d < best) { best = d; tx = f.x - c.x; ty = f.y - c.y; } }
+    const tl = Math.hypot(tx, ty) || 1;
+    c.vx = c.vx * 0.9 + (tx / tl) * 0.35 + fx * 0.05 + rand(-0.25, 0.25);
+    c.vy = c.vy * 0.9 + (ty / tl) * 0.35 + fy * 0.05 + rand(-0.25, 0.25);
+    const r = radiusOf(c); let nx = c.x + c.vx, ny = c.y + c.vy;
+    if (isWall(nx, c.y) || nx < r || nx > W - r) { c.vx *= -0.6; nx = c.x; }
+    if (isWall(c.x, ny) || ny < r || ny > H - r) { c.vy *= -0.6; ny = c.y; }
+    c.x = nx; c.y = ny; c.age += 12; c.e -= 0.9 + (c.vx * c.vx + c.vy * c.vy) * 0.12;
+    for (let i = food.length - 1; i >= 0; i--) { const f = food[i]; if ((f.x - c.x) ** 2 + (f.y - c.y) ** 2 < (r + 3) ** 2) { c.e += env.food * 4; food.splice(i, 1); break; } }
+    if (c.e > Math.min(env.limit, env.minRepro * 1.2) && cells.length + born.length < 260) { c.e /= 2; c.kids++; const k = mkCell(c.x + rand(-8, 8), c.y + rand(-8, 8), c.group, c); k.hue = c.hue + rand(-3, 3); born.push(k); demoCounters.birthN++; }
+  }
+  const before = cells.length;
+  cells = cells.filter(c => { if (c.e <= 0) { demoCounters.deathF++; return false; } if (c.age > c.life) { demoCounters.deathA++; return false; } return true; });
+  cells.push(...born);
+  if (cells.length < 40) for (let i = 0; i < 6; i++) { const [x, y] = spawnAround(); cells.push(mkCell(x, y)); }
+  if (S.envApplied.acOn) {
+    for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) {
+      const a = cells[i], b = cells[j], dx = b.x - a.x, dy = b.y - a.y, md = (radiusOf(a) + radiusOf(b)) * S.envApplied.acSpace, d2 = dx * dx + dy * dy;
+      if (d2 < md * md && d2 > 0.01) { const d = Math.sqrt(d2), p = (md - d) / d * 0.5 * S.envApplied.acForce; a.x -= dx * p * 0.5; a.y -= dy * p * 0.5; b.x += dx * p * 0.5; b.y += dy * p * 0.5; }
+    }
+  }
+  if (S.selected && !cells.find(c => c.id === S.selected) && S.tab === 'celulas' && S.cellsView === 'ind') { S.selected = cells[0]?.id ?? null; renderPanel(); }
+}
+const demoCounters = { birthN: 0, birthL: 0, deathA: 0, deathF: 0, deathP: 0 };
+
+/* ------------------------------ Séries demográficas fictícias ------------------------------ */
+const SERIES = { pop: [], energy: [], age: [], gmax: [], gavg: [], div: [], birthN: [], birthL: [], deathA: [], deathF: [], deathP: [], minRepro: [] };
+(function seedSeries() {
+  let p = 92, e = 1900, a = 41000, gm = 120, ga = 96, dv = 71;
+  for (let i = 0; i < 400; i++) {
+    p = clamp(p + rand(-5, 5.2), 40, 220); e = clamp(e + rand(-60, 62), 900, 3400); a = clamp(a + rand(-900, 950), 20000, 70000);
+    gm += Math.random() < 0.35 ? 1 : 0; ga += Math.random() < 0.3 ? 1 : 0; dv = clamp(dv + rand(-0.6, 0.55), 40, 92);
+    SERIES.pop.push(p); SERIES.energy.push(e); SERIES.age.push(a); SERIES.gmax.push(gm); SERIES.gavg.push(ga); SERIES.div.push(dv);
+    SERIES.birthN.push(rand(2.5, 5.5)); SERIES.birthL.push(rand(0.3, 1.4)); SERIES.deathA.push(rand(0.4, 1.4)); SERIES.deathF.push(rand(1.6, 4.4)); SERIES.deathP.push(rand(0, 0.6)); SERIES.minRepro.push(2500);
+  }
+})();
+function pushSample() {
+  const n = cells.length, e = cells.reduce((s, c) => s + c.e, 0) / (n || 1), a = cells.reduce((s, c) => s + c.age, 0) / (n || 1);
+  const gm = Math.max(...cells.map(c => c.gen)), ga = cells.reduce((s, c) => s + c.gen, 0) / (n || 1);
+  SERIES.pop.push(n); SERIES.energy.push(e); SERIES.age.push(a); SERIES.gmax.push(gm); SERIES.gavg.push(ga); SERIES.div.push(clamp(SERIES.div.at(-1) + rand(-0.6, 0.6), 40, 92));
+  SERIES.birthN.push(rand(2.5, 5.5)); SERIES.birthL.push(rand(0.3, 1.4)); SERIES.deathA.push(rand(0.4, 1.4)); SERIES.deathF.push(rand(1.6, 4.4)); SERIES.deathP.push(rand(0, 0.6));
+  SERIES.minRepro.push(S.envApplied.minRepro);
+  for (const k in demoCounters) demoCounters[k] = 0;
+  let shifted = false;
+  for (const k in SERIES) if (SERIES[k].length > 600) { SERIES[k].shift(); shifted = true; }
+  if (shifted) S.events.forEach(ev => ev.idx--);
+}
+const WIN_LEN = { '5k': 40, '30k': 120, '100k': 260, '25%': 150, 'Tudo': 600 };
+
+/* ------------------------------ Componentes de UI ------------------------------ */
+const isDirty = path => { const [g, k] = path.split('.'); if (g === 'env') return S.env[k] !== S.envApplied[k]; if (g === 'init') return S.init[k] !== S.initApplied[k]; return false; };
+const getF = path => { if (!path.includes('.')) return S[path]; const [g, k] = path.split('.'); return S[g][k]; };
+function envPending() { return Object.keys(S.env).filter(k => S.env[k] !== S.envApplied[k]); }
+function initPending() { return Object.keys(S.init).filter(k => S.init[k] !== S.initApplied[k]); }
+
+function section(key, title, body, meta = '', defOpen = true) {
+  const open = S.sections[key] ?? defOpen;
+  return `<div class="sec ${open ? '' : 'closed'}"><button class="sec-h" data-act="sec" data-v="${key}"><span class="chev">${ic('chev')}</span>${title}<span class="meta">${meta}</span></button><div class="sec-b">${body}</div></div>`;
+}
+function slider(path, label, min, max, step, unit = '', foot = '') {
+  const v = getF(path);
+  return `<div class="field ${isDirty(path) ? 'dirty' : ''}" data-row="${path}"><div class="field-top"><label>${label}</label>${unit ? `<span class="unit">${unit}</span>` : ''}<input class="num" type="number" data-f="${path}" min="${min}" max="${max}" step="${step}" value="${v}"></div><input type="range" data-f="${path}" min="${min}" max="${max}" step="${step}" value="${v}">${foot ? `<div class="field-foot">${foot}</div>` : ''}</div>`;
+}
+function toggle(path, label, sub = '', live = false) {
+  const v = live ? S.layers[path] : getF(path);
+  const attr = live ? `data-layer="${path}"` : `data-f="${path}"`;
+  return `<label class="tog ${!live && isDirty(path) ? 'dirty' : ''}" data-row="${path}"><input type="checkbox" ${attr} ${v ? 'checked' : ''}><span class="sw"></span><span class="tl"><span>${label}</span>${sub ? `<small>${sub}</small>` : ''}</span></label>`;
+}
+function segF(path, opts) {
+  const v = getF(path);
+  return `<div class="seg ${isDirty(path) ? 'dirty' : ''}" data-row="${path}">${opts.map(o => `<button class="${o === v ? 'on' : ''}" data-act="setf" data-f="${path}" data-v="${o}">${o}</button>`).join('')}</div>`;
+}
+function segUI(key, opts, cur) {
+  return `<div class="seg">${opts.map(([id, l]) => `<button class="${id === cur ? 'on' : ''}" data-act="ui" data-k="${key}" data-v="${id}">${l}</button>`).join('')}</div>`;
+}
+const ro = (label, val, cls = '', live = '') => `<div class="ro ${cls}"><small>${label}</small><b class="mono" ${live ? `data-live="${live}"` : ''}>${val}</b></div>`;
+
+/* ------------------------------ Barra superior ------------------------------ */
+function renderTop() {
+  const top = $('#top');
+  if (S.mode === 'lab') {
+    top.innerHTML = `<div class="brand"><div class="logo"></div>New Gods Unlimited</div>
+      <div class="modesw"><button data-act="mode" data-v="sessao">Sessão</button><button class="on" data-act="mode" data-v="lab">Laboratório</button></div>
+      <div class="vsep"></div>
+      <div class="runinfo">${S.lab.view === 'replay' ? `<span class="pill ac">${ic('eye')} Replay · somente leitura</span><span class="muted">Campanha 18 · Mundo ${String(S.lab.replayWorld + 1).padStart(2, '0')}</span>` : `<span class="muted">Campanhas offline, execução paralela e replay gravado</span>`}</div>
+      <div class="grow"></div>
+      ${S.lab.view === 'replay' ? `<button class="btn" data-act="lab" data-v="results">${ic('left')} Voltar aos resultados</button>` : ''}`;
+    return;
+  }
+  const ep = envPending().length, ip = initPending().length;
+  top.innerHTML = `<div class="brand"><div class="logo"></div>New Gods Unlimited</div>
+    <div class="modesw"><button class="on" data-act="mode" data-v="sessao">Sessão</button><button data-act="mode" data-v="lab">Laboratório</button></div>
+    <div class="vsep"></div>
+    <div class="runinfo">
+      <div class="kv"><small>Run</small><b class="mono">#${S.runId}</b></div>
+      <div class="kv"><small>Tick</small><b class="mono" data-live="tick">${fmt(S.tick)}</b></div>
+      <div class="kv"><small>Células</small><b class="mono" data-live="cells">${cells.length}</b></div>
+      <div class="kv"><small>Ticks/s</small><b class="mono" data-live="tps">${fmt(S.tps)}</b></div>
+    </div>
+    <div class="grow"></div>
+    <button class="btn ${S.paused ? 'pri' : ''}" data-act="pause" title="Espaço">${ic(S.paused ? 'play' : 'pause')}${S.paused ? 'Iniciar' : 'Pausar'}</button>
+    <div class="speed"><button class="btn" data-act="speedMenu" title="Teclas 1–7"><span class="mono">${SPEEDS[S.speed]}</span>${ic('chev')}</button>
+      ${S.speedMenu ? `<div class="menu">${SPEEDS.map((s, i) => `<button class="${i === S.speed ? 'on' : ''}" data-act="speed" data-v="${i}"><span class="mono">${s}</span><span class="kbd">${i + 1}</span></button>`).join('')}</div>` : ''}</div>
+    <div class="vsep"></div>
+    <div class="pend">
+      ${ep ? `<span class="pill wa">${ep} ${ep === 1 ? 'alteração pendente' : 'alterações pendentes'}</span>` : ''}
+      ${ip ? `<span class="pill">${ip} ao reiniciar</span>` : ''}
+      <button class="btn ${ep ? 'warn' : ''}" data-act="apply" ${ep ? '' : 'disabled'}>Aplicar</button>
+      <button class="btn ghost" data-act="revert" ${ep || ip ? '' : 'disabled'}>Reverter</button>
+    </div>
+    <button class="btn icon ghost" data-act="askRestart" title="Reiniciar sessão">${ic('restart')}</button>
+    <button class="btn" data-act="drawer" data-v="runs" title="Ctrl+S">${ic('save')}Salvar</button>`;
+}
+
+/* ------------------------------ Trilho de abas ------------------------------ */
+function renderRail() {
+  const tabs = S.mode === 'lab' && S.lab.view === 'replay' ? REPLAY_TABS : TABS;
+  const cur = S.mode === 'lab' ? S.lab.replayTab : S.tab;
+  const dots = { ambiente: envPending().length > 0, sessao: initPending().length > 0, mapa: S.mapDirty };
+  $('#rail').innerHTML = (S.mode === 'lab' && S.lab.view !== 'replay') ? '' : tabs.map(t => `<button class="${t.id === cur && !S.collapsed ? 'on' : ''}" data-act="tab" data-v="${t.id}" title="${t.label}">${ic(t.icon)}${t.label}${dots[t.id] && S.mode !== 'lab' ? '<span class="dot"></span>' : ''}</button>`).join('') +
+    `<div class="sp"></div><button data-act="collapse" title="${S.collapsed ? 'Abrir painel' : 'Recolher painel'}">${ic(S.collapsed ? 'collapse' : 'expand')}${S.collapsed ? 'Abrir' : 'Recolher'}</button>`;
+  $('#main').classList.toggle('collapsed', S.collapsed || (S.mode === 'lab' && S.lab.view !== 'replay'));
+  $('#rail').style.display = (S.mode === 'lab' && S.lab.view !== 'replay') ? 'none' : '';
+  $('#main').style.gridTemplateColumns = (S.mode === 'lab' && S.lab.view !== 'replay') ? '1fr 0 0' : '';
+}
+
+/* ------------------------------ Painel lateral ------------------------------ */
+function head(title, sub, right = '') { return `<div class="side-head"><div style="flex:1;min-width:0"><h2>${title}</h2>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>`; }
+function renderPanel() {
+  if (S.mode === 'lab' && S.lab.view !== 'replay') { $('#sideInner').innerHTML = ''; return; }
+  const keep = $('.side-body')?.scrollTop || 0;
+  const tab = S.mode === 'lab' ? S.lab.replayTab : S.tab;
+  const fn = { sessao: tabSessao, ambiente: tabAmbiente, mapa: tabMapa, celulas: tabCelulas, demografia: tabDemografia, camadas: tabCamadas, gravada: tabGravada }[tab];
+  $('#sideInner').innerHTML = fn();
+  const sb = $('.side-body'); if (sb && renderPanel.lastTab === tab) sb.scrollTop = keep;
+  renderPanel.lastTab = tab;
+}
+
+function tabSessao() {
+  const ip = initPending().length;
+  const body = `
+    ${section('s-exec', 'Execução', `
+      <div class="readouts">
+        ${ro('Tick', fmt(S.tick), '', 'tick')}${ro('Células vivas', cells.length, '', 'cells')}
+        ${ro('Ticks/s', fmt(S.tps), '', 'tps')}${ro('Publicação', '58 Hz', '', 'pub')}
+      </div>
+      <div class="row"><button class="btn block" data-act="modal" data-v="headless">${ic('bolt')}Modo headless · medir teto de cálculo</button></div>
+      ${toggle('keepAwake', 'Manter Windows ativo', 'Impede suspensão enquanto a simulação calcula')}
+    `)}
+    ${section('s-init', 'Condições iniciais', `
+      <div class="hint">Estes valores só valem quando a sessão é reiniciada.</div>
+      <div class="field ${isDirty('init.seed') ? 'dirty' : ''}" data-row="init.seed"><div class="field-top"><label>Seed</label></div>
+        <div class="row"><input class="txt mono" type="text" data-f="init.seed" value="${S.init.seed}"><button class="btn sm" data-act="newSeed">${ic('shuffle')}Nova</button></div></div>
+      ${slider('init.cells', 'Células iniciais', 1, 400, 1)}
+      <div class="field"><div class="field-top"><label>Configuração neural</label></div>
+        <div class="choices">${NEURAL.map(n => `<button class="choice ${S.init.neural === n.id ? 'on' : ''}" data-act="neural" data-v="${n.id}" ${n.needsPool && !hasPool ? 'disabled' : ''}><span class="rd"></span><span><b>${n.name}</b><small>${n.desc}</small></span></button>`).join('')}</div></div>
+      ${toggle('init.amadeus', 'Modo Amadeus', 'Uma única célula central; descendentes ainda mutam')}
+      <button class="btn ${ip ? 'warn' : ''} block" data-act="askRestart">${ic('restart')}Reiniciar com estas condições</button>
+    `, ip ? '<span class="tag wa">ao reiniciar</span>' : '<span class="tag">ao reiniciar</span>')}
+    ${section('s-insert', 'Inserir célula', `
+      <div class="hint">Cria uma célula no ponto clicado sem reiniciar a run. Usa a configuração neural escolhida acima: <b>${NEURAL.find(n => n.id === S.init.neural).name}</b>.</div>
+      <button class="btn ${S.insert ? 'pri' : ''} block" data-act="insert">${ic(S.insert ? 'x' : 'plus')}${S.insert ? 'Cancelar inserção' : 'Inserir célula no mapa'}</button>
+    `)}
+    ${section('s-persist', 'Salvar e presets', `
+      <div class="list">
+        <div class="li click" data-act="drawer" data-v="runs">${ic('save')}<div class="meta"><b>Estado da sessão</b><small>Salvar ou carregar uma run completa (.ecosrun)</small></div>${ic('right')}</div>
+        <div class="li click" data-act="drawer" data-v="presets">${ic('folder')}<div class="meta"><b>Presets de sessão</b><small>4 salvos · parâmetros e mapa, sem o estado vivo</small></div>${ic('right')}</div>
+      </div>
+    `)}`;
+  return head('Sessão', `run #${S.runId} · iniciada em 18/11, 14:02`) + `<div class="side-body">${body}</div>`;
+}
+
+function tabAmbiente() {
+  const lifeSun = Math.round(S.env.life * 1.5);
+  const conflicts = countConflicts();
+  const body = `
+    ${section('a-cel', 'Células', `
+      ${slider('env.minRepro', 'Mínimo reprodução', 100, 5000, 50, 'energia', '<span>acima disso o motor Reproduzir é aceito</span>')}
+      ${slider('env.limit', 'Limite obrigatório', 500, 10000, 100, 'energia', '<span>divisão forçada neste teto</span>')}
+      ${slider('env.mental', 'Custo mental', 0, 400, 5, 'por conexão/tick', '<span>100 = 0,0025</span>')}
+    `)}
+    ${section('a-fito', 'Fitoplâncton', `
+      <div class="readouts">${ro('No mapa', food.length, '', 'food')}${ro('Vida sob sol', fmt(lifeSun) + ' ticks', '', 'lifeSun')}</div>
+      ${slider('env.abio', 'Nascimento por abiogênese', 0, 1, 0.01, 'fito/tick')}
+      ${slider('env.life', 'Vida-base sem sol', 100, 4000, 10, 'ticks', '<span>sob sol recebe 1,5×</span>')}
+      ${slider('env.mult', 'Multiplicação sob luz', 0, 2, 0.05, '%/tick')}
+      ${slider('env.food', 'Energia por fito', 5, 200, 1, 'energia')}
+    `)}
+    ${section('a-corr', 'Corrente', `
+      ${toggle('env.flowOn', 'Corrente ligada')}
+      ${slider('env.flowInt', 'Intensidade', 0, 200, 5, '%')}
+      <div class="field"><div class="field-top"><label>Modelo</label></div>${segF('env.flowModel', ['Clássico', 'Oásis', 'Esquerda'])}</div>
+      <div class="hint">Vetores da corrente: aba Camadas.</div>
+    `)}
+    ${section('a-dens', 'Densidade', `
+      ${toggle('env.acOn', 'Anti-cramming', 'Separa células sobrepostas')}
+      ${slider('env.acForce', 'Força', 0, 1, 0.05)}
+      ${slider('env.acSpace', 'Espaço mínimo', 0.5, 3, 0.1, '× R')}
+      <div class="li"><div class="meta"><b class="mono" data-live="conflicts">${conflicts} pares em conflito</b><small>distância mínima ${fmt(S.envApplied.acSpace, 1)} R</small></div><button class="btn sm" data-act="showConflicts">${ic('eye')}Ver na arena</button></div>
+    `)}`;
+  const ep = envPending().length;
+  return head('Ambiente', 'Regras do mundo · valem ao aplicar', ep ? `<span class="pill wa">${ep} pendente${ep > 1 ? 's' : ''}</span>` : '') + `<div class="side-body">${body}</div>`;
+}
+
+function tabMapa() {
+  const tools = [['none', 'Selecionar', 'cursor'], ['wall', 'Parede', 'wall'], ['eraser', 'Borracha', 'eraser'], ['sun', 'Sol', 'sun']];
+  const body = `
+    ${section('m-tools', 'Ferramentas', `
+      <div class="seg">${tools.map(([id, l, i]) => `<button class="${S.mapTool === id ? 'on' : ''}" data-act="tool" data-v="${id}" style="display:flex;align-items:center;justify-content:center;gap:5px">${ic(i)}${l}</button>`).join('')}</div>
+      <div class="field"><div class="field-top"><label>Raio do pincel</label><span class="unit">células de grade</span><input class="num" type="number" data-g="brush" min="1" max="12" value="${S.brush}"></div><input type="range" data-g="brush" min="1" max="12" step="1" value="${S.brush}"></div>
+      <div class="row"><button class="btn sm" data-act="undo" ${undoStack.length ? '' : 'disabled'}>${ic('undo')}Desfazer</button><button class="btn sm" data-act="redo" ${redoStack.length ? '' : 'disabled'}>${ic('redo')}Refazer</button><div class="grow"></div>${toggle('sun', 'Ver iluminação', '', true)}</div>
+      <div class="hint">Arraste na arena para pintar. Nada entra no mundo antes de aplicar o mapa.</div>
+      <button class="btn ${S.mapDirty ? 'warn' : ''} block" data-act="applyMap" ${S.mapDirty ? '' : 'disabled'}>Aplicar mapa${S.mapDirty ? ' *' : ''}</button>
+    `)}
+    ${section('m-flow', 'Correnteza do mapa', `
+      ${segF('env.flowModel', ['Clássico', 'Oásis', 'Esquerda'])}
+      <div class="hint">Clássico: recirculante com giros locais. Esquerda: vento contínuo. Oásis: giro em torno do centro.</div>
+    `)}
+    ${section('m-presets', 'Presets de mapa', `
+      <div class="list">
+        ${['Câmara padrão', 'Duas ilhas de sol', 'Corredor estreito'].map((n, i) => `<div class="li"><span class="sw-c" style="background:var(--s4)"></span><div class="meta"><b>${n}</b><small>paredes, iluminação e correnteza</small></div><button class="btn sm" data-act="msg" data-v="Preset de mapa “${n}” carregado no editor">Carregar</button></div>`).join('')}
+      </div>
+      <button class="btn block" data-act="drawer" data-v="mapPresets">Gerenciar presets de mapa</button>
+    `)}`;
+  return head('Mapa', S.mapTool === 'none' ? 'Editor de paredes, sol e correnteza' : 'Editando · arraste na arena', S.mapDirty ? '<span class="pill wa">não aplicado</span>' : '') + `<div class="side-body">${body}</div>`;
+}
+
+function selectedCell() { return cells.find(c => c.id === S.selected) || null; }
+function tabCelulas() {
+  const top = `<div class="subnav">${segUI('cellsView', [['ind', 'Indivíduo'], ['gen', 'Genética']], S.cellsView)}</div>`;
+  if (S.cellsView === 'gen') return head('Células', `${cells.length} vivas · relatório a cada 250 ticks`) + top + `<div class="side-body">${genetics()}</div>`;
+  const c = selectedCell();
+  if (!c) return head('Células', 'Nenhuma célula selecionada') + top + `<div class="empty">Clique numa célula na arena.</div>`;
+  const near = cells.filter(o => o.id !== c.id && o.group === c.group)[0];
+  const grp = groupName(c.group);
+  const g = S.cellGroups;
+  const sec = (k, t, b) => `<div class="sec ${g[k] ? '' : 'closed'}"><button class="sec-h" data-act="cgroup" data-v="${k}"><span class="chev">${ic('chev')}</span>${t}</button><div class="sec-b">${b}</div></div>`;
+  const r = radiusOf(c) / 0.62;
+  const body = `
+    <div class="cellhead">
+      <button class="btn icon" data-act="cellNav" data-v="-1" title="[">${ic('left')}</button>
+      <div class="who"><span class="cdot" style="background:hsl(${c.hue},55%,58%)"></span><div class="meta"><b>Célula #${c.id}</b><small>${grp} · geração ${c.gen}</small></div></div>
+      <button class="btn icon ${S.follow ? 'pri' : ''}" data-act="follow" title="Seguir na arena">${ic('target')}</button>
+      <button class="btn icon" data-act="cellNav" data-v="1" title="]">${ic('right')}</button>
+    </div>
+    <div style="padding:10px 16px;border-bottom:1px solid var(--bd)"><div class="row"><span class="muted">${ic('search')}</span><input class="txt mono" placeholder="Buscar por id…" data-g="cellSearch" style="height:28px"></div></div>
+    ${sec('resumo', 'Resumo', `
+      <div class="field"><div class="field-top"><label>Energia</label><span class="mono" style="margin-left:auto" data-live="cE">${fmt(c.e, 1)} / ${fmt(S.envApplied.limit)}</span></div><div class="bar"><i data-live="cEbar" style="width:${clamp(c.e / S.envApplied.limit * 100, 0, 100)}%"></i></div></div>
+      <div class="readouts">
+        ${ro('Tempo viva / limite', `${fmt(c.age)} / ${fmt(c.life)}`, 'wide', 'cAge')}
+        ${ro('Filhos produzidos', c.kids, '', 'cKids')}${ro('Geração', c.gen)}
+        ${ro('Mais parecida', near ? `#${near.id} · ${fmt(rand(97, 99.8), 1)}%` : '—', 'wide')}
+      </div>`)}
+    ${sec('corpo', 'Corpo', `<div class="readouts">${ro('Raio físico', fmt(r, 1) + ' u')}${ro('Tamanho', fmt(r / 14, 2) + ' R')}${ro('Velocidade máx.', fmt(8 / Math.sqrt(r / 14), 2) + ' u/tick')}${ro('Custo basal', fmt(0.03 * Math.pow(r / 14, 0.485), 4))}</div>`)}
+    ${sec('sensores', 'Sensores', `<div class="readouts">${ro('Alcance visual', fmt(c.range) + ' u')}${ro('Custo do sensor', fmt(0.006 * (c.range / 240) ** 2, 4) + '/tick')}${ro('Alcance químico', '500 u')}${ro('Longevidade (alelo)', fmt(c.life) + ' ticks')}</div><button class="btn sm" data-act="layerOn" data-v="cones">${ic('eye')}Mostrar cones na arena</button>`)}
+    ${sec('rede', `Rede neural ao vivo <span class="meta"><span class="pill">${c.conns} conexões</span></span>`, `${neuralNet(c)}<div class="legend"><span><i style="background:var(--ok)"></i>sinal positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>neurônio inativo</span></div>`)}
+    ${sec('genoma', 'Código genético', `<div class="hint mono">1.256 bits · 64 registros neurais · 5 bits de alcance · 30 bits de atividade</div>${genomeGrid(c)}`)}
+  `;
+  return head('Células', `${cells.length} vivas`) + top + `<div class="side-body" style="padding-top:0">${body}</div>`;
+}
+const groupName = g => ['Grupo azul', 'Grupo verde', 'Grupo âmbar', 'Grupo magenta', 'Grupo violeta', 'Grupo coral', 'Grupo oliva'][g];
+
+const SLOTS = {
+  s: ['V<', 'V>', 'V^', 'Vv', 'Cx', 'Cy', 'En', '+1', 'Ct', 'PG', 'PGx', 'PGy', 'P1', 'P1x', 'P1y', 'P2', 'P2x', 'P2y', 'P3', 'P3x', 'P3y', 'Fx', 'Fy', 'PF', 'PFx', 'PFy'],
+  i: ['I0', 'I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9', 'I10', 'I11', 'I12', 'I13', 'I14', 'I15', 'T1', 'T2', 'T3'],
+  m: ['←', '→', '↑', '↓', 'Rep', 'Fag', 'EG', 'E1', 'E2', 'E3', 'Doar'],
+};
+const SLOT_DESC = { 'V<': 'Visão · entidade à esquerda', 'V>': 'Visão · entidade à direita', 'V^': 'Visão · entidade acima', 'Vv': 'Visão · entidade abaixo', Cx: 'Corrente no eixo X', Cy: 'Corrente no eixo Y', En: 'Energia relativa', '+1': 'Sinal constante', Ct: 'Contato com outra célula', PG: 'Intensidade de PG', PF: 'Intensidade de PF (fitoplâncton)', Fx: 'Força externa X', Fy: 'Força externa Y', Rep: 'Motor · reproduzir', Fag: 'Motor · fagocitar', EG: 'Motor · reforçar PG', Doar: 'Motor · doar energia' };
+function neuralNet(c) {
+  const rnd = mulberry(c.seed);
+  const rowH = 13, w = 300, hgt = SLOTS.s.length * rowH + 26;
+  const pos = {};
+  const col = (arr, x, kind) => { const off = 18 + (hgt - 18 - arr.length * rowH) / 2; arr.forEach((n, i) => { pos[kind + i] = [x, off + i * rowH + rowH / 2]; }); };
+  col(SLOTS.s, 34, 's'); col(SLOTS.i, 150, 'i'); col(SLOTS.m, 266, 'm');
+  const inactive = new Set(); SLOTS.i.forEach((_, i) => { if (rnd() < 0.3) inactive.add('i' + i); });
+  const edges = [];
+  for (let k = 0; k < c.conns; k++) {
+    const toMotor = rnd() < 0.35;
+    const a = toMotor && rnd() < 0.5 ? 's' + Math.floor(rnd() * 26) : (rnd() < 0.7 ? 's' + Math.floor(rnd() * 26) : 'i' + Math.floor(rnd() * 19));
+    const b = toMotor ? 'm' + Math.floor(rnd() * 11) : 'i' + Math.floor(rnd() * 19);
+    if (a === b) continue;
+    edges.push([a, b, rnd() * 2 - 1]);
+  }
+  const node = (k, label, kind) => { const [x, y] = pos[k]; const off = inactive.has(k); const anchor = kind === 's' ? 'end' : kind === 'm' ? 'start' : 'middle'; const tx = kind === 's' ? x - 8 : kind === 'm' ? x + 8 : x; return `<g><title>${label} · ${SLOT_DESC[label] || (kind === 'i' ? 'Neurônio interno' : kind === 'm' ? 'Motor' : 'Sensor')}${off ? ' · inativo geneticamente' : ''}</title><circle data-nn="${off ? '' : k}" cx="${x}" cy="${y}" r="4" fill="${off ? 'var(--s4)' : 'var(--mu)'}" stroke="var(--s1)" stroke-width="1"/>${kind !== 'i' ? `<text x="${tx}" y="${y + 3}" text-anchor="${anchor}">${label}</text>` : ''}</g>`; };
+  return `<svg class="nn" viewBox="0 0 ${w} ${hgt}" style="max-height:420px">
+    <text x="34" y="9" text-anchor="middle" style="fill:var(--mu2)">sensores</text><text x="150" y="9" text-anchor="middle" style="fill:var(--mu2)">internos</text><text x="266" y="9" text-anchor="middle" style="fill:var(--mu2)">motores</text>
+    ${edges.map(([a, b, wt]) => { const [x1, y1] = pos[a], [x2, y2] = pos[b]; return `<path d="M${x1} ${y1} C${(x1 + x2) / 2} ${y1} ${(x1 + x2) / 2} ${y2} ${x2} ${y2}" stroke="${wt > 0 ? 'var(--ok)' : 'var(--dg)'}" stroke-opacity="${0.25 + Math.abs(wt) * 0.5}" stroke-width="${0.6 + Math.abs(wt) * 1.2}" fill="none"/>`; }).join('')}
+    ${SLOTS.s.map((n, i) => node('s' + i, n, 's')).join('')}${SLOTS.i.map((n, i) => node('i' + i, n, 'i')).join('')}${SLOTS.m.map((n, i) => node('m' + i, n, 'm')).join('')}
+  </svg>`;
+}
+function genomeGrid(c) {
+  const rnd = mulberry(c.seed + 7); let s = '';
+  for (let i = 0; i < 64 * 20; i++) s += `<i class="${rnd() < 0.5 ? 'b' : ''} ${i >= 1216 && i < 1251 ? 'reg' : ''}"></i>`;
+  return `<div class="genome">${s}</div>`;
+}
+
+function genetics() {
+  const groups = {}; cells.forEach(c => { groups[c.group] = (groups[c.group] || 0) + 1; });
+  const list = Object.entries(groups).sort((a, b) => b[1] - a[1]);
+  const n = cells.length || 1;
+  const sub = `<div class="subnav" style="border-bottom:0;padding-bottom:0">${segUI('genView', [['resumo', 'Resumo'], ['grupos', 'Grupos'], ['circ', 'Circuitos']], S.genView)}</div>`;
+  if (S.genView === 'grupos') return sub + `<div class="sec-b" style="padding-top:12px"><div class="hint">Grupos por similaridade mínima de 98,5%</div><div class="list">${list.map(([g, k]) => { const rep = cells.find(c => c.group == g); return `<div class="li click" data-act="openRep" data-v="${rep.id}"><span class="sw-c" style="background:hsl(${GROUP_HUES[g]},55%,58%)"></span><div class="meta"><b>${groupName(g)} · ${k} células (${fmt(k / n * 100, 1)}%)</b><small>gen. ${fmt(rand(80, 130), 1)} · coesão ${fmt(rand(98.6, 99.7), 2)}% · abrir representante</small></div>${ic('right')}</div>`; }).join('')}</div></div>`;
+  if (S.genView === 'circ') {
+    const sub2 = `<div style="padding:10px 16px 0">${segUI('circView', [['con', 'Conexões'], ['neu', 'Neurônios']], S.circView)}</div>`;
+    if (S.circView === 'neu') return sub + sub2 + `<div class="sec-b" style="padding-top:12px"><div class="readouts">${ro('Origem mais usada', 'PFx · 81,2%', 'wide')}${ro('Destino mais recrutado', 'I3 · 74,0%', 'wide')}${ro('Motor mais alimentado', '→ · 92,4%', 'wide')}</div><div class="hint">Participação por slot</div><div class="list">${['PFx', 'PFy', 'I3', 'Ct', 'PG', 'En', 'I7', 'T2'].map((s, i) => { const u = 90 - i * 9; return `<div class="li"><span class="mono" style="width:34px">${s}</span><div class="meta"><div class="bar"><i style="width:${u}%"></i></div><small>uso ${u}% · sai ${u - 6}% · entra ${Math.max(4, u - 30)}%</small></div></div>`; }).join('')}</div></div>`;
+    return sub + sub2 + `<div class="sec-b" style="padding-top:12px"><div class="hint">Pares origem → destino mais presentes</div><div class="list">${[['PFx', '→', 0.94], ['PFy', '↓', 0.88], ['Ct', 'I0', 0.71], ['PG', 'I0', 0.66], ['I0', 'Doar', 0.52], ['En', 'Rep', 0.47], ['Cx', 'I3', 0.41]].map(([a, b, f]) => `<div class="li"><div class="meta"><b class="mono">${a} → ${b}</b><small>${fmt(f * 100, 1)}% dos cérebros · ${Math.ceil(f * 6)} grupos</small></div><span class="pill ${a === 'Cx' ? 'dg' : 'ok'} mono">peso ${a === 'Cx' ? '−0,63' : '+' + fmt(rand(0.6, 2.4), 2)}</span></div>`).join('')}</div></div>`;
+  }
+  const dom = list[0];
+  return sub + `<div class="sec-b" style="padding-top:12px"><div class="readouts">
+    ${ro('População analisada', cells.length)}${ro('Grupos genéticos', list.length)}
+    ${ro('Grupo dominante', `${fmt(dom[1] / n * 100, 1)}%`)}${ro('Concordância consenso', '96,8%')}
+    ${ro('Coesão do dominante', '99,21%', 'wide')}${ro('Circuito mais recorrente', 'PFx → → · 94%', 'wide')}${ro('Slot mais usado', 'PFx · 81% dos cérebros', 'wide')}
+  </div></div>`;
+}
+
+function tabDemografia() {
+  const body = `<div class="sec-b" style="padding-top:12px">${segUI('demoWin', [['5k', '5k'], ['30k', '30k'], ['100k', '100k'], ['25%', '25%'], ['Tudo', 'Tudo']], S.demoWin)}
+    <div class="hint mono">${demoHeader()}</div>
+    ${demoKpis()}
+    ${demoCharts(false)}</div>`;
+  return head('Demografia', 'Telemetria da sessão', `<button class="btn sm" data-act="demoFull">${ic('maxim')}Expandir</button>`) + `<div class="side-body">${body}</div>`;
+}
+function demoHeader() { const L = Math.min(WIN_LEN[S.demoWin], SERIES.pop.length); return `${L} amostras · ticks ${fmt(Math.max(0, S.tick - L * 250))} a ${fmt(S.tick)} · ${S.events.length} marcos`; }
+function demoKpis() {
+  const L = Math.min(WIN_LEN[S.demoWin], SERIES.pop.length), p = SERIES.pop, d = p.at(-1) - p.at(-L);
+  return `<div class="kpis">${ro('Células vivas', fmt(p.at(-1)))}${ro('Variação na janela', (d >= 0 ? '+' : '') + fmt(d))}${ro('Gerações', `máx ${fmt(SERIES.gmax.at(-1))} · méd ${fmt(SERIES.gavg.at(-1), 1)}`)}${ro('Diversidade genética', fmt(SERIES.div.at(-1), 1) + '%')}</div>`;
+}
+function demoCharts(big) {
+  const L = Math.min(WIN_LEN[S.demoWin], SERIES.pop.length), sl = a => a.slice(-L);
+  const h = big ? 170 : 96;
+  const card = (t, right, svg, legend = '') => `<div class="chartcard"><div class="ct"><b>${t}</b><span class="mono">${right}</span></div>${svg}${legend}</div>`;
+  const lg = items => `<div class="legend">${items.map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>`;
+  return [
+    card('População viva', fmt(SERIES.pop.at(-1)) + ' células', lineChart([{ d: sl(SERIES.pop), c: 'var(--ac)' }], { h, L })),
+    card('Energia média', fmt(SERIES.energy.at(-1)), lineChart([{ d: sl(SERIES.energy), c: 'var(--ac)' }], { h, L, step: sl(SERIES.minRepro) }), lg([['var(--ac)', 'energia média'], ['var(--wa)', 'mín. reprodução (em vigor)']])),
+    card('Idade média', fmt(SERIES.age.at(-1)) + ' ticks', lineChart([{ d: sl(SERIES.age), c: 'var(--ac)' }], { h, L })),
+    card('Natalidade', 'eventos / 1k ticks', lineChart([{ d: sl(SERIES.birthN), c: 'var(--ok)' }, { d: sl(SERIES.birthL), c: 'var(--wa)' }], { h, L }), lg([['var(--ok)', 'decisão neural'], ['var(--wa)', 'limite energético']])),
+    card('Mortalidade', 'eventos / 1k ticks', lineChart([{ d: sl(SERIES.deathF), c: 'var(--dg)' }, { d: sl(SERIES.deathA), c: 'var(--mu)' }, { d: sl(SERIES.deathP), c: '#b48cf0' }], { h, L }), lg([['var(--dg)', 'fome'], ['var(--mu)', 'idade'], ['#b48cf0', 'fagocitose']])),
+    card('Energia atual', 'distribuição', histogram(h)),
+  ].join('');
+}
+function lineChart(series, { h = 96, L, step }) {
+  const w = 320, pad = 4, all = series.flatMap(s => s.d).concat(step || []);
+  let mn = Math.min(...all), mx = Math.max(...all); if (mx - mn < 1e-6) mx = mn + 1; const span = mx - mn; mn -= span * 0.08; mx += span * 0.08;
+  const X = i => pad + i / Math.max(1, L - 1) * (w - pad * 2), Y = v => h - pad - (v - mn) / (mx - mn) * (h - pad * 2);
+  const path = d => d.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join('');
+  const markers = S.events.filter(e => e.idx >= SERIES.pop.length - L).map(e => { const x = X(e.idx - (SERIES.pop.length - L)); return `<line x1="${x}" x2="${x}" y1="0" y2="${h}" stroke="var(--wa)" stroke-dasharray="3 3" stroke-opacity=".7"><title>tick ${fmt(e.tick)} · ${e.label}</title></line><circle cx="${x}" cy="5" r="3" fill="var(--wa)"><title>tick ${fmt(e.tick)} · ${e.label}</title></circle>`; }).join('');
+  const grid = [0.25, 0.5, 0.75].map(f => `<line x1="0" x2="${w}" y1="${h * f}" y2="${h * f}" stroke="var(--bd)"/>`).join('');
+  const stepPath = step ? `<path d="${step.map((v, i) => `${i ? 'H' + X(i).toFixed(1) + 'V' : 'M' + X(i).toFixed(1) + ' '}${Y(v).toFixed(1)}`).join('')}" stroke="var(--wa)" stroke-dasharray="4 3" fill="none" stroke-width="1.2"/>` : '';
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px">${grid}${stepPath}${series.map(s => `<path d="${path(s.d)}" stroke="${s.c}" fill="none" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`).join('')}${markers}</svg>`;
+}
+function histogram(h) {
+  const w = 320, b = 14, cap = S.envApplied.limit, counts = new Array(b).fill(0);
+  cells.forEach(c => counts[Math.min(b - 1, Math.floor(c.e / cap * b))]++);
+  const m = Math.max(...counts, 1), bw = w / b;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px">${counts.map((k, i) => `<rect x="${i * bw + 1}" y="${h - k / m * (h - 6)}" width="${bw - 2}" height="${k / m * (h - 6)}" rx="2" fill="var(--ac)" fill-opacity=".75"><title>${fmt(i * cap / b)}–${fmt((i + 1) * cap / b)}: ${k}</title></rect>`).join('')}</svg>`;
+}
+
+function tabCamadas() {
+  const chemOpts = ['PG', 'PF', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'Todos'];
+  const body = `
+    ${section('l-world', 'Mundo', `
+      ${toggle('flow', 'Vetores da corrente', 'Direção do fluxo; tamanho visual fixo', true)}
+      ${toggle('sun', 'Iluminação', 'Regiões ensolaradas do mapa', true)}
+      ${toggle('cones', 'Cones dos sensores', 'Alcance visual de cada célula', true)}
+      ${toggle('conflicts', 'Conflitos de densidade', 'Pares abaixo do espaço mínimo', true)}
+    `)}
+    ${section('l-chem', 'Mapa químico instantâneo', `
+      ${toggle('chem', 'Mostrar mapa químico', 'Reconstruído a cada tick', true)}
+      <div class="field"><div class="field-top"><label>Substância</label><span class="unit mono" style="margin-left:auto" data-live="peak">pico ${fmt(rand(2, 9), 2)} ppm</span></div>
+        <div class="seg" style="flex-wrap:wrap">${chemOpts.map(o => `<button style="flex:0 0 auto" class="${S.layers.chemSel === o ? 'on' : ''}" data-act="chemSel" data-v="${o}">${o}</button>`).join('')}</div></div>
+    `)}
+    ${section('l-future', 'Clima', `<div class="hint">Temperatura e umidade entram aqui quando existirem no motor.</div>
+      <label class="tog" style="opacity:.4;cursor:not-allowed"><input type="checkbox" disabled><span class="sw"></span><span class="tl"><span>Temperatura</span><small>em breve</small></span></label>`)}`;
+  return head('Camadas', 'Só muda a visualização · vale na hora') + `<div class="side-body">${body}</div>`;
+}
+
+function tabGravada() {
+  const w = S.lab.results[S.lab.replayWorld] || S.lab.results[0];
+  const body = `
+    ${section('r-play', 'Reprodução visual', `
+      <div class="row"><button class="btn" data-act="replayPlay">${ic(S.lab.replayPlay ? 'pause' : 'play')}${S.lab.replayPlay ? 'Pausar' : 'Reproduzir'}</button><span class="mono muted" data-live="rtick">quadro ${fmt(S.lab.replayTick)}</span></div>
+      <input type="range" min="0" max="${w.tick}" step="1000" value="${S.lab.replayTick}" data-g="replayTick">
+      <div class="field-foot"><span>0</span><span>${fmt(w.tick)} ticks</span></div>
+    `)}
+    ${section('r-cfg', 'Valores fixados antes da execução', `<div class="readouts">${ro('Modo', S.lab.kind === 'seeds' ? 'Varredura de seeds' : 'Estresse ambiental', 'wide')}${ro('Seed deste mundo', w.seed, 'wide')}${ro('Emissão', '0,12 / tick')}${ro('Vida fito', '900')}${ro('Energia da comida', '50')}${ro('Corrente', '100%')}${ro('Encerrar por extinção', 'Sim')}${ro('Meta de reprodução', '2.500')}</div>`)}
+    ${section('r-res', 'Resultado final', `<div class="readouts">${ro('Encerrado por', w.reason, 'wide')}${ro('Tick final', fmt(w.tick))}${ro('População final', w.pop)}${ro('Nascimentos totais', fmt(w.births))}${ro('Geração máxima', w.gen)}</div>
+      <button class="btn block" data-act="msg" data-v="Campanha salva no laboratório">${ic('save')}Salvar no laboratório</button>
+      <button class="btn block" data-act="stressThis">${ic('storm')}Estressar a seed deste mundo</button>`)}`;
+  return head('Sessão gravada', `Mundo ${String(S.lab.replayWorld + 1).padStart(2, '0')} · seed ${w.seed}`, '<span class="pill">somente leitura</span>') + `<div class="side-body">${body}</div>`;
+}
+
+/* ------------------------------ Gavetas e modais ------------------------------ */
+function renderLayer() {
+  const L = $('#layer');
+  if (S.drawer) { L.innerHTML = `<div class="scrim" data-act="closeLayer">${drawerContent(S.drawer)}</div>`; return; }
+  if (S.modal) { L.innerHTML = `<div class="scrim" data-act="closeLayer">${modalContent(S.modal)}</div>`; return; }
+  L.innerHTML = '';
+}
+function drawerShell(title, desc, body, foot) { return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>${title}</h3><p>${desc}</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div><div class="drawer-b">${body}</div>${foot ? `<div class="drawer-f">${foot}</div>` : ''}</div>`; }
+function drawerContent(d) {
+  if (d === 'runs') {
+    const runs = [['run-4643592898594514058', '20/11 · 23:41', '9.780.201', 87], ['run-1180043329117820551', '19/11 · 17:05', '4.112.990', 142], ['run-8820194417730016622', '17/11 · 10:22', '1.006.400', 64], ['run-0937716650021184417', '12/11 · 21:58', '312.050', 211]];
+    return drawerShell('Estado da sessão', 'Checkpoints preservam o mundo, as configurações e a telemetria. Carregar substitui a run atual.',
+      `<div class="row"><input class="txt" placeholder="Nome da run" value="run-${S.runId}-${fmt(S.tick).replace(/\./g, '')}"><button class="btn pri" data-act="saveRun">${ic('save')}Salvar estado atual</button></div>
+       <div class="row"><span class="muted">${ic('search')}</span><input class="txt" placeholder="Buscar runs salvas…"></div>
+       <div class="list">${runs.map(([n, d, t, p]) => `<div class="li"><div class="meta"><b class="mono">${n}</b><small>${d} · tick ${t} · ${p} células</small></div><button class="btn sm" data-act="loadRun" data-v="${n}">Carregar</button></div>`).join('')}</div>`,
+      `<button class="btn ghost" data-act="msg" data-v="Lista atualizada">Atualizar lista</button><button class="btn" data-act="closeLayer">Fechar</button>`);
+  }
+  if (d === 'presets' || d === 'mapPresets') {
+    const isMap = d === 'mapPresets';
+    const items = isMap ? ['Câmara padrão', 'Duas ilhas de sol', 'Corredor estreito'] : ['Escassez moderada', 'Preset Mania', 'Corrente forte', 'Val 2 · doação'];
+    return drawerShell(isMap ? 'Presets de mapa' : 'Presets de sessão', isMap ? 'Guardam paredes, iluminação solar e correnteza.' : 'Salvam parâmetros e mapa. Não salvam o estado vivo da run.',
+      `<div class="row"><input class="txt" placeholder="Nome do preset"><button class="btn pri" data-act="msg" data-v="Preset salvo">Salvar atual</button></div>
+       <div class="list">${items.map(n => `<div class="li"><div class="meta"><b>${n}</b><small>${isMap ? 'paredes · sol · correnteza' : 'parâmetros · mapa · configuração neural'}</small></div><button class="btn sm" data-act="msg" data-v="Preset “${n}” carregado · revise e aplique">Carregar</button><button class="btn sm ghost danger" data-act="modal" data-v="delPreset">Apagar</button></div>`).join('')}</div>`,
+      `<button class="btn" data-act="closeLayer">Fechar</button>`);
+  }
+  return '';
+}
+function modalContent(m) {
+  const shell = (t, p, f) => `<div class="modal" data-stop="1"><div class="modal-b"><h3>${t}</h3>${p}</div><div class="modal-f">${f}</div></div>`;
+  if (m === 'restart') return shell('Reiniciar a sessão?', `<p>A run atual (#${S.runId}, tick ${fmt(S.tick)}) será descartada e uma nova começa com as condições iniciais${initPending().length ? ' editadas' : ''}.</p><p>Salve antes se quiser voltar a ela.</p>`, `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn" data-act="drawer" data-v="runs">Salvar antes</button><button class="btn pri" data-act="restart">Reiniciar</button>`);
+  if (m === 'headless') return shell('Ativar execução headless?', `<p>A simulação continua, mas a arena deixa de ser desenhada e o motor para de enviar o mundo para a tela. Você verá tick, população e ticks/s.</p><p>Use para medir o teto de cálculo; o estado biológico continua o mesmo.</p>`, `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn pri" data-act="headlessOn">${ic('bolt')}Ativar</button>`);
+  if (m === 'delPreset') return shell('Apagar preset?', '<p>Esta ação não pode ser desfeita.</p>', `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn danger" data-act="msg" data-v="Preset apagado">Apagar</button>`);
+  return '';
+}
+
+/* ------------------------------ Overlays do palco ------------------------------ */
+function renderStage() {
+  const ov = $('#stageOverlay');
+  if (S.mode === 'lab' && S.lab.view !== 'replay') { ov.innerHTML = `<div class="lab"><div class="lab-in">${labView()}</div></div>`; $('#layerChips').innerHTML = ''; $('#camCtl').innerHTML = ''; $('#stageBanner').innerHTML = ''; return; }
+  if (S.headless) {
+    ov.innerHTML = `<div class="headless"><div class="hl-card"><h3>Execução headless</h3><div class="muted">Cálculo ativo sem desenhar a arena nem copiar o mundo para a tela.</div>
+      <div class="hl-big">${ro('Tick', fmt(S.tick), '', 'tick')}${ro('População', cells.length, '', 'cells')}${ro('Ticks/s', fmt(S.tps), '', 'tps')}</div>
+      <div class="hint" style="margin-bottom:14px">O limite de velocidade da interface está suspenso para mostrar o teto de cálculo.</div>
+      <div class="row"><button class="btn" data-act="pause">${ic(S.paused ? 'play' : 'pause')}${S.paused ? 'Retomar' : 'Pausar'}</button><div class="grow"></div><button class="btn pri" data-act="headlessOff">Voltar à visualização <span class="kbd">Esc</span></button></div></div></div>`;
+    return;
+  }
+  if (S.demoFull && S.mode !== 'lab') {
+    ov.innerHTML = `<div class="demofull"><div class="demofull-h"><h2>Demografia da sessão</h2><span class="muted mono">${demoHeader()}</span><div class="grow"></div><div style="width:300px">${segUI('demoWin', [['5k', '5k'], ['30k', '30k'], ['100k', '100k'], ['25%', '25%'], ['Tudo', 'Tudo']], S.demoWin)}</div><button class="btn" data-act="demoFull">${ic('x')}Fechar</button></div>
+      <div class="demogrid">${demoKpis()}${demoCharts(true)}</div></div>`;
+  } else ov.innerHTML = '';
+  // banner
+  let b = '';
+  if (S.insert) b = `<div class="banner">${ic('plus')}<span>Inserir célula <b>${NEURAL.find(n => n.id === S.init.neural).name}</b> · clique no mapa</span><span class="kbd">Esc</span><button class="btn sm ghost" data-act="insert">Cancelar</button></div>`;
+  else if (S.mode !== 'lab' && S.tab === 'mapa' && S.mapTool !== 'none') b = `<div class="banner wa">${ic(S.mapTool === 'eraser' ? 'eraser' : S.mapTool)}<span>Editando mapa · ${{ wall: 'Parede', eraser: 'Borracha', sun: 'Região ensolarada' }[S.mapTool]} · raio ${S.brush}</span>${S.mapDirty ? '<button class="btn sm warn" data-act="applyMap">Aplicar mapa</button>' : ''}<button class="btn sm ghost" data-act="tool" data-v="none">Sair</button></div>`;
+  $('#stageBanner').innerHTML = b;
+  const L = S.layers, chips = [];
+  if (L.chem) chips.push(`<span class="pill">mapa químico · ${L.chemSel} · <span class="mono" data-live="peak2">pico 4,12 ppm</span></span>`);
+  if (L.flow) chips.push(`<span class="pill">corrente · ${S.envApplied.flowModel}</span>`);
+  if (L.sun) chips.push(`<span class="pill">iluminação</span>`);
+  if (L.cones) chips.push(`<span class="pill">cones</span>`);
+  if (L.conflicts) chips.push(`<span class="pill dg">conflitos</span>`);
+  $('#layerChips').innerHTML = chips.join('');
+  $('#camCtl').innerHTML = `<button class="btn sm ${S.follow ? 'pri' : ''}" data-act="follow" title="Seguir célula selecionada">${ic('target')}Seguir</button><button class="btn sm" data-act="fit">${ic('fit')}Encaixar</button><span class="pill mono" style="height:26px;background:rgba(20,23,26,.88)">${Math.round(cam.zoom * 100)}%</span>`;
+}
+
+/* ------------------------------ Laboratório ------------------------------ */
+function labView() {
+  const v = S.lab.view;
+  const crumbs = (items) => `<div class="crumbs">${items.map((it, i) => i < items.length - 1 ? `<a data-act="lab" data-v="${it[1]}">${it[0]}</a><span>›</span>` : `<span style="color:var(--tx)">${it[0]}</span>`).join('')}</div>`;
+  if (v === 'home') return `<h1>Laboratório de Experimentos</h1><p class="lead">Campanhas offline em paralelo, sem renderizar durante o cálculo. Cada mundo grava configuração, resultado e replay.</p>
+    <div class="cards3">
+      <button class="bigcard" data-act="labNew" data-v="seeds">${ic('shuffle')}<b>Varredura de seeds aleatórias</b><span>Mesmo ambiente; vários começos aleatórios. Mostra se uma estratégia é frequente ou foi sorte.</span></button>
+      <button class="bigcard" data-act="labNew" data-v="stress">${ic('storm')}<b>Estressar uma seed por ambiente</b><span>Uma condição inicial de um mundo salvo; o meio varia dentro de faixas.</span></button>
+      <button class="bigcard" data-act="lab" data-v="saved">${ic('folder')}<b>Simulações salvas (6)</b><span>Abrir, reproduzir ou duplicar campanhas concluídas.</span></button>
+    </div>
+    <div style="margin-top:14px" class="hint">Matriz seed × ambiente fica para depois dos dois modos simples.</div>`;
+  if (v === 'config') {
+    const st = S.lab.kind === 'stress';
+    const vrow = (l, mn, mx, on) => `<div class="vary"><span>${l}</span><label class="tog"><input type="checkbox" ${on ? 'checked' : ''}><span class="sw"></span><span class="tl"><small>variar</small></span></label><input class="txt mono" value="${mn}" placeholder="mín."><input class="txt mono" value="${mx}" placeholder="máx."></div>`;
+    return crumbs([['Laboratório', 'home'], [st ? 'Estresse ambiental' : 'Varredura de seeds', 'config']]) +
+      `<h1>${st ? 'Estressar uma seed por ambiente' : 'Varredura de seeds aleatórias'}</h1><p class="lead">${st ? 'Mesma seed de origem; cada mundo recebe um ambiente sorteado.' : 'Mesmo ambiente; cada mundo recebe uma seed inédita automaticamente.'}</p>
+      ${st ? `<div class="panel"><div class="panel-h"><b>Seed de origem</b></div><div class="panel-b one"><div class="li click">${ic('folder')}<div class="meta"><b>Campanha 18 · Mundo 04 · seed 847291530</b><small>células iniciais fixas: 100 · reprodução fixa: 2.500</small></div><button class="btn sm">Trocar</button></div></div></div>` : ''}
+      <div class="panel"><div class="panel-h"><b>${st ? 'Variáveis do ambiente' : 'Ambiente fixo'}</b><div class="grow"></div><button class="btn sm" data-act="msg" data-v="Preset Mania importado: mapa e população preservados">Importar Preset Mania</button></div>
+        ${st ? `<div class="panel-b one">${vrow('Emissão', '0,20', '3,00', true)}${vrow('Vida fito', '300', '4.000', true)}${vrow('Energia alimento', '50', '50', false)}${vrow('Intensidade corrente', '20%', '100%', true)}</div>` :
+        `<div class="panel-b">${['Células iniciais|100', 'Emissão|0,12 / tick', 'Vida fito|900', 'Energia da comida|50', 'Meta de reprodução|2.500', 'Intensidade da corrente|100%'].map(s => { const [l, val] = s.split('|'); return `<div class="field"><div class="field-top"><label>${l}</label><input class="num" value="${val}" style="width:110px"></div></div>`; }).join('')}</div>`}
+      </div>
+      <div class="panel"><div class="panel-h"><b>Encerramento</b></div><div class="panel-b">
+        <div class="field" style="gap:10px"><div class="field-top"><label>Metas experimentais</label><div style="margin-left:auto;width:170px"><div class="seg"><button class="on">todas</button><button>qualquer uma</button></div></div></div>
+          ${[['Geração máxima', '≥ 20', true], ['Nascimentos totais', '≥ 1.000', true], ['População-alvo', '—', false], ['Ticks mínimos', '—', false]].map(([l, val, on]) => `<label class="tog"><input type="checkbox" ${on ? 'checked' : ''}><span class="sw"></span><span class="tl"><span>${l} <span class="mono muted">${val}</span></span></span></label>`).join('')}</div>
+        <div class="field" style="gap:10px"><div class="field-top"><label>Limites de segurança</label><span class="unit">qualquer um encerra</span></div>
+          ${[['Extinção', '', true], ['Teto de ticks', '500.000', true], ['População máxima', '100.000 · proteção técnica', true]].map(([l, val, on]) => `<label class="tog"><input type="checkbox" ${on ? 'checked' : ''}><span class="sw"></span><span class="tl"><span>${l} <span class="mono muted">${val}</span></span></span></label>`).join('')}</div>
+      </div></div>
+      <div class="panel"><div class="panel-b" style="align-items:center"><div class="field"><div class="field-top"><label>${st ? 'Ambientes sorteados' : 'Mundos aleatórios'}</label><input class="num" type="number" data-g="labWorlds" value="${S.lab.worlds}" min="1" max="64"></div><div class="hint">${S.lab.worlds} mundos independentes serão iniciados em paralelo.</div></div>
+        <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="lab" data-v="home">Cancelar</button><button class="btn pri" data-act="labRun">${ic('play')}Executar campanha offline</button></div></div></div>`;
+  }
+  if (v === 'running' || v === 'results') {
+    const done = S.lab.progress.filter(p => p >= 100).length, n = S.lab.progress.length;
+    if (v === 'running') return crumbs([['Laboratório', 'home'], ['Campanha em execução', 'running']]) + `<h1>Campanha em execução</h1><p class="lead">Os mundos calculam em paralelo; nenhuma tela limita os ticks.</p>
+      <div class="row" style="margin-bottom:12px"><span class="pill ac mono" data-live="labDone">${done} de ${n} mundos concluídos</span></div>
+      <div class="worlds">${S.lab.progress.map((p, i) => `<div class="wcard"><div class="row"><b>Mundo ${String(i + 1).padStart(2, '0')}</b><span class="mono muted" data-live="lp${i}">${Math.floor(p)}%</span></div><div class="bar"><i data-live="lb${i}" style="width:${p}%"></i></div></div>`).join('')}</div>`;
+    return crumbs([['Laboratório', 'home'], ['Campanha 19 · resultados', 'results']]) + `<h1>Campanha 19 · resultados</h1><p class="lead">${S.lab.kind === 'seeds' ? 'Varredura de seeds' : 'Estresse ambiental'} · ${n} mundos · metas: geração máxima ≥ 20 E nascimentos ≥ 1.000</p>
+      <div class="panel" style="overflow-x:auto"><table class="res"><thead><tr><th>Mundo</th><th>Seed</th><th>Resultado</th><th>Encerrado por</th><th>Tick</th><th>População</th><th>Nascimentos</th><th></th></tr></thead><tbody>
+      ${S.lab.results.map((r, i) => `<tr><td>Mundo ${String(i + 1).padStart(2, '0')}</td><td class="mono">${r.seed}</td><td><span class="pill ${r.ok ? 'ok' : 'dg'}">${r.ok ? 'meta alcançada' : 'limite de segurança'}</span></td><td>${r.reason}</td><td class="mono">${fmt(r.tick)}</td><td class="mono">${r.pop}</td><td class="mono">${fmt(r.births)}</td><td><button class="btn sm" data-act="replay" data-v="${i}">${ic('play')}Replay</button></td></tr>`).join('')}
+      </tbody></table></div><div class="row"><button class="btn" data-act="msg" data-v="Campanha salva no laboratório">${ic('save')}Salvar campanha</button><button class="btn ghost" data-act="lab" data-v="home">Nova campanha</button></div>`;
+  }
+  if (v === 'saved') return crumbs([['Laboratório', 'home'], ['Simulações salvas', 'saved']]) + `<h1>Simulações salvas</h1><p class="lead">Cada arquivo preserva configuração, resultados e reprodução visual.</p>
+    <div class="list">${[['Campanha 18', 'Estresse ambiental · 50 mundos · 14/11'], ['Campanha 17', 'Varredura de seeds · 100 mundos · 12/11'], ['Campanha 16', 'Varredura de seeds · 20 mundos · 10/11'], ['Campanha 15', 'Estresse ambiental · 30 mundos · 02/11'], ['Campanha 14', 'Varredura de seeds · 8 mundos · 28/10'], ['Campanha de teste', 'Varredura de seeds · 4 mundos · 21/10']].map(([n, d]) => `<div class="li">${ic('flask')}<div class="meta"><b>${n}</b><small>${d}</small></div><button class="btn sm" data-act="openCampaign">Abrir</button><button class="btn sm ghost" data-act="msg" data-v="${n} duplicada como nova configuração">Duplicar</button></div>`).join('')}</div>`;
+  return '';
+}
+
+/* ------------------------------ Barra de status ------------------------------ */
+function renderStatus() {
+  const m = S.msg ? `<span class="msg ${S.msg.kind || ''}">${S.msg.text}</span>` : '';
+  $('#status').innerHTML = S.mode === 'lab' ? `${m}<span class="proto">Protótipo de navegação · dados fictícios</span>` :
+    `<span class="mono" data-live="pubhz">pub. 58 Hz</span><span class="mono" data-live="fps">60 FPS</span>${envPending().length ? `<span style="color:var(--wa)">${envPending().length} ${envPending().length === 1 ? 'alteração não aplicada' : 'alterações não aplicadas'}</span>` : ''}${S.insert ? '<span style="color:var(--ac)">inserção armada</span>' : ''}${m}
+     <span class="proto"><span class="kbd">Espaço</span> pausa · <span class="kbd">1–7</span> velocidade · <span class="kbd">[ ]</span> células · <span class="kbd">Esc</span> cancela · protótipo, dados fictícios</span>`;
+}
+function say(text, kind = '') { S.msg = { text, kind }; renderStatus(); clearTimeout(say.t); say.t = setTimeout(() => { S.msg = null; renderStatus(); }, 4500); }
+
+function renderAll() { renderTop(); renderRail(); renderPanel(); renderStage(); renderLayer(); renderStatus(); }
+
+/* ------------------------------ Ações ------------------------------ */
+function setField(path, val) { const [g, k] = path.split('.'); S[g][k] = val; }
+const ACT = {
+  mode(v) { S.mode = v; S.speedMenu = false; if (v === 'lab' && S.lab.view === 'replay') S.lab.view = 'results'; S.demoFull = false; renderAll(); },
+  tab(v) { if (S.mode === 'lab') { S.lab.replayTab = v; S.collapsed = false; } else { if (S.tab === v && !S.collapsed) { S.collapsed = true; } else { S.tab = v; S.collapsed = false; } if (v !== 'mapa') S.mapTool = 'none'; } renderRail(); renderPanel(); renderStage(); },
+  collapse() { S.collapsed = !S.collapsed; renderRail(); if (!S.collapsed) renderPanel(); },
+  pause() { S.paused = !S.paused; renderTop(); if (S.headless) renderStage(); say(S.paused ? 'Simulação pausada' : 'Simulação retomada'); },
+  speedMenu() { S.speedMenu = !S.speedMenu; renderTop(); },
+  speed(v) { S.speed = +v; S.speedMenu = false; renderTop(); say('Velocidade ' + SPEEDS[S.speed]); },
+  apply() {
+    const ch = envPending(); if (!ch.length) return;
+    const label = ch.map(k => ENV_LABELS[k]).join(', ');
+    ch.forEach(k => { S.events.push({ idx: SERIES.pop.length - 1, tick: S.tick, label: `${ENV_LABELS[k]}: ${S.envApplied[k]} → ${S.env[k]}` }); });
+    S.envApplied = { ...S.env }; renderAll(); say(`Aplicado no tick ${fmt(S.tick)} · ${label}`, 'ok');
+  },
+  revert() { S.env = { ...S.envApplied }; S.init = { ...S.initApplied }; renderAll(); say('Campos revertidos ao último valor aplicado'); },
+  askRestart() { S.modal = 'restart'; S.drawer = null; renderLayer(); },
+  restart() {
+    S.initApplied = { ...S.init }; S.envApplied = { ...S.env }; S.modal = null; S.runId = String(Math.floor(rand(1e6, 9e6))); S.tick = 0; S.events = [];
+    cells = []; food = []; const n = S.init.amadeus ? 1 : Math.min(S.init.cells, 200);
+    for (let i = 0; i < n; i++) { const [x, y] = S.init.amadeus ? [W / 2, H / 2] : spawnAround(); cells.push(mkCell(x, y)); }
+    for (let i = 0; i < 200; i++) { const [x, y] = spawnAround(); food.push({ x, y, age: 0 }); }
+    S.selected = cells[0]?.id; for (const k in SERIES) SERIES[k] = SERIES[k].slice(-1); pushSample(); renderAll(); say(`Nova run #${S.runId} iniciada`, 'ok');
+  },
+  newSeed() { S.init.seed = String(Math.floor(Math.random() * 9e18)).slice(0, 19); renderPanel(); renderTop(); renderRail(); },
+  neural(v) { S.init.neural = v; renderPanel(); renderTop(); renderRail(); },
+  insert() { S.insert = !S.insert; if (S.insert) S.mapTool = 'none'; renderPanel(); renderStage(); renderStatus(); if (!S.insert) say('Inserção de célula cancelada'); },
+  setf(v, t) { setField(t.dataset.f, v); renderPanel(); renderTop(); renderRail(); renderStatus(); },
+  sec(v) { const cur = S.sections[v] ?? true; S.sections[v] = !cur; const el = document.querySelector(`[data-act="sec"][data-v="${v}"]`)?.parentElement; if (el) el.classList.toggle('closed', cur); },
+  cgroup(v) { S.cellGroups[v] = !S.cellGroups[v]; renderPanel(); },
+  ui(v, t) { S[t.dataset.k] = v; renderPanel(); if (S.demoFull) renderStage(); },
+  drawer(v) { S.drawer = v; S.modal = null; renderLayer(); },
+  modal(v) { S.modal = v; S.drawer = null; renderLayer(); },
+  closeLayer(v, t, e) { if (t.classList.contains('scrim') && e.target.closest('[data-stop]')) return; S.drawer = null; S.modal = null; renderLayer(); },
+  saveRun() { S.drawer = null; renderLayer(); say(`Estado salvo · run-${S.runId} · tick ${fmt(S.tick)}`, 'ok'); },
+  loadRun(v) { S.drawer = null; renderLayer(); say(`Run ${v} carregada`, 'ok'); },
+  msg(v) { S.modal = null; say(v, 'ok'); renderLayer(); },
+  headlessOn() { S.modal = null; S.headless = true; renderLayer(); renderStage(); },
+  headlessOff() { S.headless = false; renderStage(); },
+  showConflicts() { S.layers.conflicts = true; renderStage(); say('Camada “conflitos de densidade” ligada'); },
+  layerOn(v) { S.layers[v] = true; renderStage(); say('Camada ligada: ' + v); },
+  chemSel(v) { S.layers.chemSel = v; S.layers.chem = true; renderPanel(); renderStage(); },
+  tool(v) { S.mapTool = v; S.insert = false; renderPanel(); renderStage(); },
+  applyMap() { wallGrid = editWall.slice(); sunGrid = editSun.slice(); S.mapDirty = false; undoStack = []; redoStack = []; buildMapCanvases(); renderPanel(); renderRail(); renderStage(); say('Mapa aplicado ao mundo', 'ok'); },
+  undo() { if (!undoStack.length) return; redoStack.push([editWall.slice(), editSun.slice()]); [editWall, editSun] = undoStack.pop(); S.mapDirty = true; buildMapCanvases(); renderPanel(); },
+  redo() { if (!redoStack.length) return; undoStack.push([editWall.slice(), editSun.slice()]); [editWall, editSun] = redoStack.pop(); S.mapDirty = true; buildMapCanvases(); renderPanel(); },
+  cellNav(v) { if (!cells.length) return; const i = Math.max(0, cells.findIndex(c => c.id === S.selected)); S.selected = cells[(i + (+v) + cells.length) % cells.length].id; renderPanel(); },
+  follow() { S.follow = !S.follow; if (S.follow && !S.selected && cells[0]) S.selected = cells[0].id; renderStage(); if (S.tab === 'celulas') renderPanel(); },
+  fit() { cam.zoom = 1; cam.cx = W / 2; cam.cy = H / 2; S.follow = false; renderStage(); },
+  openRep(v) { S.selected = +v; S.cellsView = 'ind'; renderPanel(); },
+  demoFull() { S.demoFull = !S.demoFull; renderStage(); },
+  lab(v) { S.lab.view = v; if (v !== 'replay') { S.lab.replayWorld = null; } renderAll(); },
+  labNew(v) { S.lab.kind = v; S.lab.view = 'config'; renderAll(); },
+  labRun() { S.lab.view = 'running'; S.lab.progress = new Array(S.lab.worlds).fill(0).map(() => rand(0, 8)); S.lab.speeds = S.lab.progress.map(() => rand(0.6, 2.2)); renderAll(); },
+  openCampaign() { makeResults(8); S.lab.view = 'results'; renderAll(); },
+  replay(v) { S.lab.replayWorld = +v; S.lab.view = 'replay'; S.lab.replayTab = 'gravada'; S.lab.replayTick = 0; S.lab.replayPlay = true; S.collapsed = false; renderAll(); },
+  replayPlay() { S.lab.replayPlay = !S.lab.replayPlay; renderPanel(); renderStage(); },
+  stressThis() { S.lab.kind = 'stress'; S.lab.view = 'config'; renderAll(); },
+};
+function makeResults(n) {
+  const reasons = ['Metas atingidas', 'Extinção', 'Teto de segurança'];
+  S.lab.results = new Array(n).fill(0).map(() => { const r = Math.random(); const ok = r < 0.62; const reason = ok ? reasons[0] : (r < 0.85 ? reasons[1] : reasons[2]); return { seed: String(Math.floor(rand(1e8, 9e8))), ok, reason, tick: ok ? Math.floor(rand(90000, 400000)) : reason === 'Extinção' ? Math.floor(rand(4000, 60000)) : 500000, pop: reason === 'Extinção' ? 0 : Math.floor(rand(80, 700)), births: Math.floor(rand(200, 4000)), gen: Math.floor(rand(8, 34)) }; });
+}
+
+/* ------------------------------ Eventos globais ------------------------------ */
+document.addEventListener('click', e => {
+  if (S.speedMenu && !e.target.closest('.speed')) { S.speedMenu = false; renderTop(); }
+  const t = e.target.closest('[data-act]'); if (!t) return;
+  if (t.dataset.act !== 'closeLayer' && t.closest('[data-stop]') === null && e.target.closest('[data-stop]')) return;
+  const fn = ACT[t.dataset.act]; if (fn) fn(t.dataset.v, t, e);
+});
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.f) {
+    const path = t.dataset.f; let v;
+    if (t.type === 'checkbox') v = t.checked; else if (t.type === 'text') v = t.value; else { v = parseFloat(t.value); if (isNaN(v)) return; }
+    if (path === 'keepAwake') { S.keepAwake = v; return; }
+    setField(path, v);
+    document.querySelectorAll(`[data-f="${path}"]`).forEach(o => { if (o !== t) { if (o.type === 'checkbox') o.checked = v; else o.value = v; } });
+    document.querySelectorAll(`[data-row="${path}"]`).forEach(r => r.classList.toggle('dirty', isDirty(path)));
+    if (path === 'env.life') { const el = document.querySelector('[data-live="lifeSun"]'); if (el) el.textContent = fmt(Math.round(v * 1.5)) + ' ticks'; }
+    renderTop(); renderRail(); renderStatus();
+    const hp = document.querySelector('.side-head .pill.wa'); const ep = envPending().length;
+    if (S.tab === 'ambiente') { const h = document.querySelector('.side-head'); const old = h.querySelector('.pill'); if (old) old.remove(); if (ep) h.insertAdjacentHTML('beforeend', `<span class="pill wa">${ep} pendente${ep > 1 ? 's' : ''}</span>`); }
+    return;
+  }
+  if (t.dataset.layer) { S.layers[t.dataset.layer] = t.checked; document.querySelectorAll(`[data-layer="${t.dataset.layer}"]`).forEach(o => o.checked = t.checked); renderStage(); return; }
+  if (t.dataset.g === 'brush') { S.brush = +t.value; document.querySelectorAll('[data-g="brush"]').forEach(o => { if (o !== t) o.value = t.value; }); renderStage(); return; }
+  if (t.dataset.g === 'replayTick') { S.lab.replayTick = +t.value; const el = document.querySelector('[data-live="rtick"]'); if (el) el.textContent = 'quadro ' + fmt(S.lab.replayTick); return; }
+  if (t.dataset.g === 'labWorlds') { S.lab.worlds = clamp(+t.value || 1, 1, 64); return; }
+  if (t.dataset.g === 'cellSearch') { const id = +t.value; if (cells.find(c => c.id === id)) { S.selected = id; renderPanel(); } }
+});
+document.addEventListener('keydown', e => {
+  const typing = e.target.matches('input,textarea,select');
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (S.mode !== 'lab') ACT.drawer('runs'); return; }
+  if (e.key === 'Escape') {
+    if (S.drawer || S.modal) { S.drawer = null; S.modal = null; renderLayer(); return; }
+    if (S.headless) { ACT.headlessOff(); return; }
+    if (S.insert) { ACT.insert(); return; }
+    if (S.mapTool !== 'none') { ACT.tool('none'); return; }
+    if (S.demoFull) { ACT.demoFull(); return; }
+    if (S.mode === 'lab' && S.lab.view === 'replay') { ACT.lab('results'); return; }
+    return;
+  }
+  if (typing || S.mode === 'lab') return;
+  if (e.key === ' ') { e.preventDefault(); ACT.pause(); }
+  else if (/^[1-7]$/.test(e.key)) ACT.speed(+e.key - 1);
+  else if (e.key === '[') { ACT.cellNav(-1); if (S.tab !== 'celulas') { S.tab = 'celulas'; S.cellsView = 'ind'; renderRail(); renderPanel(); } }
+  else if (e.key === ']') { ACT.cellNav(1); if (S.tab !== 'celulas') { S.tab = 'celulas'; S.cellsView = 'ind'; renderRail(); renderPanel(); } }
+});
+
+/* Redimensionar a lateral */
+(function () {
+  const r = $('#resizer'); let drag = false;
+  r.addEventListener('mousedown', e => { drag = true; r.classList.add('drag'); e.preventDefault(); });
+  window.addEventListener('mousemove', e => { if (!drag) return; const rail = 56; const w = clamp(window.innerWidth - e.clientX - rail, 320, 560); document.documentElement.style.setProperty('--sw', w + 'px'); });
+  window.addEventListener('mouseup', () => { drag = false; r.classList.remove('drag'); });
+})();
+
+/* ------------------------------ Arena (canvas) ------------------------------ */
+const cv = $('#arena'), ctx = cv.getContext('2d');
+const cam = { zoom: 1, cx: W / 2, cy: H / 2 };
+let view = { s: 1, ox: 0, oy: 0 }, mouse = { x: -1, y: -1, inside: false, down: false, moved: false, sx: 0, sy: 0, btn: 0 };
+const wallCv = document.createElement('canvas'), sunCv = document.createElement('canvas'), chemCv = document.createElement('canvas');
+wallCv.width = sunCv.width = GW; wallCv.height = sunCv.height = GH; chemCv.width = 64; chemCv.height = 36;
+function buildMapCanvases() {
+  const editing = S.mapDirty || (S.tab === 'mapa' && S.mode !== 'lab');
+  const wg = editing ? editWall : wallGrid, sg = editing ? editSun : sunGrid;
+  const wi = wallCv.getContext('2d').createImageData(GW, GH), si = sunCv.getContext('2d').createImageData(GW, GH);
+  for (let i = 0; i < GW * GH; i++) {
+    if (wg[i]) { wi.data[i * 4] = 70; wi.data[i * 4 + 1] = 78; wi.data[i * 4 + 2] = 88; wi.data[i * 4 + 3] = 255; }
+    if (sg[i]) { si.data[i * 4] = 240; si.data[i * 4 + 1] = 200; si.data[i * 4 + 2] = 90; si.data[i * 4 + 3] = 34; }
+  }
+  wallCv.getContext('2d').putImageData(wi, 0, 0); sunCv.getContext('2d').putImageData(si, 0, 0);
+}
+function resize() { const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1; cv.width = Math.max(1, r.width * d); cv.height = Math.max(1, r.height * d); }
+window.addEventListener('resize', resize);
+function computeView() {
+  const d = window.devicePixelRatio || 1, cw = cv.width / d, ch = cv.height / d, pad = 24;
+  const fit = Math.min((cw - pad * 2) / W, (ch - pad * 2) / H);
+  if (S.follow) { const c = selectedCell(); if (c) { cam.cx += (c.x - cam.cx) * 0.15; cam.cy += (c.y - cam.cy) * 0.15; } }
+  view.s = fit * cam.zoom; view.ox = cw / 2 - cam.cx * view.s; view.oy = ch / 2 - cam.cy * view.s;
+}
+const toScreen = (x, y) => [view.ox + x * view.s, view.oy + y * view.s];
+const toWorld = (x, y) => [(x - view.ox) / view.s, (y - view.oy) / view.s];
+function cellAt(wx, wy) { let best = null, bd = 1e9; for (const c of cells) { const d = Math.hypot(c.x - wx, c.y - wy); if (d < radiusOf(c) + 6 / view.s && d < bd) { bd = d; best = c; } } return best; }
+function draw() {
+  const d = window.devicePixelRatio || 1;
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  const cw = cv.width / d, ch = cv.height / d;
+  ctx.clearRect(0, 0, cw, ch);
+  computeView();
+  const [x0, y0] = toScreen(0, 0), ww = W * view.s, hh = H * view.s;
+  ctx.fillStyle = '#121518'; ctx.fillRect(x0, y0, ww, hh);
+  ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, ww, hh); ctx.clip();
+  // grade sutil
+  ctx.strokeStyle = 'rgba(255,255,255,.025)'; ctx.lineWidth = 1;
+  for (let gx = 0; gx <= W; gx += 100) { const [sx] = toScreen(gx, 0); ctx.beginPath(); ctx.moveTo(sx, y0); ctx.lineTo(sx, y0 + hh); ctx.stroke(); }
+  for (let gy = 0; gy <= H; gy += 100) { const [, sy] = toScreen(0, gy); ctx.beginPath(); ctx.moveTo(x0, sy); ctx.lineTo(x0 + ww, sy); ctx.stroke(); }
+  if (S.layers.chem) drawChem(x0, y0, ww, hh);
+  if (S.layers.sun || (S.tab === 'mapa' && S.mapTool === 'sun')) { ctx.imageSmoothingEnabled = true; ctx.drawImage(sunCv, x0, y0, ww, hh); }
+  ctx.imageSmoothingEnabled = false; ctx.drawImage(wallCv, x0, y0, ww, hh);
+  if (S.layers.flow) drawFlow();
+  // fitoplâncton
+  ctx.fillStyle = 'rgba(140,210,140,.85)';
+  for (const f of food) { const [sx, sy] = toScreen(f.x, f.y); ctx.beginPath(); ctx.arc(sx, sy, Math.max(1.2, 3 * view.s), 0, 6.283); ctx.fill(); }
+  // conflitos
+  if (S.layers.conflicts) { ctx.strokeStyle = 'rgba(229,104,107,.85)'; ctx.lineWidth = 1.5; for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) { const a = cells[i], b = cells[j]; const md = (radiusOf(a) + radiusOf(b)) * S.envApplied.acSpace; if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 < md * md) { const [ax, ay] = toScreen(a.x, a.y), [bx, by] = toScreen(b.x, b.y); ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); } } }
+  // células
+  const sel = selectedCell();
+  for (const c of cells) {
+    const [sx, sy] = toScreen(c.x, c.y), r = radiusOf(c) * view.s;
+    if (S.layers.cones) { ctx.strokeStyle = `hsla(${c.hue},60%,60%,${c === sel ? .55 : .12})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx, sy, c.range * view.s, 0, 6.283); ctx.stroke(); if (c === sel) { ctx.setLineDash([3, 4]); for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + k * Math.PI / 2; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.cos(a) * c.range * view.s, sy + Math.sin(a) * c.range * view.s); ctx.stroke(); } ctx.setLineDash([]); } }
+    ctx.fillStyle = `hsla(${c.hue},55%,58%,.88)`; ctx.beginPath(); ctx.arc(sx, sy, Math.max(2, r), 0, 6.283); ctx.fill();
+    ctx.fillStyle = `hsla(${c.hue},60%,82%,.9)`; ctx.beginPath(); ctx.arc(sx - r * 0.25, sy - r * 0.25, Math.max(1, r * 0.28), 0, 6.283); ctx.fill();
+  }
+  if (sel) { const [sx, sy] = toScreen(sel.x, sel.y), r = radiusOf(sel) * view.s; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, r + 4, 0, 6.283); ctx.stroke(); ctx.strokeStyle = 'rgba(90,169,230,.6)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx, sy, r + 9, 0, 6.283); ctx.stroke(); }
+  // hover
+  if (mouse.inside && !S.insert && S.mapTool === 'none') { const [wx, wy] = toWorld(mouse.x, mouse.y); const h = cellAt(wx, wy); const tip = $('#tip'); if (h) { const [sx, sy] = toScreen(h.x, h.y), r = radiusOf(h) * view.s; ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx, sy, r + 3, 0, 6.283); ctx.stroke(); tip.style.display = 'block'; tip.style.left = (mouse.x + 14) + 'px'; tip.style.top = (mouse.y + 12) + 'px'; tip.innerHTML = `<b>Célula #${h.id}</b><br><span class="muted">energia</span> <span class="mono">${fmt(h.e)}</span> · <span class="muted">geração</span> <span class="mono">${h.gen}</span><br><span class="muted">${groupName(h.group)} · clique para abrir</span>`; cv.style.cursor = 'pointer'; } else { tip.style.display = 'none'; cv.style.cursor = 'default'; } }
+  else $('#tip').style.display = 'none';
+  // fantasma de inserção
+  if (S.insert && mouse.inside) { const [wx, wy] = toWorld(mouse.x, mouse.y); const ok = !isWall(wx, wy) && wx > 14 && wy > 14 && wx < W - 14 && wy < H - 14 && !cells.some(c => Math.hypot(c.x - wx, c.y - wy) < radiusOf(c) + 10); S.insertOk = ok; ctx.fillStyle = ok ? 'rgba(90,169,230,.35)' : 'rgba(229,104,107,.3)'; ctx.strokeStyle = ok ? '#5aa9e6' : '#e5686b'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 14 * 0.62 * view.s + 2, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.setLineDash([]); cv.style.cursor = ok ? 'crosshair' : 'not-allowed'; }
+  // pincel do mapa
+  if (S.tab === 'mapa' && S.mapTool !== 'none' && mouse.inside && S.mode !== 'lab') { ctx.strokeStyle = S.mapTool === 'eraser' ? '#e5686b' : S.mapTool === 'sun' ? '#e3b341' : '#cfd6dd'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(mouse.x, mouse.y, S.brush * 10 * view.s, 0, 6.283); ctx.stroke(); cv.style.cursor = 'none'; }
+  ctx.restore();
+  ctx.strokeStyle = '#2a3036'; ctx.lineWidth = 1; ctx.strokeRect(x0 + .5, y0 + .5, ww - 1, hh - 1);
+}
+function drawChem(x0, y0, ww, hh) {
+  const g = chemCv.getContext('2d'), img = g.createImageData(64, 36), acc = new Float32Array(64 * 36);
+  const src = S.layers.chemSel === 'PF' ? food : cells;
+  const scale = S.layers.chemSel === 'PF' ? 1 : 3;
+  for (const p of src) { const gx = Math.floor(p.x / W * 64), gy = Math.floor(p.y / H * 36); for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) { const x = gx + dx, y = gy + dy; if (x >= 0 && y >= 0 && x < 64 && y < 36) acc[y * 64 + x] += scale / (1 + dx * dx + dy * dy); } }
+  let m = 0; for (const v of acc) m = Math.max(m, v);
+  const hue = { PG: [90, 169, 230], PF: [110, 205, 120] }[S.layers.chemSel] || [190, 140, 240];
+  for (let i = 0; i < acc.length; i++) { const v = acc[i] / (m || 1); img.data[i * 4] = hue[0]; img.data[i * 4 + 1] = hue[1]; img.data[i * 4 + 2] = hue[2]; img.data[i * 4 + 3] = Math.floor(v * 120); }
+  g.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.drawImage(chemCv, x0, y0, ww, hh);
+}
+function drawFlow() {
+  ctx.fillStyle = 'rgba(160,175,190,.35)';
+  for (let y = 50; y < H; y += 80) for (let x = 50; x < W; x += 80) {
+    if (isWall(x, y)) continue; const [fx, fy] = flowAt(x, y); const m = Math.hypot(fx, fy); if (m < 0.05) continue;
+    const [sx, sy] = toScreen(x, y), a = Math.atan2(fy, fx), L = 9;
+    ctx.save(); ctx.translate(sx, sy); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(L, 0); ctx.lineTo(-L * 0.6, -L * 0.45); ctx.lineTo(-L * 0.6, L * 0.45); ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+}
+function paint(wx, wy) {
+  const gx = Math.floor(wx / 10), gy = Math.floor(wy / 10), r = S.brush;
+  for (let y = gy - r; y <= gy + r; y++) for (let x = gx - r; x <= gx + r; x++) {
+    if (x < 0 || y < 0 || x >= GW || y >= GH || (x - gx) ** 2 + (y - gy) ** 2 > r * r) continue;
+    const i = y * GW + x;
+    if (S.mapTool === 'wall') editWall[i] = 1; else if (S.mapTool === 'eraser') { editWall[i] = 0; editSun[i] = 0; } else if (S.mapTool === 'sun') editSun[i] = 1;
+  }
+  if (!S.mapDirty) { S.mapDirty = true; renderPanel(); renderRail(); renderStage(); }
+  buildMapCanvases();
+}
+cv.addEventListener('mousemove', e => {
+  const r = cv.getBoundingClientRect(); mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; mouse.inside = true;
+  if (mouse.down) {
+    if (Math.abs(mouse.x - mouse.sx) + Math.abs(mouse.y - mouse.sy) > 4) mouse.moved = true;
+    if (S.tab === 'mapa' && S.mapTool !== 'none' && mouse.btn === 0 && S.mode !== 'lab') { const [wx, wy] = toWorld(mouse.x, mouse.y); paint(wx, wy); }
+    else if (mouse.moved) { cam.cx -= e.movementX / view.s; cam.cy -= e.movementY / view.s; S.follow = false; }
+  }
+});
+cv.addEventListener('mouseleave', () => { mouse.inside = false; mouse.down = false; });
+cv.addEventListener('mousedown', e => {
+  mouse.down = true; mouse.moved = false; mouse.sx = mouse.x; mouse.sy = mouse.y; mouse.btn = e.button;
+  if (e.button === 2 && S.insert) { ACT.insert(); return; }
+  if (S.tab === 'mapa' && S.mapTool !== 'none' && e.button === 0 && S.mode !== 'lab') { undoStack.push([editWall.slice(), editSun.slice()]); redoStack = []; const [wx, wy] = toWorld(mouse.x, mouse.y); paint(wx, wy); }
+});
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('mouseup', e => {
+  const was = mouse.down && !mouse.moved; mouse.down = false;
+  if (!was || e.button !== 0) return;
+  const [wx, wy] = toWorld(mouse.x, mouse.y);
+  if (S.insert) {
+    if (!S.insertOk) { say('Posição inválida: parede, borda ou célula ocupando o espaço'); return; }
+    const c = mkCell(wx, wy); c.inserted = true; c.e = 1500; c.gen = 0; cells.push(c); S.selected = c.id; S.insert = false;
+    say(`Célula #${c.id} inserida · ${NEURAL.find(n => n.id === S.init.neural).name}`, 'ok'); renderStage(); renderPanel(); renderStatus(); return;
+  }
+  if (S.tab === 'mapa' && S.mapTool !== 'none') return;
+  const h = cellAt(wx, wy);
+  if (h) { S.selected = h.id; if (S.mode === 'lab') S.lab.replayTab = 'celulas'; else S.tab = 'celulas'; S.cellsView = 'ind'; S.collapsed = false; renderRail(); renderPanel(); renderStage(); }
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault(); const [wx, wy] = toWorld(mouse.x, mouse.y);
+  cam.zoom = clamp(cam.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12), 1, 8);
+  const d = window.devicePixelRatio || 1, cw = cv.width / d, ch = cv.height / d, fit = Math.min((cw - 48) / W, (ch - 48) / H), s = fit * cam.zoom;
+  cam.cx = wx - (mouse.x - cw / 2) / s; cam.cy = wy - (mouse.y - ch / 2) / s;
+  if (cam.zoom === 1) { cam.cx = W / 2; cam.cy = H / 2; }
+  renderStage();
+}, { passive: false });
+
+function countConflicts() { let n = 0; for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) { const a = cells[i], b = cells[j], md = (radiusOf(a) + radiusOf(b)) * S.envApplied.acSpace; if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 < md * md) n++; } return n; }
+
+/* ------------------------------ Laço principal ------------------------------ */
+let last = performance.now(), liveT = 0, sampleT = 0, frames = 0, fpsT = 0, fps = 60;
+function loop(now) {
+  const dt = now - last; last = now; frames++; fpsT += dt;
+  if (fpsT > 1000) { fps = Math.round(frames * 1000 / fpsT); frames = 0; fpsT = 0; }
+  const running = S.mode === 'sessao' ? !S.paused : (S.lab.view === 'replay' && S.lab.replayPlay);
+  if (running) {
+    stepWorld();
+    if (S.mode === 'sessao') {
+      const mult = [1, 10, 100, 1000, 10000, 100000, 1000000][S.speed];
+      S.tps = S.headless ? Math.round(1650 + Math.random() * 90) : Math.round(Math.min(mult * 10, 1052) + Math.random() * 20);
+      S.tick += Math.round(S.tps * dt / 1000);
+    } else { const w = S.lab.results[S.lab.replayWorld]; S.lab.replayTick = Math.min(w.tick, S.lab.replayTick + 400); }
+  } else S.tps = 0;
+  if (S.mode === 'lab' && S.lab.view === 'running') {
+    let changed = false, done = 0;
+    S.lab.progress = S.lab.progress.map((p, i) => { const np = Math.min(100, p + S.lab.speeds[i] * dt / 60); if (Math.floor(np) !== Math.floor(p)) changed = true; if (np >= 100) done++; return np; });
+    if (changed) S.lab.progress.forEach((p, i) => { const a = document.querySelector(`[data-live="lp${i}"]`), b = document.querySelector(`[data-live="lb${i}"]`); if (a) a.textContent = Math.floor(p) + '%'; if (b) b.style.width = p + '%'; });
+    const ld = document.querySelector('[data-live="labDone"]'); if (ld) ld.textContent = `${done} de ${S.lab.progress.length} mundos concluídos`;
+    if (done === S.lab.progress.length) { makeResults(S.lab.progress.length); S.lab.view = 'results'; renderAll(); say('Campanha concluída', 'ok'); }
+  }
+  if (!S.headless && !(S.mode === 'lab' && S.lab.view !== 'replay')) draw();
+  liveT += dt; sampleT += dt;
+  if (liveT > 250) { liveT = 0; updateLive(); }
+  if (sampleT > 2000 && S.mode === 'sessao' && !S.paused) { sampleT = 0; pushSample(); if (S.tab === 'demografia' && !S.collapsed) renderPanel(); if (S.demoFull) renderStage(); }
+  requestAnimationFrame(loop);
+}
+function updateLive() {
+  const set = (k, v) => document.querySelectorAll(`[data-live="${k}"]`).forEach(el => el.textContent = v);
+  set('tick', fmt(S.tick)); set('cells', cells.length); set('tps', fmt(S.tps)); set('food', food.length); set('fps', fps + ' FPS'); set('pubhz', `pub. ${S.headless ? 0 : Math.min(60, fps - 2)} Hz`); set('pub', `${S.headless ? 0 : Math.min(60, fps - 2)} Hz`);
+  set('rtick', 'quadro ' + fmt(S.lab.replayTick));
+  if (S.tab === 'ambiente') set('conflicts', countConflicts() + ' pares em conflito');
+  const peak = `pico ${fmt(3 + Math.random() * 2, 2)} ppm`; set('peak', peak); set('peak2', peak);
+  const c = selectedCell();
+  if (c && S.tab === 'celulas') { set('cE', `${fmt(c.e, 1)} / ${fmt(S.envApplied.limit)}`); set('cAge', `${fmt(c.age)} / ${fmt(c.life)}`); set('cKids', c.kids); const b = document.querySelector('[data-live="cEbar"]'); if (b) b.style.width = clamp(c.e / S.envApplied.limit * 100, 0, 100) + '%'; document.querySelectorAll('[data-nn]').forEach(n => { if (!n.dataset.nn) return; const v = Math.random() * 2 - 1; n.setAttribute('fill', v > 0.25 ? 'var(--ok)' : v < -0.25 ? 'var(--dg)' : 'var(--mu)'); n.setAttribute('r', 3 + Math.abs(v) * 2); }); }
+}
+
+/* ------------------------------ Início ------------------------------ */
+initWorld(); buildMapCanvases(); resize(); renderAll(); requestAnimationFrame(loop);
+const _origRenderPanel = renderPanel;
+renderPanel = function () { _origRenderPanel(); buildMapCanvases(); };
+</script>
+</body>
+</html>

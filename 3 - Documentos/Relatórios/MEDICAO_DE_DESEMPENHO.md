@@ -8,7 +8,7 @@ rápida não altere o estado biológico da simulação.
 
 O binário headless `benchmark_simulacao` cria uma população inicial usando:
 
-- os genomas da população final da run salva mais avançada em `data/runs/`;
+- os genomas da população final da run salva mais avançada em `4 - Dados/runs/`;
 - a configuração neural `ValidatedV2` sobre esses fundadores;
 - seed fixa, mapa padrão e corrente Clássica em intensidade 1.
 
@@ -29,7 +29,7 @@ alterou a ordem nem as regras do mundo.
 
 ## Executar
 
-No diretório raiz:
+Dentro de `5 - Código-fonte/`:
 
 ```powershell
 cargo run --release --bin benchmark_simulacao -- --cenario realista
@@ -44,7 +44,7 @@ Opções úteis:
 --sem-arquivo
 ```
 
-O relatório bruto em JSON é criado em `data/benchmarks/`. Ele é deliberadamente
+O relatório bruto em JSON é criado em `4 - Dados/benchmarks/`. Ele é deliberadamente
 ignorado pelo Git: contém a medição específica da máquina. A linha de base
 interpretada fica neste documento e pode ser atualizada quando houver uma
 mudança intencional de hardware ou de cenário.
