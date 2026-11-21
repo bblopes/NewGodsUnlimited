@@ -21,7 +21,9 @@ história já existente do projeto.
 Há duas passagens independentes por repetição:
 
 1. `World::tick()` mede ticks por segundo sem relógios internos.
-2. `World::tick_profiled()` mede as 13 etapas do mesmo tick.
+2. `World::tick_profiled()` mede as etapas do mesmo tick (desde a V3, 16 linhas:
+   feromônios separados em células e PF, sensores em grades/contato, visão e
+   químicos).
 
 Ao fim, o estado completo é serializado e resumido com um hash. Os hashes das
 duas passagens precisam coincidir. Isso verifica que a instrumentação não
@@ -38,7 +40,7 @@ cargo run --release --bin benchmark_simulacao -- --cenario realista
 Opções úteis:
 
 ```text
---cenario base|realista|estresse
+--cenario base|realista|estresse|sessao
 --populacao N --ticks N --aquecimento N --repeticoes N --seed N
 --run-validado CAMINHO
 --sem-arquivo
@@ -125,3 +127,11 @@ anterior, camada por camada.
 O próximo alvo é `World::update_sensors()`, agora o maior custo no cenário de
 estresse (33,6%). Antes de alterá-lo, devemos separar no perfil as consultas de
 alimento, contato, corrente e química para não otimizar o componente errado.
+
+## Medição no GitHub (desde a V3)
+
+O workflow **Medir desempenho** roda a cada push em branches `v3-*` (ou à mão
+na aba Actions) e mede `realista`, `estresse` e `sessao` com 100 e 200
+células, usando `5 - Código-fonte/dados-de-teste/populacao-referencia.ecosrun`.
+O resultado fica no log e no resumo da execução. A leitura de 21/11/2026 e o
+plano de otimização estão em `AVALIACAO_DE_DESEMPENHO.md`.
