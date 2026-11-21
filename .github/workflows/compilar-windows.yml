@@ -1,0 +1,76 @@
+# Compila o New Gods Unlimited para Windows e publica a Release.
+#
+# Dispara ao enviar uma tag de versão (v1.1.0, v1.1.0-teste.1) ou manualmente
+# pela aba Actions, informando a versão. O .exe sai com o nome final:
+#   New Gods Unlimited V1.1.0-teste.1.exe
+name: Compilar versão Windows
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      versao:
+        description: 'Versão sem o v (ex.: 1.1.0 ou 1.1.0-teste.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: '5 - Código-fonte'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust estável
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Definir versão
+        id: versao
+        env:
+          ENTRADA: ${{ inputs.versao }}
+          REF: ${{ github.ref_name }}
+        run: |
+          $v = if ($env:ENTRADA) { $env:ENTRADA } else { $env:REF -replace '^v', '' }
+          if ($v -notmatch '^\d+\.\d+\.\d+(-teste\.\d+)?$') { throw "Versão inválida: $v (use 1.2.0 ou 1.2.0-teste.1)" }
+          "numero=$v" >> $env:GITHUB_OUTPUT
+          "arquivo=New Gods Unlimited V$v.exe" >> $env:GITHUB_OUTPUT
+          if ($v -match '-teste') { "teste=true" >> $env:GITHUB_OUTPUT } else { "teste=false" >> $env:GITHUB_OUTPUT }
+
+      - name: Compilar
+        run: cargo build --release --locked --bin new_gods_unlimited
+
+      - name: Dar o nome da versão
+        run: |
+          New-Item -ItemType Directory -Force -Path ../saida | Out-Null
+          Copy-Item target/release/new_gods_unlimited.exe "../saida/${{ steps.versao.outputs.arquivo }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: New Gods Unlimited V${{ steps.versao.outputs.numero }}
+          path: saida/*.exe
+
+      - name: Publicar na Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMERO: ${{ steps.versao.outputs.numero }}
+          ARQUIVO: ${{ steps.versao.outputs.arquivo }}
+          TESTE: ${{ steps.versao.outputs.teste }}
+        run: |
+          $tag = "v$env:NUMERO"
+          $exe = "../saida/$env:ARQUIVO"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $exe --clobber
+          } else {
+            $extra = @()
+            if ($env:TESTE -eq 'true') { $extra += '--prerelease' }
+            gh release create $tag $exe --title "New Gods Unlimited V$env:NUMERO" --generate-notes --target $env:GITHUB_SHA @extra
+          }
