@@ -32,7 +32,8 @@ const IC = {
   cursor: '<path d="M5 3l14 8-6 2-2 6z"/>', undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
   maxim: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>', flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/><path d="M7.5 15h9"/>',
   shuffle: '<path d="M4 7h3l10 10h3M4 17h3l3-3M14 10l3-3h3"/><path d="M18 5l2 2-2 2M18 15l2 2-2 2"/>', folder: '<path d="M3 6h6l2 2h10v11H3z"/>',
-  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>', storm: '<path d="M7 16a4 4 0 1 1 .8-7.9A6 6 0 0 1 19 10a3.5 3.5 0 0 1-1 6.9"/><path d="M12 14l-2 4h3l-2 4"/>',
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  bio: '<path d="M12 21c-4-2-7-6-7-11a7 7 0 0 1 14 0c0 5-3 9-7 11z"/><path d="M12 21V9M12 13l-3-3M12 16l3-3"/>', storm: '<path d="M7 16a4 4 0 1 1 .8-7.9A6 6 0 0 1 19 10a3.5 3.5 0 0 1-1 6.9"/><path d="M12 14l-2 4h3l-2 4"/>',
 };
 const ic = n => `<svg class="i" viewBox="0 0 24 24">${IC[n] || ''}</svg>`;
 
@@ -40,7 +41,7 @@ const ic = n => `<svg class="i" viewBox="0 0 24 24">${IC[n] || ''}</svg>`;
 const SPEEDS = ['1×', '10×', '100×', '1.000×', '10.000×', '100.000×', '1.000.000×'];
 const MENTAL_SCALE = 40000;
 const TABS = [
-  { id: 'sessao', label: 'Sessão', icon: 'session' }, { id: 'ambiente', label: 'Ambiente', icon: 'env' },
+  { id: 'sessao', label: 'Sessão', icon: 'session' }, { id: 'biologia', label: 'Biologia', icon: 'bio' }, { id: 'ambiente', label: 'Ambiente', icon: 'env' },
   { id: 'mapa', label: 'Mapa', icon: 'map' }, { id: 'celulas', label: 'Células', icon: 'cells' },
   { id: 'demografia', label: 'Demografia', icon: 'demo' }, { id: 'camadas', label: 'Camadas', icon: 'layers' },
 ];
@@ -63,7 +64,7 @@ const S = {
   mode: 'sessao', tab: 'sessao', collapsed: false, speedMenu: false, keepAwake: true,
   insert: false, insertOk: false, selected: null, follow: false,
   cellsView: 'ind', genView: 'resumo', circView: 'con', demoWin: '30k', demoFull: false,
-  cellGroups: { resumo: true, corpo: false, sensores: false, rede: true, genoma: false },
+  cellGroups: { resumo: true, corpo: false, sensores: false, rede: true, genoma: false }, showRecords: false,
   layers: { flow: false, cones: false, conflicts: false, sun: true, chem: false, chemSel: 'PF' },
   sections: {}, mapTool: 'none', brush: 3,
   drawer: null, modal: null,
@@ -83,6 +84,9 @@ const getF = path => { if (!path.includes('.')) return S[path]; const [g, k] = p
 const setF = (path, v) => { const [g, k] = path.split('.'); S[g][k] = v; };
 const isDirty = path => { const [g, k] = path.split('.'); if (g === 'env') return S.env[k] !== S.envApplied[k]; if (g === 'init') return S.init[k] !== S.initApplied[k]; return false; };
 const envPending = () => Object.keys(S.env).filter(k => S.env[k] !== S.envApplied[k]);
+const BIO_KEYS = ['min_repro', 'limit', 'mental', 'emission', 'lifetime', 'phyto_rate', 'food_energy'];
+const bioPending = () => envPending().filter(k => BIO_KEYS.includes(k));
+const physPending = () => envPending().filter(k => !BIO_KEYS.includes(k));
 const initPending = () => Object.keys(S.init).filter(k => S.init[k] !== S.initApplied[k]);
 
 function section(key, title, body, meta = '', defOpen = true) {
@@ -140,7 +144,7 @@ function renderTop() {
 /* ------------------------------ Trilho de abas ------------------------------ */
 function renderRail() {
   const lab = S.mode === 'lab';
-  const dots = { ambiente: envPending().length > 0, sessao: initPending().length > 0, mapa: !!F?.map_dirty };
+  const dots = { biologia: bioPending().length > 0, ambiente: physPending().length > 0, sessao: initPending().length > 0, mapa: !!F?.map_dirty };
   $('#rail').innerHTML = lab ? '' : TABS.map(t => `<button class="${t.id === S.tab && !S.collapsed ? 'on' : ''}" data-act="tab" data-v="${t.id}" title="${t.label}">${ic(t.icon)}${t.label}${dots[t.id] ? '<span class="dot"></span>' : ''}</button>`).join('') +
     `<div class="sp"></div><button data-act="collapse" title="${S.collapsed ? 'Abrir painel' : 'Recolher painel'}">${ic(S.collapsed ? 'collapse' : 'expand')}${S.collapsed ? 'Abrir' : 'Recolher'}</button>`;
   $('#main').classList.toggle('collapsed', S.collapsed || lab);
@@ -152,7 +156,7 @@ function renderRail() {
 function renderPanel() {
   if (S.mode === 'lab') { $('#sideInner').innerHTML = ''; return; }
   const keep = $('.side-body')?.scrollTop || 0;
-  const fn = { sessao: tabSessao, ambiente: tabAmbiente, mapa: tabMapa, celulas: tabCelulas, demografia: tabDemografia, camadas: tabCamadas }[S.tab];
+  const fn = { sessao: tabSessao, biologia: tabBiologia, ambiente: tabAmbiente, mapa: tabMapa, celulas: tabCelulas, demografia: tabDemografia, camadas: tabCamadas }[S.tab];
   $('#sideInner').innerHTML = fn();
   const sb = $('.side-body'); if (sb && renderPanel.lastTab === S.tab) sb.scrollTop = keep;
   renderPanel.lastTab = S.tab;
@@ -194,20 +198,26 @@ function tabSessao() {
   return head('Sessão', `run #${String(F?.run_id ?? '').slice(-7)}`) + `<div class="side-body">${body}</div>`;
 }
 
-function tabAmbiente() {
+function pendingPill(list) { const n = list.length; return n ? `<span class="pill wa">${n} pendente${n > 1 ? 's' : ''}</span>` : ''; }
+function tabBiologia() {
   const body = `
-    ${section('a-cel', 'Células', `
+    ${section('b-cel', 'Células', `
       ${slider('env.min_repro', 'Mínimo reprodução', 1, 5000, 1, 'energia', '<span>acima disso o motor Reproduzir é aceito</span>')}
       ${slider('env.limit', 'Limite obrigatório', 100, 20000, 50, 'energia', '<span>divisão forçada neste teto</span>')}
       ${slider('env.mental', 'Custo mental', 0, 400, 1, 'por conexão/tick', '<span>100 = 0,0025</span>', MENTAL_SCALE, 0)}
     `)}
-    ${section('a-fito', 'Fitoplâncton', `
+    ${section('b-fito', 'Fitoplâncton', `
       <div class="readouts">${ro('No mapa', fmt(F?.food_count), '', 'food')}${ro('Vida sob sol', fmt(Math.round(S.env.lifetime * 1.5)) + ' ticks', '', 'lifeSun')}</div>
       ${slider('env.emission', 'Nascimento por abiogênese', 0, 1, 0.01, 'fito/tick')}
       ${slider('env.lifetime', 'Vida-base sem sol', 10, 6000, 10, 'ticks', '<span>sob sol recebe 1,5×</span>')}
       ${slider('env.phyto_rate', 'Multiplicação sob luz', 0, 2, 0.01, '%/tick', '', 100, 3)}
       ${slider('env.food_energy', 'Energia por fito', 1, 500, 1, 'energia')}
-    `)}
+    `)}`;
+  return head('Biologia', 'Células e fitoplâncton · valem ao aplicar', `<span data-pending="bio">${pendingPill(bioPending())}</span>`) + `<div class="side-body">${body}</div>`;
+}
+
+function tabAmbiente() {
+  const body = `
     ${section('a-corr', 'Corrente', `
       ${toggle('env.flow_on', 'Corrente ligada')}
       ${slider('env.flow_intensity', 'Intensidade', 0, 100, 1, '%', '', 100, 0)}
@@ -220,8 +230,7 @@ function tabAmbiente() {
       ${slider('env.ac_distance', 'Espaço mínimo', 1, +(INFO.max_exclusion / INFO.min_exclusion).toFixed(2), 0.05, '× contato', '', 1 / INFO.min_exclusion, 2)}
       <div class="li"><div class="meta"><b class="mono" data-live="conflicts">${fmt(F?.crowding_pairs)} pares em conflito</b><small>abaixo do espaço mínimo</small></div><button class="btn sm" data-act="layerOn" data-v="conflicts">${ic('eye')}Ver na arena</button></div>
     `)}`;
-  const ep = envPending().length;
-  return head('Ambiente', 'Regras do mundo · valem ao aplicar', ep ? `<span class="pill wa">${ep} pendente${ep > 1 ? 's' : ''}</span>` : '') + `<div class="side-body">${body}</div>`;
+  return head('Ambiente', 'Física do mundo · valem ao aplicar', `<span data-pending="phys">${pendingPill(physPending())}</span>`) + `<div class="side-body">${body}</div>`;
 }
 
 function tabMapa() {
@@ -269,8 +278,8 @@ function tabCelulas() {
       </div>`)}
     ${sec('corpo', 'Corpo', `<div class="readouts">${ro('Raio físico', fmt(d.radius, 1) + ' u', '', 'cRad')}${ro('Tamanho', fmt(r, 2) + ' R', '', 'cSize')}${ro('Velocidade máx.', fmt(8 / Math.sqrt(Math.max(r, 0.01)), 2) + ' u/tick', 'wide', 'cSpeed')}</div>`)}
     ${sec('sensores', 'Sensores', `<div class="readouts">${ro('Alcance visual', fmt(d.sensor_range) + ' u', '', 'cRange')}${ro('Custo do sensor', fmt(d.sensor_cost, 4) + '/tick', '', 'cCost')}${ro('Alcance químico', '500 u')}${ro('Idade máxima (alelo)', fmt(d.max_age) + ' ticks')}</div><button class="btn sm" data-act="layerOn" data-v="cones">${ic('eye')}Mostrar cones na arena</button>`)}
-    ${sec('rede', `Rede neural ao vivo`, `<div id="nnBox">${neuralNet(d)}</div><div class="legend"><span><i style="background:var(--ok)"></i>sinal positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo geneticamente</span></div>`)}
-    ${sec('genoma', 'Código genético', `<div class="hint mono">${d.genome.length} bits</div>${genomeGrid(d.genome)}`)}
+    ${sec('rede', `Rede neural ao vivo`, `<div class="hint">P1, P2 e P3 deste indivíduo: <b class="mono">${d.genome_map ? d.genome_map.channels.map((c, k) => `P${k + 1}=C${c}`).join(' · ') : '—'}</b></div><div id="nnBox">${neuralNet({ ...d, channels: d.genome_map?.channels })}</div><div class="legend"><span><i style="background:var(--ok)"></i>sinal positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo geneticamente</span></div>`)}
+    ${sec('genoma', 'Código genético', genomeDisclosure(d.genome, d.genome_map))}
   `;
   return head('Células', `${fmt(F?.population)} vivas`) + top + `<div class="side-body" style="padding-top:0">${body}</div>`;
 }
@@ -282,6 +291,14 @@ function nnLayout() {
   col(0, 26, 34); col(26, 45, 150); col(45, 56, 266);
   return { w, hgt, pos };
 }
+// P1/P2/P3 (sensores 12–20) e E1/E2/E3 (motores 52–54) trabalham com a substância escolhida pelo genoma.
+function chemOf(i, channels) {
+  if (!channels) return null;
+  if (i >= 12 && i <= 20) return channels[Math.floor((i - 12) / 3)];
+  if (i >= 52 && i <= 54) return channels[i - 52];
+  return null;
+}
+const slotTitle = (i, channels) => { const c = chemOf(i, channels); return c == null ? SLOT_NAMES[i] : `${SLOT_NAMES[i]} (C${c})`; };
 const sigColor = v => v > 0.05 ? 'var(--ok)' : v < -0.05 ? 'var(--dg)' : 'var(--mu)';
 function neuralNet(d) {
   const { w, hgt, pos } = nnLayout();
@@ -294,15 +311,45 @@ function neuralNet(d) {
     const inactive = !d.active[i]; const v = d.slots[i] || 0;
     const kind = i < 26 ? 's' : i < 45 ? 'i' : 'm';
     const anchor = kind === 's' ? 'end' : kind === 'm' ? 'start' : 'middle'; const tx = kind === 's' ? x - 8 : kind === 'm' ? x + 8 : x;
-    return `<g><title>${SLOT_NAMES[i]} · ${slotDesc(i)}${inactive ? ' · inativo geneticamente' : ''} · ${v.toFixed(2)}</title><circle data-nn="${i}" cx="${x}" cy="${y}" r="${inactive ? 3 : 3 + Math.min(1, Math.abs(v)) * 2}" fill="${inactive ? 'var(--s4)' : sigColor(v)}" stroke="var(--s1)" stroke-width="1"/>${kind !== 'i' ? `<text x="${tx}" y="${y + 3}" text-anchor="${anchor}">${SLOT_NAMES[i]}</text>` : ''}</g>`;
+    const ch = chemOf(i, d.channels), label = [12, 15, 18, 52, 53, 54].includes(i) && ch != null ? `${SLOT_NAMES[i]}·C${ch}` : SLOT_NAMES[i];
+    const chemNote = ch != null ? ` · trabalha com a substância C${ch}` : '';
+    return `<g><title>${slotTitle(i, d.channels)} · ${slotDesc(i)}${chemNote}${inactive ? ' · inativo geneticamente' : ''} · ${v.toFixed(2)}</title><circle data-nn="${i}" cx="${x}" cy="${y}" r="${inactive ? 3 : 3 + Math.min(1, Math.abs(v)) * 2}" fill="${inactive ? 'var(--s4)' : sigColor(v)}" stroke="var(--s1)" stroke-width="1"/>${kind !== 'i' ? `<text x="${tx}" y="${y + 3}" text-anchor="${anchor}">${label}</text>` : ''}</g>`;
   }).join('');
   return `<svg class="nn" viewBox="0 0 ${w} ${hgt}" style="max-height:420px;width:100%">
     <text x="34" y="9" text-anchor="middle" style="fill:var(--mu2)">sensores</text><text x="150" y="9" text-anchor="middle" style="fill:var(--mu2)">internos</text><text x="266" y="9" text-anchor="middle" style="fill:var(--mu2)">motores</text>
     ${wires}${nodes}</svg>`;
 }
-function genomeGrid(bits) {
-  let s = ''; for (let i = 0; i < bits.length; i++) s += `<i class="${bits[i] === '1' ? 'b' : ''}"></i>`;
+const SECTION_COLORS = { fiacao: 'var(--ac)', canais: '#b48cf0', alcance: 'var(--ok)', atividade: 'var(--wa)', reserva: 'var(--mu2)' };
+function genomeGrid(bits, map) {
+  const colorAt = i => {
+    if (!map) return 'var(--ac)';
+    if (i >= map.sections.find(x => x.key === 'canais').start && i < map.sections.find(x => x.key === 'canais').start + 9) return SECTION_COLORS.canais;
+    for (const sec of map.sections) if (sec.length && i >= sec.start && i < sec.start + sec.length && sec.key !== 'canais') return SECTION_COLORS[sec.key] || 'var(--ac)';
+    return 'var(--ac)';
+  };
+  let s = ''; for (let i = 0; i < bits.length; i++) s += `<i style="${bits[i] === '1' ? `background:${colorAt(i)};opacity:.85` : ''}" title="bit ${i}"></i>`;
   return `<div class="genome">${s}</div>`;
+}
+const groupBits = (bits, sizes) => { let out = [], p = 0; for (const n of sizes) { out.push(bits.slice(p, p + n)); p += n; } return out.join(' '); };
+function genomeDisclosure(bits, map) {
+  if (!map) return genomeGrid(bits);
+  const legend = `<div class="legend">${map.sections.filter(x => x.length).map(x => `<span><i style="background:${SECTION_COLORS[x.key]}"></i>${esc(x.name)}</span>`).join('')}</div>`;
+  const sections = map.sections.map(x => `<div class="li" style="flex-direction:column;align-items:stretch;gap:4px">
+      <div class="row"><span class="sw-c" style="background:${SECTION_COLORS[x.key] || 'var(--s4)'}"></span><b style="font-weight:500">${esc(x.name)}</b><span class="mono muted" style="margin-left:auto;font-size:11px">${x.length ? `bits ${x.start}–${x.start + x.length - 1} · ${x.length} bits` : 'fora do genoma'}</span></div>
+      <div class="mono" style="color:var(--tx)">${esc(x.summary)}</div>
+      ${x.bits ? `<div class="mono muted" style="font-size:11px;word-break:break-all">${x.key === 'canais' ? groupBits(x.bits, [3, 3, 3]) : esc(x.bits)}</div>` : ''}
+      <small class="muted" style="line-height:1.4">${esc(x.note)}</small></div>`).join('');
+  const recs = map.records.map(r => {
+    const status = r.effective ? '<span class="pill ok">no cérebro</span>' : !r.active ? '<span class="pill">desligado</span>' : !r.legal ? '<span class="pill dg">ilegal</span>' : '<span class="pill wa">nó desligado</span>';
+    return `<div class="li" style="flex-direction:column;align-items:stretch;gap:2px;padding:6px 10px;${r.effective ? '' : 'opacity:.6'}">
+      <div class="row"><span class="mono muted" style="width:26px">#${r.index}</span><b class="mono" style="font-weight:500">${esc(slotTitle(r.source, map.channels))} → ${esc(slotTitle(r.destination, map.channels))}</b><span class="mono" style="margin-left:auto">${r.weight >= 0 ? '+' : '−'}${fmt(Math.abs(r.weight), 3)}</span>${status}</div>
+      <span class="mono muted" style="font-size:10.5px;padding-left:34px">${groupBits(r.bits, [6, 6, 6, 1])} · bits ${r.start}–${r.start + 18}</span></div>`;
+  }).join('');
+  const shown = S.showRecords;
+  return `<div class="hint mono">${map.total_bits} bits · cor dos bits = trecho</div>${genomeGrid(bits, map)}${legend}
+    <div class="list">${sections}</div>
+    <button class="btn sm" data-act="toggleRecords">${ic(shown ? 'chev' : 'right')}${shown ? 'Esconder' : 'Ver'} os 64 registros de fiação</button>
+    ${shown ? `<div class="hint">Cada registro: <span class="mono">origem · destino · peso · ativo</span>. Pesos de −4 a +3,875 em passos de 0,125.</div><div class="list">${recs}</div>` : ''}`;
 }
 
 function genetics() {
@@ -418,7 +465,7 @@ function renderLayer() {
 function individualDrawer() {
   const v = VIEW;
   if (!v) return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>Indivíduo</h3><p>Carregando…</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div></div>`;
-  const d = { slots: new Array(56).fill(0), active: v.active, wires: v.wires.map(([a, b, w]) => [a, b, w, w / 4]) };
+  const d = { slots: new Array(56).fill(0), active: v.active, wires: v.wires.map(([a, b, w]) => [a, b, w, w / 4]), channels: v.genome_map?.channels };
   const when = v.created_at ? new Date(v.created_at * 1000).toLocaleString('pt-BR') : null;
   return `<div class="drawer" data-stop="1"><div class="drawer-h"><span class="cdot" style="background:${esc(v.color)};margin-top:2px"></span><div style="flex:1"><h3>${esc(v.name)}</h3><p>${esc(v.description)}</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div>
     <div class="drawer-b">
@@ -426,7 +473,7 @@ function individualDrawer() {
       <div class="hint">Fiação do genoma (os sinais aparecem quando a célula está viva na arena).</div>
       ${neuralNet(d)}
       <div class="legend"><span><i style="background:var(--ok)"></i>peso positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo geneticamente</span></div>
-      <div class="hint mono">${v.genome.length} bits</div>${genomeGrid(v.genome)}
+      ${genomeDisclosure(v.genome, v.genome_map)}
     </div>
     <div class="drawer-f">${v.saved ? `<button class="btn danger ghost" data-act="askDelete" style="margin-right:auto">Apagar do banco</button>` : ''}<button class="btn" data-act="closeLayer">Fechar</button><button class="btn pri" data-act="useInd" data-v="${esc(v.key)}">Usar como configuração neural</button></div></div>`;
 }
@@ -552,6 +599,7 @@ const ACT = {
   fit() { cam.zoom = 1; cam.cx = INFO.world_width / 2; cam.cy = INFO.world_height / 2; S.follow = false; renderStage(); },
   openRep(v) { selectCell(+v); S.cellsView = 'ind'; renderPanel(); },
   demoFull() { S.demoFull = !S.demoFull; renderStage(); },
+  toggleRecords() { S.showRecords = !S.showRecords; if (S.drawer === 'individual') renderLayer(); else renderPanel(); },
   askSave() { S.modal = 'saveInd'; S.drawer = null; renderLayer(); setTimeout(() => { const i = $('#saveName'); if (i) { i.focus(); i.select(); } }, 30); },
   saveInd(v) { const name = $('#saveName')?.value || ''; S.modal = null; renderLayer(); send({ type: 'save_individual', id: +v, name }); },
   async viewInd(v) { VIEW = null; S.drawer = 'individual'; S.modal = null; renderLayer(); try { VIEW = await invoke('individual_view', { key: v }); } catch (err) { console.error(err); } if (!VIEW) { S.drawer = null; say('Não foi possível abrir este indivíduo', false); } renderLayer(); },
@@ -594,7 +642,8 @@ document.addEventListener('input', e => {
     document.querySelectorAll(`[data-row="${path}"]`).forEach(r => r.classList.toggle('dirty', isDirty(path)));
     if (path === 'env.lifetime') { const el = document.querySelector('[data-live="lifeSun"]'); if (el) el.textContent = fmt(Math.round(v * 1.5)) + ' ticks'; }
     renderTop(); renderRail(); renderStatus();
-    if (S.tab === 'ambiente') { const h = document.querySelector('.side-head'); const old = h?.querySelector('.pill'); if (old) old.remove(); const ep = envPending().length; if (ep && h) h.insertAdjacentHTML('beforeend', `<span class="pill wa">${ep} pendente${ep > 1 ? 's' : ''}</span>`); }
+    const pb = document.querySelector('[data-pending="bio"]'); if (pb) pb.innerHTML = pendingPill(bioPending());
+    const pp = document.querySelector('[data-pending="phys"]'); if (pp) pp.innerHTML = pendingPill(physPending());
     return;
   }
   if (t.dataset.layer) {

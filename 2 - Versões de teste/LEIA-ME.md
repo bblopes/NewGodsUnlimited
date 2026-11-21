@@ -36,6 +36,7 @@ e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão p
 
 | Arquivo | O que validar | Data |
 | --- | --- | --- |
+| `V2 - Revamp da interface/V2.0.2/` | aba Biologia e código genético explicado (canais de P1/P2/P3) | 21/11/2026 |
 | `V2 - Revamp da interface/V2.0.1/` | salvar indivíduo no banco e usá-lo como configuração neural | 21/11/2026 |
 | `V2 - Revamp da interface/V2.0.0/` | primeira versão da interface nova | 21/11/2026 |
 | `V1 - Interface original/V1.1.0/` | visão genérica e quimiorrecepção PF | 21/11/2026 |

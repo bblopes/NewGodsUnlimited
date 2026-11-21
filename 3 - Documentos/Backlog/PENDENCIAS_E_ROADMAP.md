@@ -14,6 +14,7 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 
 ## 0. Interface
 
+- **Aba Física** (pedido de 21/11/2026, a avaliar): ao lado de Biologia e Ambiente, com sol e intensidade do sol. Conversa com a luz contínua do item 2.
 - **Nova interface** em Tauri + React, com o motor intocado. Ver [NOVA_INTERFACE.md](NOVA_INTERFACE.md).
 - Reorganizar a aba Células / indivíduo em grupos recolhíveis (adiado do backlog; já previsto na nova interface).
 
@@ -46,6 +47,8 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 
 ## 5. Genética
 
+- **Canais químicos sobrepostos à fiação** (achado de 21/11/2026): os 9 bits que escolhem P1/P2/P3 ficam dentro do registro de fiação #63 (bits 1207–1215). Decidir se separa numa região própria, o que exigiria migrar genomas e saves.
+- Atualizar `DOCUMENTACAO_ANALISE_GENETICA.md`, que ainda descreve o genoma antigo; o mapa atual está na V2.0.2 (Células › Código genético).
 - **Mutação adaptativa**: três coeficientes hereditários. Decisão em aberto: faixa 0,25×–3,36× ou teto 4×. Ver [proposta](../Propostas/PROPOSTA_MUTACAO_ADAPTATIVA.md).
 - Decidir se a longevidade entra no `Genome` (hoje não afeta cor, PG nem similaridade).
 
