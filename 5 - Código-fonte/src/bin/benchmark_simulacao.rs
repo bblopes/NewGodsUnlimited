@@ -38,6 +38,9 @@ enum Scenario {
     Base,
     Realistic,
     Stress,
+    /// Mesmos padrões da sessão da interface V2 (emissão 0,12, limite 5.000,
+    /// anti-cramming ligado). Use aquecimento longo: o fitoplâncton cresce.
+    Session,
 }
 
 impl Scenario {
@@ -46,8 +49,9 @@ impl Scenario {
             "base" => Ok(Self::Base),
             "realista" => Ok(Self::Realistic),
             "estresse" => Ok(Self::Stress),
+            "sessao" => Ok(Self::Session),
             _ => Err(format!(
-                "cenário inválido: {value}. Use base, realista ou estresse."
+                "cenário inválido: {value}. Use base, realista, estresse ou sessao."
             )),
         }
     }
@@ -57,6 +61,7 @@ impl Scenario {
             Self::Base => "base",
             Self::Realistic => "realista",
             Self::Stress => "estresse",
+            Self::Session => "sessao",
         }
     }
 
@@ -81,6 +86,20 @@ impl Scenario {
                 reproduction_minimum: MAX_ENERGY,
                 reproduction_limit: 5_000.0,
                 anti_cramming: AntiCrammingConfig::default(),
+            },
+            Self::Session => ScenarioDefaults {
+                population: 100,
+                desert_emission: 0.12,
+                fertile_emission: 0.12,
+                food_lifetime: 600,
+                food_energy: FOOD_ENERGY,
+                reproduction_minimum: MAX_ENERGY,
+                reproduction_limit: 5_000.0,
+                anti_cramming: AntiCrammingConfig {
+                    enabled: true,
+                    force: 1.0,
+                    exclusion_distance: MIN_EXCLUSION_DISTANCE,
+                },
             },
             Self::Stress => ScenarioDefaults {
                 population: 300,
@@ -613,7 +632,7 @@ fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, Str
 
 fn print_usage() {
     println!("Uso: cargo run --release --bin benchmark_simulacao -- [opções]");
-    println!("  --cenario base|realista|estresse");
+    println!("  --cenario base|realista|estresse|sessao");
     println!("  --populacao N --ticks N --aquecimento N --repeticoes N --seed N");
     println!("  --run-validado CAMINHO   usa esta população salva como fundadora Val 2");
     println!("  --sem-arquivo             não grava JSON em ../4 - Dados/benchmarks");

@@ -1,0 +1,60 @@
+# Mede o desempenho do núcleo da simulação (benchmark headless).
+#
+# Roda à mão pela aba Actions ou a cada push em branches v3-*. Não publica
+# nada: o resultado fica no resumo da execução e nos artefatos (logs + JSON).
+# Os números absolutos são da máquina do GitHub (4 vCPU); o que importa é a
+# comparação entre execuções e a distribuição do custo entre as fases.
+name: Medir desempenho
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['v3-**']
+    paths: ['5 - Código-fonte/src/**', '5 - Código-fonte/Cargo.*', '.github/workflows/medir-desempenho.yml']
+
+jobs:
+  medir:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: '5 - Código-fonte'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            5 - Código-fonte/target
+          key: bench-${{ hashFiles('5 - Código-fonte/Cargo.lock') }}
+
+      - name: Compilar benchmark
+        run: cargo build --release --bin benchmark_simulacao
+
+      - name: Medir
+        run: |
+          New-Item -ItemType Directory -Force '../4 - Dados/benchmarks' | Out-Null
+          $run = 'dados-de-teste/populacao-referencia.ecosrun'
+          $casos = @(
+            @{ nome = 'realista-100';  args = @('--cenario','realista','--ticks','1000','--aquecimento','200') },
+            @{ nome = 'estresse-300';  args = @('--cenario','estresse','--ticks','500','--aquecimento','100') },
+            @{ nome = 'sessao-100';    args = @('--cenario','sessao','--populacao','100','--ticks','1000','--aquecimento','15000','--repeticoes','1') },
+            @{ nome = 'sessao-200';    args = @('--cenario','sessao','--populacao','200','--ticks','1000','--aquecimento','15000','--repeticoes','1') }
+          )
+          "## Medição de desempenho`n" >> $env:GITHUB_STEP_SUMMARY
+          foreach ($c in $casos) {
+            $log = "../4 - Dados/benchmarks/$($c.nome).txt"
+            & ./target/release/benchmark_simulacao.exe @($c.args) --run-validado $run *>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { throw "benchmark $($c.nome) falhou" }
+            "### $($c.nome)`n``````" >> $env:GITHUB_STEP_SUMMARY
+            Get-Content $log >> $env:GITHUB_STEP_SUMMARY
+            "```````n" >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: medicao-desempenho
+          path: '4 - Dados/benchmarks/'
