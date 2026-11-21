@@ -173,7 +173,8 @@ function tabSessao() {
       <button class="btn icon ghost" style="height:auto;width:38px;border-radius:0 8px 8px 0" data-act="viewInd" data-v="${esc(o.key)}" title="Ver o indivíduo">${ic('eye')}</button></div>`;
   const body = `
     ${section('s-exec', 'Execução', `
-      <div class="readouts">${ro('Tick', fmt(F?.tick), '', 'tick')}${ro('Células vivas', fmt(F?.population), '', 'cells')}${ro('Ticks/s', fmt(F?.tps), '', 'tps')}${ro('Publicação', fmt(F?.publish_hz) + ' Hz', '', 'pub')}</div>
+      <div class="readouts">${ro('Tick', fmt(F?.tick), '', 'tick')}${ro('Células vivas', fmt(F?.population), '', 'cells')}${ro('Ticks/s', fmt(F?.tps), '', 'tps')}${ro('Publicação', fmt(F?.publish_hz) + ' Hz', '', 'pub')}${ro('Teto de cálculo (sem limitador)', fmt(F?.capacity_tps) + ' ticks/s', 'wide', 'cap')}</div>
+      <div class="hint">Ticks/s é a velocidade real da sessão (1× ≈ 10 ticks/s). O teto é quanto o motor conseguiria sem o limitador de velocidade.</div>
       ${threadsControl()}
       <button class="btn block" data-act="modal" data-v="headless">${ic('bolt')}Modo headless · medir teto de cálculo</button>
       ${toggle('keepAwake', 'Manter Windows ativo', 'Impede a suspensão enquanto a simulação calcula')}
@@ -925,7 +926,7 @@ async function pollGenetics(force) {
 function updateLive() {
   if (!F) return;
   const set = (k, v) => document.querySelectorAll(`[data-live="${k}"]`).forEach(el => { if (el.textContent !== v) el.textContent = v; });
-  set('tick', fmt(F.tick)); set('cells', fmt(F.population)); set('tps', fmt(F.tps)); set('food', fmt(F.food_count)); set('threads', `em uso: ${fmt(F.threads ?? 1)} de ${fmt(F.max_threads ?? 1)}`);
+  set('tick', fmt(F.tick)); set('cells', fmt(F.population)); set('tps', fmt(F.tps)); set('food', fmt(F.food_count)); set('cap', fmt(F.capacity_tps) + ' ticks/s'); set('threads', `em uso: ${fmt(F.threads ?? 1)} de ${fmt(F.max_threads ?? 1)}`);
   set('fps', fps + ' FPS'); set('pubhz', `pub. ${fmt(F.publish_hz)} Hz`); set('pub', `${fmt(F.publish_hz)} Hz`);
   set('run', '#' + String(F.run_id).slice(-7)); set('conflicts', `${fmt(F.crowding_pairs)} pares em conflito`);
   if (F.chem) set('peak', 'pico ' + fmt(F.chem.max, 2) + ' ppm');

@@ -325,7 +325,10 @@ pub struct Frame {
     pub tick: u64,
     pub population: usize,
     pub food_count: usize,
+    /// Ticks por segundo realmente simulados (relógio de parede).
     pub tps: f32,
+    /// Teto de cálculo: quantos ticks/s o motor faria sem o limitador.
+    pub capacity_tps: f32,
     pub publish_hz: f32,
     pub paused: bool,
     pub speed: usize,
@@ -896,7 +899,14 @@ struct WorkerState {
     run_id: u64,
     epoch: u64,
     notice: Notice,
+    /// Teto de cálculo (só o tempo dos ticks, sem as pausas do limitador).
+    /// Serve para dimensionar o lote; não é a velocidade da sessão.
     estimated_tps: f32,
+    /// Velocidade real: ticks avançados ÷ tempo de relógio, em janelas de
+    /// meio segundo. É o que a interface mostra como ticks/s.
+    effective_tps: f32,
+    rate_window_started: Instant,
+    rate_window_ticks: u64,
     last_telemetry_tick: u64,
     telemetry_interval: u64,
     /// Pool próprio do motor. O resultado é o mesmo com qualquer número de
@@ -1149,7 +1159,8 @@ impl WorkerState {
             tick: world.tick,
             population: world.organisms.len(),
             food_count: world.food.len(),
-            tps: if self.paused { 0.0 } else { self.estimated_tps },
+            tps: if self.paused { 0.0 } else { self.effective_tps },
+            capacity_tps: self.estimated_tps,
             publish_hz,
             paused: self.paused,
             speed: self.speed,
@@ -1253,6 +1264,9 @@ fn worker(
         epoch: 0,
         notice: Notice::default(),
         estimated_tps: 1_000.0,
+        effective_tps: 0.0,
+        rate_window_started: Instant::now(),
+        rate_window_ticks: 0,
         last_telemetry_tick: 0,
         telemetry_interval: DEFAULT_TELEMETRY_INTERVAL_TICKS,
         pool: Arc::new(build_pool(0).expect("pool de threads do motor")),
@@ -1308,6 +1322,10 @@ fn worker(
                 }
                 last_publish = Instant::now();
             }
+            // Ao retomar, a medição recomeça do zero: a pausa não conta.
+            state.effective_tps = 0.0;
+            state.rate_window_started = Instant::now();
+            state.rate_window_ticks = 0;
             thread::sleep(Duration::from_millis(4));
             continue;
         }
@@ -1337,7 +1355,7 @@ fn worker(
                 if let Ok(mut log) = shared.telemetry.lock() {
                     let mut sample = capture_sample(&state.world);
                     sample.reproduction_minimum = state.env.min_repro;
-                    sample.tps = state.estimated_tps;
+                    sample.tps = state.effective_tps;
                     if log.1.len() >= MAX_TELEMETRY_SAMPLES {
                         // Mantém a série inteira com metade da resolução.
                         let kept: Vec<Sample> = log.1.iter().copied().step_by(2).collect();
@@ -1351,6 +1369,19 @@ fn worker(
         let elapsed = started.elapsed().as_secs_f32().max(0.000_001);
         let observed_tps = batch as f32 / elapsed;
         state.estimated_tps = state.estimated_tps * 0.85 + observed_tps * 0.15;
+        // A velocidade real inclui as pausas do limitador e a publicação.
+        state.rate_window_ticks += batch as u64;
+        let window = state.rate_window_started.elapsed().as_secs_f32();
+        if window >= 0.5 {
+            let measured = state.rate_window_ticks as f32 / window;
+            state.effective_tps = if state.effective_tps > 0.0 {
+                state.effective_tps * 0.5 + measured * 0.5
+            } else {
+                measured
+            };
+            state.rate_window_started = Instant::now();
+            state.rate_window_ticks = 0;
+        }
 
         let interval = if state.headless {
             0.25

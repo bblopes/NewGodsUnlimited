@@ -2,11 +2,11 @@
 //! persistência, difusão acumulada nem memória fora das emissões em curso.
 
 use macroquad::prelude::*;
-use rayon::prelude::*;
 
 use crate::{
     config::{WORLD_HEIGHT, WORLD_WIDTH},
     environment::map::{MapDefinition, WallClearance},
+    simulation::parallel::map_indices,
     simulation::world::{CELL_RADIUS, Organism, Phytoplankton},
 };
 
@@ -215,11 +215,9 @@ impl PheromoneField {
         // em paralelo, uma lista de amostras por célula. A soma nas camadas
         // continua sequencial e na mesma ordem: o campo é idêntico bit a bit.
         let clearance = &self.clearance;
-        let emissions: Vec<OrganismEmission> = organisms
-            .par_iter()
-            .with_min_len(16)
-            .map(|organism| OrganismEmission::of(organism, map, clearance))
-            .collect();
+        let emissions: Vec<OrganismEmission> = map_indices(organisms.len(), 48, 8, |index| {
+            OrganismEmission::of(&organisms[index], map, clearance)
+        });
         for emission in &emissions {
             for &(index, weight) in &emission.samples {
                 let index = index as usize;

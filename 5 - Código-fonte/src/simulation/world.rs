@@ -6,7 +6,6 @@ use std::{
 };
 
 use macroquad::prelude::*;
-use rayon::prelude::*;
 
 use crate::{
     config::{DEFAULT_FOOD_SENSOR_RANGE, MAX_FLOW_SPEED, WORLD_HEIGHT, WORLD_WIDTH},
@@ -18,6 +17,7 @@ use crate::{
     simulation::genome::{
         Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES, PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
     },
+    simulation::parallel::{for_each_mut, map_indices},
     simulation::pheromone::{ChemicalSensors, PheromoneField, pheromone_energy_cost},
 };
 
@@ -895,7 +895,7 @@ impl World {
         observer.begin(TickPhase::Brain);
         // Cada cérebro só lê os próprios sensores: paralelo sem efeito no
         // resultado.
-        self.organisms.par_iter_mut().with_min_len(32).for_each(|organism| {
+        for_each_mut(&mut self.organisms, 512, 128, |organism| {
             organism.motors = organism.brain.tick(organism.sensors);
             organism.age_ticks += 1;
             // O sensor já leu a força do tick anterior. A partir daqui
@@ -909,7 +909,7 @@ impl World {
         // Cada partícula se move sozinha (corrente + paredes): paralelo.
         let map = &self.map;
         let clearance = self.pheromones.wall_clearance();
-        self.food.par_iter_mut().with_min_len(256).for_each(|particle| {
+        for_each_mut(&mut self.food, 2_048, 1_024, |particle| {
             let previous_position = particle.position;
             particle.position +=
                 flow.sample_with_map(particle.position, Some(map)) * FOOD_FLOW_COUPLING;
@@ -1018,11 +1018,9 @@ impl World {
         let winners: Vec<Option<usize>> = if self.organisms.is_empty() {
             vec![None; self.food.len()]
         } else {
-            self.food
-                .par_iter()
-                .with_min_len(256)
-                .map(|particle| self.closest_organism_containing(particle.position, &organism_grid))
-                .collect()
+            map_indices(self.food.len(), 2_048, 1_024, |index| {
+                self.closest_organism_containing(self.food[index].position, &organism_grid)
+            })
         };
 
         for index in winners.iter().flatten() {
@@ -1035,19 +1033,16 @@ impl World {
         // ── Etapa 12: remover alimento consumido ou vencido ──────────────
         observer.begin(TickPhase::FoodCleanup);
         let map = &self.map;
-        let keep: Vec<bool> = self
-            .food
-            .par_iter()
-            .with_min_len(512)
-            .zip(winners.par_iter())
-            .map(|(particle, winner)| {
+        let food = &self.food;
+        let keep: Vec<bool> = map_indices(food.len(), 4_096, 2_048, |index| {
+                let particle = &food[index];
+                let winner = &winners[index];
                 let sunlight = map.sunlight_intensity(particle.position);
                 let lifespan_multiplier =
                     1.0 + (SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER - 1.0) * sunlight;
                 let lifetime = (lifetime_ticks as f32 * lifespan_multiplier).ceil() as u32;
                 winner.is_none() && particle.age_ticks < lifetime
-            })
-            .collect();
+            });
         let mut keep = keep.into_iter();
         self.food.retain(|_| keep.next().unwrap_or(false));
         observer.end(TickPhase::FoodCleanup);
@@ -1684,20 +1679,16 @@ impl World {
         // sem comparar toda a população. O retrato é calculado antes de
         // alterar qualquer SensorInput, para todos verem o mesmo tick.
         let organism_grid = self.organism_grid();
-        let contacts: Vec<bool> = (0..self.organisms.len())
-            .into_par_iter()
-            .with_min_len(32)
-            .map(|index| self.has_contact(index, &organism_grid))
-            .collect();
+        let contacts: Vec<bool> = map_indices(self.organisms.len(), 512, 128, |index| {
+            self.has_contact(index, &organism_grid)
+        });
         observer.end(TickPhase::Sensors);
         // Visão e química só leem o retrato; separá-las em passadas próprias
         // não muda o resultado e permite medir cada custo.
         observer.begin(TickPhase::SensorVision);
-        let visions: Vec<[Option<f32>; 4]> = self
-            .organisms
-            .par_iter()
-            .with_min_len(16)
-            .map(|organism| {
+        let visions: Vec<[Option<f32>; 4]> =
+            map_indices(self.organisms.len(), 64, 16, |index| {
+                let organism = &self.organisms[index];
                 nearest_visible_in_cones(
                     &visible_grid,
                     organism.position,
@@ -1705,16 +1696,13 @@ impl World {
                     &self.map,
                     self.pheromones.wall_clearance(),
                 )
-            })
-            .collect();
+            });
         observer.end(TickPhase::SensorVision);
         observer.begin(TickPhase::SensorChemical);
-        let chemicals: Vec<[ChemicalSensors; 5]> = self
-            .organisms
-            .par_iter()
-            .with_min_len(32)
-            .map(|organism| self.pheromones.sensors_for(organism))
-            .collect();
+        let chemicals: Vec<[ChemicalSensors; 5]> =
+            map_indices(self.organisms.len(), 1_024, 256, |index| {
+                self.pheromones.sensors_for(&self.organisms[index])
+            });
         observer.end(TickPhase::SensorChemical);
         observer.begin(TickPhase::Sensors);
         for (index, organism) in self.organisms.iter_mut().enumerate() {
@@ -3139,7 +3127,17 @@ mod tests {
 
     #[test]
     fn thread_count_does_not_change_the_world() {
-        let start = World::new(85, 120);
+        let mut start = World::new(85, 600);
+        // Fitoplâncton suficiente para os caminhos paralelos do alimento.
+        for index in 0..6_000 {
+            start.food.push(Phytoplankton {
+                position: vec2(
+                    40.0 + (index as f32 * 0.618_034).fract() * (WORLD_WIDTH - 80.0),
+                    40.0 + (index as f32 * 0.414_214).fract() * (WORLD_HEIGHT - 80.0),
+                ),
+                age_ticks: 0,
+            });
+        }
         let flow = FlowField::new(85);
         let run = |threads: usize| {
             let pool = rayon::ThreadPoolBuilder::new()
@@ -3148,7 +3146,7 @@ mod tests {
                 .unwrap();
             let mut world = start.clone();
             pool.install(|| {
-                for _ in 0..300 {
+                for _ in 0..120 {
                     world.tick(
                         &flow,
                         2.0,
