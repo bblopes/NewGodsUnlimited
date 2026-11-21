@@ -125,6 +125,7 @@ function renderTop() {
       <div class="kv"><small>Run</small><b class="mono" data-live="run">#${String(F?.run_id ?? '').slice(-7)}</b></div>
       <div class="kv"><small>Tick</small><b class="mono" data-live="tick">${fmt(F?.tick)}</b></div>
       <div class="kv"><small>Células</small><b class="mono" data-live="cells">${fmt(F?.population)}</b></div>
+      <div class="kv"><small>Fitoplâncton</small><b class="mono" data-live="food">${fmt(F?.food_count)}</b></div>
       <div class="kv"><small>Ticks/s</small><b class="mono" data-live="tps">${fmt(F?.tps)}</b></div>
     </div>
     <div class="grow"></div>
@@ -395,7 +396,7 @@ function demoHeader() { if (TEL.error) return 'erro ao ler a telemetria: ' + esc
 function demoKpis() {
   const w = windowSamples(); const b = w[w.length - 1] || {}, a = w[0] || {};
   const live = F?.population ?? b.population, d = (live ?? 0) - (a.population ?? live ?? 0);
-  return `<div class="kpis">${ro('Células vivas', fmt(live), '', 'cells')}${ro('Variação na janela', (d >= 0 ? '+' : '') + fmt(d))}${ro('Gerações', `máx ${fmt(b.max_generation)} · méd ${fmt(b.average_generation, 1)}`)}${ro('Diversidade genética', fmt((b.genetic_diversity ?? 0) * 100, 1) + '%')}</div>`;
+  return `<div class="kpis">${ro('Células vivas', fmt(live), '', 'cells')}${ro('Fitoplâncton vivo', fmt(F?.food_count ?? b.phytoplankton), '', 'food')}${ro('Ticks/s', fmt(F?.tps), '', 'tps')}${ro('Variação na janela', (d >= 0 ? '+' : '') + fmt(d))}${ro('Gerações', `máx ${fmt(b.max_generation)} · méd ${fmt(b.average_generation, 1)}`)}${ro('Diversidade genética', fmt((b.genetic_diversity ?? 0) * 100, 1) + '%')}</div>`;
 }
 function demoCharts(big) {
   const w = windowSamples(); const h = big ? 170 : 96;
@@ -407,6 +408,8 @@ function demoCharts(big) {
   const rt = ticks.slice(1);
   return [
     card('População viva', fmt(last.population) + ' células', lineChart(ticks, [{ d: w.map(s => s.population), c: 'var(--ac)' }], { h })),
+    card('População de fitoplâncton', fmt(last.phytoplankton ?? 0) + ' partículas', lineChart(ticks, [{ d: w.map(s => s.phytoplankton ?? 0), c: 'var(--ok)' }], { h })),
+    card('Velocidade da simulação', fmt(last.tps ?? 0) + ' ticks/s', lineChart(ticks, [{ d: w.map(s => s.tps ?? 0), c: 'var(--wa)' }], { h }), lg([['var(--wa)', 'ticks por segundo no momento da amostra']])),
     card('Energia média', fmt(last.average_energy, 1), lineChart(ticks, [{ d: w.map(s => s.average_energy), c: 'var(--ac)' }], { h, step: w.map(s => s.reproduction_minimum) }), lg([['var(--ac)', 'energia média'], ['var(--wa)', 'mín. reprodução (em vigor)']])),
     card('Idade média', fmt(last.average_age) + ' ticks', lineChart(ticks, [{ d: w.map(s => s.average_age), c: 'var(--ac)' }], { h })),
     card('Diversidade genética', fmt(last.genetic_diversity * 100, 1) + '%', lineChart(ticks, [{ d: w.map(s => s.genetic_diversity * 100), c: '#b48cf0' }], { h })),

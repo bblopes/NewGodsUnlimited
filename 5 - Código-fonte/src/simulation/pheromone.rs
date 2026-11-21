@@ -5,7 +5,7 @@ use macroquad::prelude::*;
 
 use crate::{
     config::{WORLD_HEIGHT, WORLD_WIDTH},
-    environment::map::MapDefinition,
+    environment::map::{MapDefinition, WallClearance},
     simulation::world::{CELL_RADIUS, Organism, Phytoplankton},
 };
 
@@ -64,6 +64,8 @@ pub struct PheromoneField {
     /// Geometria de depósito do PF por célula da malha. Não é estado do
     /// mundo: é derivada do mapa e refeita quando as paredes mudam.
     food_kernels: FoodKernelCache,
+    /// Distância até a parede mais próxima; também usada pela visão.
+    clearance: WallClearance,
 }
 
 /// Para cada célula da malha química, a lista `(destino, peso)` que o PF
@@ -95,11 +97,16 @@ impl FoodKernelCache {
         }
     }
 
-    fn kernel(&mut self, source: usize, map: &MapDefinition) -> &[(u32, f32)] {
+    fn kernel(
+        &mut self,
+        source: usize,
+        map: &MapDefinition,
+        clearance: &WallClearance,
+    ) -> &[(u32, f32)] {
         self.kernels[source].get_or_insert_with(|| {
             let mut samples = Vec::with_capacity(128);
             let center = cell_center(source % FIELD_WIDTH, source / FIELD_WIDTH);
-            for_each_deposition_sample(center, map, |index, weight| {
+            for_each_deposition_sample(center, map, clearance, |index, weight| {
                 samples.push((index as u32, weight));
             });
             samples.into_boxed_slice()
@@ -119,6 +126,7 @@ impl Default for PheromoneField {
                 .map(|_| vec![0.0; cells])
                 .collect(),
             food_kernels: FoodKernelCache::default(),
+            clearance: WallClearance::default(),
         }
     }
 }
@@ -149,7 +157,21 @@ impl PheromoneField {
     }
 
     /// PG e canais genéricos emitidos pelas células.
+    /// Atualiza a geometria derivada do mapa (refeita só se as paredes
+    /// mudaram). Chamado no início de cada retrato químico.
+    pub fn prepare_geometry(&mut self, map: &MapDefinition) {
+        self.clearance.refresh(map);
+        self.food_kernels.prepare(map);
+    }
+
+    /// Distância conservadora até a parede mais próxima, válida após
+    /// `prepare_geometry` neste tick.
+    pub fn wall_clearance(&self) -> &WallClearance {
+        &self.clearance
+    }
+
     pub fn deposit_organisms(&mut self, organisms: &[Organism], map: &MapDefinition) {
+        self.prepare_geometry(map);
         for organism in organisms {
             let emission_scale = chemical_emission_scale(organism);
             let signature = organism.genome.pheromone_signature();
@@ -190,12 +212,12 @@ impl PheromoneField {
         for particle in phytoplankton {
             food_sources[self.nearest_index(particle.position)] += FOOD_PHEROMONE_PPM;
         }
-        self.food_kernels.prepare(map);
+        self.prepare_geometry(map);
         for (source, amount) in food_sources.into_iter().enumerate() {
             if amount <= 0.0 {
                 continue;
             }
-            for &(index, weight) in self.food_kernels.kernel(source, map) {
+            for &(index, weight) in self.food_kernels.kernel(source, map, &self.clearance) {
                 self.food[index as usize] += amount * weight;
             }
         }
@@ -253,7 +275,8 @@ impl PheromoneField {
         generic_emissions: [Option<(usize, f32)>; 3],
         map: &MapDefinition,
     ) {
-        for_each_deposition_sample(source, map, |index, weight| {
+        let clearance = std::mem::take(&mut self.clearance);
+        for_each_deposition_sample(source, map, &clearance, |index, weight| {
             let contribution = pg_amount * weight;
             self.pg[index] += contribution;
             self.pg_signature_x[index] += contribution * signature.x;
@@ -262,6 +285,7 @@ impl PheromoneField {
                 self.generic[channel % GENERIC_CHANNEL_COUNT][index] += amount * weight;
             }
         });
+        self.clearance = clearance;
     }
 
     #[cfg(test)]
@@ -364,13 +388,19 @@ impl PheromoneField {
 fn for_each_deposition_sample(
     source: Vec2,
     map: &MapDefinition,
+    clearance: &WallClearance,
     mut visit: impl FnMut(usize, f32),
 ) {
     let step = cell_size();
     let gaussian_denominator = 2.0 * (PHEROMONE_RANGE * 0.38).powi(2);
     // Toda linha de uma emissora até o alcance químico fica dentro deste
     // disco. Sem paredes nele, a linha de visão é necessariamente livre.
-    let must_check_walls = map.has_wall_within_distance(source, PHEROMONE_RANGE);
+    // Se nenhuma parede pode estar a menos de `free_radius`, toda linha mais
+    // curta que isso é livre; só as mais longas precisam ser traçadas.
+    let free_radius = clearance.lower_bound(source);
+    let must_check_walls =
+        free_radius <= PHEROMONE_RANGE && map.has_wall_within_distance(source, PHEROMONE_RANGE);
+    let free_radius_squared = free_radius * free_radius;
     let min_x = ((source.x - PHEROMONE_RANGE) / step.x).floor().max(0.0) as usize;
     let max_x = ((source.x + PHEROMONE_RANGE) / step.x)
         .ceil()
@@ -384,7 +414,9 @@ fn for_each_deposition_sample(
             let position = cell_center(x, y);
             let distance_squared = source.distance_squared(position);
             if distance_squared > PHEROMONE_RANGE_SQUARED
-                || (must_check_walls && !map.has_clear_line(source, position))
+                || (must_check_walls
+                    && distance_squared >= free_radius_squared
+                    && !map.has_clear_line(source, position))
             {
                 continue;
             }
