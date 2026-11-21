@@ -1,7 +1,8 @@
 # Nova interface
 
-**Estado:** estrutura de navegação aprovada (21/11/2026); próximo passo é o
-acabamento visual.
+**Estado:** primeira versão publicada para teste como `V2.0.0` (21/11/2026),
+em `5 - Código-fonte/interface/`. Salvar/carregar runs, presets e Laboratório
+ainda não foram portados.
 
 - Especificação completa (documento colaborativo): <https://claude.ai/artifact/N6jV2iVzmqULwtnbQRvp7Q>
 - Protótipo navegável: [`../Apresentação/prototipo-nova-interface.html`](../Apresentação/prototipo-nova-interface.html)
@@ -28,12 +29,17 @@ comandos e recebe estado.
 
 ## Etapas
 
-1. Acabamento visual: 2 ou 3 variações de estilo em HTML.
-2. Separar o motor num crate próprio (`ngu-core`), validado pelo hash do benchmark.
-3. Esqueleto Tauri: ponte, comandos e arena com o mundo real.
-4. Portar as abas, uma por vez.
-5. Laboratório dentro do app.
-6. Checklist de paridade e entrega do `.exe` (vira a `V2.0.0`).
+1. ~~Esqueleto Tauri: ponte, comandos e arena com o mundo real.~~ Feito na V2.0.0.
+2. ~~Portar as abas.~~ Feito na V2.0.0, exceto salvar/carregar e presets.
+3. Salvar e carregar runs (`.ecosrun`), presets de sessão e de mapa, Val 1.0/2.0.
+4. Laboratório dentro do app.
+5. Acabamento visual: variações de estilo.
+6. Separar o motor num crate próprio (`ngu-core`), validado pelo hash do benchmark.
+7. Checklist de paridade completo; aí a V1 pode ser aposentada.
+
+Na V2.0.0 a interface usa HTML/JS sem etapa de build (a mesma base do
+protótipo), para não depender de npm. A migração para React pode vir junto do
+acabamento visual.
 
 O executável Macroquad atual continua funcionando até a paridade.
 

@@ -23,3 +23,6 @@ target/
 .vscode/
 Thumbs.db
 Desktop.ini
+
+# Esquemas gerados pelo Tauri na compilação.
+/5 - Código-fonte/interface/gen/
