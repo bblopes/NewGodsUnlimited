@@ -36,7 +36,10 @@ use crate::banco::{genoma_de, Banco};
 pub const SPEED_MULTIPLIERS: [f32; 7] = [
     1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0,
 ];
-const TELEMETRY_INTERVAL_TICKS: u64 = 250;
+/// Intervalo padrão de coleta da Demografia; a interface pode trocar (mínimo 250).
+const DEFAULT_TELEMETRY_INTERVAL_TICKS: u64 = 500;
+const MIN_TELEMETRY_INTERVAL_TICKS: u64 = 250;
+const MAX_TELEMETRY_INTERVAL_TICKS: u64 = 100_000;
 const MAX_TELEMETRY_SAMPLES: usize = 12_000;
 const DEFAULT_SEED: u64 = 847_291_530;
 const DEFAULT_REPRODUCTION_LIMIT: f32 = 5_000.0;
@@ -212,6 +215,8 @@ pub enum UiCommand {
     WantGenetics,
     /// Salva a célula viva `id` no banco de indivíduos.
     SaveIndividual { id: u64, name: String },
+    /// Intervalo de coleta da Demografia, em ticks.
+    TelemetryInterval { ticks: u64 },
     DeleteIndividual { key: String },
 }
 
@@ -334,6 +339,7 @@ pub struct Frame {
     pub map_version: u64,
     pub map_dirty: bool,
     pub bank_version: u64,
+    pub telemetry_interval: u64,
     pub notice: Notice,
 }
 
@@ -870,6 +876,7 @@ struct WorkerState {
     notice: Notice,
     estimated_tps: f32,
     last_telemetry_tick: u64,
+    telemetry_interval: u64,
 }
 
 impl WorkerState {
@@ -1074,6 +1081,12 @@ impl WorkerState {
                     Err(erro) => self.say(format!("Não foi possível salvar: {erro}"), false),
                 }
             }
+            UiCommand::TelemetryInterval { ticks } => {
+                self.telemetry_interval =
+                    ticks.clamp(MIN_TELEMETRY_INTERVAL_TICKS, MAX_TELEMETRY_INTERVAL_TICKS);
+                let interval = self.telemetry_interval;
+                self.say(format!("Demografia coletando a cada {interval} ticks"), true);
+            }
             UiCommand::DeleteIndividual { .. } | UiCommand::WantGenetics => {}
         }
     }
@@ -1106,6 +1119,7 @@ impl WorkerState {
             crowding_min: world.crowding.minimum_violation_distance,
             map_version: self.map_version,
             map_dirty: self.map_is_dirty,
+            telemetry_interval: self.telemetry_interval,
             notice: self.notice.clone(),
             ..Frame::default()
         };
@@ -1192,6 +1206,7 @@ fn worker(
         notice: Notice::default(),
         estimated_tps: 1_000.0,
         last_telemetry_tick: 0,
+        telemetry_interval: DEFAULT_TELEMETRY_INTERVAL_TICKS,
     };
     set_windows_keep_awake(true);
     state.reset_telemetry(&shared);
@@ -1265,7 +1280,7 @@ fn worker(
                 state.env.min_repro,
                 state.env.limit,
             );
-            if state.world.tick.saturating_sub(state.last_telemetry_tick) >= TELEMETRY_INTERVAL_TICKS {
+            if state.world.tick.saturating_sub(state.last_telemetry_tick) >= state.telemetry_interval {
                 if let Ok(mut log) = shared.telemetry.lock() {
                     let mut sample = capture_sample(&state.world);
                     sample.reproduction_minimum = state.env.min_repro;
