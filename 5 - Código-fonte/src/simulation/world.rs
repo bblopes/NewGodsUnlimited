@@ -2947,7 +2947,7 @@ mod tests {
         world
             .pheromones
             .rebuild(&world.organisms, &world.food, &world.map);
-        world.update_sensors(&still_water, MAX_ENERGY);
+        world.update_sensors(&still_water, MAX_ENERGY, &mut NoopTickObserver);
 
         for organism in &world.organisms {
             assert_eq!(organism.sensors.cell_contact, 1.0);
@@ -3098,7 +3098,7 @@ mod tests {
         world.organisms[0].external_force = vec2(2.0, -4.0);
         let still_water = FlowField::new(18).with_intensity(0.0);
 
-        world.update_sensors(&still_water, 1_000.0);
+        world.update_sensors(&still_water, 1_000.0, &mut NoopTickObserver);
 
         assert!((world.organisms[0].sensors.energy - 0.1).abs() < 0.000_1);
         assert!((world.organisms[0].sensors.force_x - 0.5).abs() < 0.000_1);
