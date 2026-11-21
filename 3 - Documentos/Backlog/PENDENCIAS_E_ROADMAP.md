@@ -6,14 +6,16 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 ## Ordem sugerida
 
 1. ~~Reorganização das pastas e fluxo de versões~~ (feito em 21/11/2026)
-2. **V2 — Revamp da interface**: V2.0.0 em teste; faltam salvar/carregar, presets e Laboratório
-3. Publicar visão + PF na versão oficial
-4. Livro-caixa de energia e marcos na Demografia
-5. Calibração de custos com campanhas
-6. Luz contínua → temperatura → correntes
+2. **V2 — Revamp da interface**: fechada em 21/11/2026 na V2.0.3; salvar/carregar runs, presets e Laboratório ficam para uma retomada da V2
+3. **V3 — Otimização**: estudo de desempenho e paralelização (ver `Relatórios/AVALIACAO_DE_DESEMPENHO.md`)
+4. Publicar visão + PF na versão oficial
+5. Livro-caixa de energia e marcos na Demografia
+6. Calibração de custos com campanhas
+7. Luz contínua → temperatura → correntes
 
 ## 0. Interface
 
+- **Melhorar a apresentação das informações da célula** (pedido de 21/11/2026): a forma como Células › Indivíduo descreve a célula e o código genético ainda não está boa; revisitar numa próxima ocasião.
 - **Aba Física** (pedido de 21/11/2026, a avaliar): ao lado de Biologia e Ambiente, com sol e intensidade do sol. Conversa com a luz contínua do item 2.
 - **Nova interface** em Tauri + React, com o motor intocado. Ver [NOVA_INTERFACE.md](NOVA_INTERFACE.md).
 - Reorganizar a aba Células / indivíduo em grupos recolhíveis (adiado do backlog; já previsto na nova interface).

@@ -73,7 +73,8 @@ const S = {
 };
 let F = null;                 // último Frame do motor
 let MAP = null;               // último MapData
-let TEL = { epoch: -1, samples: [] };
+// epoch 0 = "ainda sem amostras"; o motor numera as runs a partir de 1 (u64, nunca negativo).
+let TEL = { epoch: 0, samples: [] };
 let GEN = null;
 let FLOW = { key: '', data: [] };
 let VIEW = null;               // indivíduo aberto na gaveta
@@ -390,15 +391,15 @@ function windowSamples() {
 function rate(series, key) {
   const out = []; for (let i = 1; i < series.length; i++) { const dt = series[i].tick - series[i - 1].tick; out.push(dt > 0 ? (series[i][key] - series[i - 1][key]) / dt * 1000 : 0); } return out;
 }
-function demoHeader() { const w = windowSamples(); if (!w.length) return 'coletando telemetria…'; const a = w[0], b = w[w.length - 1]; return `${w.length} amostras · ticks ${fmt(a.tick)} a ${fmt(b.tick)} · nasc. ${fmt(b.births_total - a.births_total)} · mortes ${fmt(b.deaths_total - a.deaths_total)}`; }
+function demoHeader() { if (TEL.error) return 'erro ao ler a telemetria: ' + esc(TEL.error); const w = windowSamples(); if (!w.length) return 'coletando telemetria…'; const a = w[0], b = w[w.length - 1]; return `${w.length} amostras · ticks ${fmt(a.tick)} a ${fmt(b.tick)} · nasc. ${fmt(b.births_total - a.births_total)} · mortes ${fmt(b.deaths_total - a.deaths_total)}`; }
 function demoKpis() {
   const w = windowSamples(); const b = w[w.length - 1] || {}, a = w[0] || {};
-  const d = (b.population ?? 0) - (a.population ?? 0);
-  return `<div class="kpis">${ro('Células vivas', fmt(b.population))}${ro('Variação na janela', (d >= 0 ? '+' : '') + fmt(d))}${ro('Gerações', `máx ${fmt(b.max_generation)} · méd ${fmt(b.average_generation, 1)}`)}${ro('Diversidade genética', fmt((b.genetic_diversity ?? 0) * 100, 1) + '%')}</div>`;
+  const live = F?.population ?? b.population, d = (live ?? 0) - (a.population ?? live ?? 0);
+  return `<div class="kpis">${ro('Células vivas', fmt(live), '', 'cells')}${ro('Variação na janela', (d >= 0 ? '+' : '') + fmt(d))}${ro('Gerações', `máx ${fmt(b.max_generation)} · méd ${fmt(b.average_generation, 1)}`)}${ro('Diversidade genética', fmt((b.genetic_diversity ?? 0) * 100, 1) + '%')}</div>`;
 }
 function demoCharts(big) {
   const w = windowSamples(); const h = big ? 170 : 96;
-  if (w.length < 2) return `<div class="empty">A telemetria aparece depois dos primeiros 500 ticks.</div>`;
+  if (w.length < 2) return `<div class="empty">Os gráficos aparecem a partir da segunda amostra (a cada ${fmt(F?.telemetry_interval ?? 500)} ticks).</div>`;
   const ticks = w.map(s => s.tick);
   const card = (t, right, svg, legend = '') => `<div class="chartcard"><div class="ct"><b>${t}</b><span class="mono">${right}</span></div>${svg}${legend}</div>`;
   const lg = items => `<div class="legend">${items.map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>`;
@@ -408,6 +409,8 @@ function demoCharts(big) {
     card('População viva', fmt(last.population) + ' células', lineChart(ticks, [{ d: w.map(s => s.population), c: 'var(--ac)' }], { h })),
     card('Energia média', fmt(last.average_energy, 1), lineChart(ticks, [{ d: w.map(s => s.average_energy), c: 'var(--ac)' }], { h, step: w.map(s => s.reproduction_minimum) }), lg([['var(--ac)', 'energia média'], ['var(--wa)', 'mín. reprodução (em vigor)']])),
     card('Idade média', fmt(last.average_age) + ' ticks', lineChart(ticks, [{ d: w.map(s => s.average_age), c: 'var(--ac)' }], { h })),
+    card('Diversidade genética', fmt(last.genetic_diversity * 100, 1) + '%', lineChart(ticks, [{ d: w.map(s => s.genetic_diversity * 100), c: '#b48cf0' }], { h })),
+    card('Gerações', `máx ${fmt(last.max_generation)} · méd ${fmt(last.average_generation, 1)}`, lineChart(ticks, [{ d: w.map(s => s.max_generation), c: 'var(--ac)' }, { d: w.map(s => s.average_generation), c: 'var(--mu)' }], { h }), lg([['var(--ac)', 'máxima'], ['var(--mu)', 'média']])),
     card('Natalidade', 'eventos / 1k ticks', lineChart(rt, [{ d: rate(w, 'births_neural'), c: 'var(--ok)' }, { d: rate(w, 'births_limit'), c: 'var(--wa)' }], { h }), lg([['var(--ok)', 'decisão neural'], ['var(--wa)', 'limite energético']])),
     card('Mortalidade', 'eventos / 1k ticks', lineChart(rt, [{ d: rate(w, 'deaths_starvation'), c: 'var(--dg)' }, { d: rate(w, 'deaths_age'), c: 'var(--mu)' }, { d: rate(w, 'deaths_phagocytosis'), c: '#b48cf0' }], { h }), lg([['var(--dg)', 'fome'], ['var(--mu)', 'idade'], ['#b48cf0', 'fagocitose']])),
     card('Energia atual', 'distribuição', histogram(h)),
@@ -431,10 +434,16 @@ function histogram(h) {
   const m = Math.max(...counts, 1), bw = w / b;
   return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="height:${h}px">${counts.map((k, i) => `<rect x="${i * bw + 1}" y="${h - k / m * (h - 6)}" width="${bw - 2}" height="${k / m * (h - 6)}" rx="2" fill="var(--ac)" fill-opacity=".75"><title>${fmt(i * cap / b)}–${fmt((i + 1) * cap / b)}: ${k}</title></rect>`).join('')}</svg>`;
 }
+const SAMPLING = [250, 500, 1000, 2000, 5000];
+function samplingControl() {
+  const cur = F?.telemetry_interval ?? 500;
+  return `<div class="field"><div class="field-top"><label>Coleta da demografia</label><span class="unit" style="margin-left:auto">a cada N ticks</span></div>
+    <div class="seg">${SAMPLING.map(n => `<button class="${n === cur ? 'on' : ''}" data-act="sampling" data-v="${n}">${fmt(n)}</button>`).join('')}</div></div>`;
+}
 function tabDemografia() {
-  const body = `<div class="sec-b" style="padding-top:12px">${segUI('demoWin', [['5k', '5k'], ['30k', '30k'], ['100k', '100k'], ['25%', '25%'], ['Tudo', 'Tudo']], S.demoWin)}
+  const body = `<div class="sec-b" style="padding-top:12px">${samplingControl()}<div class="field"><div class="field-top"><label>Janela do gráfico</label></div>${segUI('demoWin', [['5k', '5k'], ['30k', '30k'], ['100k', '100k'], ['25%', '25%'], ['Tudo', 'Tudo']], S.demoWin)}</div>
     <div class="hint mono">${demoHeader()}</div>${demoKpis()}${demoCharts(false)}</div>`;
-  return head('Demografia', 'Telemetria da sessão · amostra a cada 250 ticks', `<button class="btn sm" data-act="demoFull">${ic('maxim')}Expandir</button>`) + `<div class="side-body">${body}</div>`;
+  return head('Demografia', `Telemetria da sessão · amostra a cada ${fmt(F?.telemetry_interval ?? 500)} ticks`, `<button class="btn sm" data-act="demoFull">${ic('maxim')}Expandir</button>`) + `<div class="side-body">${body}</div>`;
 }
 
 function tabCamadas() {
@@ -520,7 +529,7 @@ function renderStage() {
     return;
   }
   if (S.demoFull) {
-    ov.innerHTML = `<div class="demofull"><div class="demofull-h"><h2>Demografia da sessão</h2><span class="muted mono">${demoHeader()}</span><div class="grow"></div><div style="width:300px">${segUI('demoWin', [['5k', '5k'], ['30k', '30k'], ['100k', '100k'], ['25%', '25%'], ['Tudo', 'Tudo']], S.demoWin)}</div><button class="btn" data-act="demoFull">${ic('x')}Fechar</button></div>
+    ov.innerHTML = `<div class="demofull"><div class="demofull-h"><h2>Demografia da sessão</h2><span class="muted mono">${demoHeader()}</span><div class="grow"></div><div style="width:320px">${samplingControl()}</div><div style="width:300px">${segUI('demoWin', [['5k', '5k'], ['30k', '30k'], ['100k', '100k'], ['25%', '25%'], ['Tudo', 'Tudo']], S.demoWin)}</div><button class="btn" data-act="demoFull">${ic('x')}Fechar</button></div>
       <div class="demogrid">${demoKpis()}${demoCharts(true)}</div></div>`;
   } else ov.innerHTML = '';
   let b = '';
@@ -568,7 +577,7 @@ const ACT = {
   askRestart() { S.modal = 'restart'; S.drawer = null; renderLayer(); },
   restart() {
     S.modal = null; S.initApplied = { ...S.init }; S.envApplied = { ...S.env }; S.events = []; S.selected = null; S.follow = false;
-    TEL = { epoch: -1, samples: [] }; GEN = null;
+    TEL = { epoch: 0, samples: [] }; GEN = null;
     send({ type: 'restart', init: S.init, env: S.env }); renderAll();
   },
   newSeed() { const a = Math.floor(Math.random() * 9e8 + 1e8), b = Math.floor(Math.random() * 1e9); S.init.seed = `${a}${String(b).padStart(9, '0')}`; renderPanel(); renderTop(); renderRail(); },
@@ -599,6 +608,7 @@ const ACT = {
   fit() { cam.zoom = 1; cam.cx = INFO.world_width / 2; cam.cy = INFO.world_height / 2; S.follow = false; renderStage(); },
   openRep(v) { selectCell(+v); S.cellsView = 'ind'; renderPanel(); },
   demoFull() { S.demoFull = !S.demoFull; renderStage(); },
+  sampling(v) { send({ type: 'telemetry_interval', ticks: +v }); setTimeout(() => { if (S.tab === 'demografia') renderPanel(); if (S.demoFull) renderStage(); }, 150); },
   toggleRecords() { S.showRecords = !S.showRecords; if (S.drawer === 'individual') renderLayer(); else renderPanel(); },
   askSave() { S.modal = 'saveInd'; S.drawer = null; renderLayer(); setTimeout(() => { const i = $('#saveName'); if (i) { i.focus(); i.select(); } }, 30); },
   saveInd(v) { const name = $('#saveName')?.value || ''; S.modal = null; renderLayer(); send({ type: 'save_individual', id: +v, name }); },
@@ -877,12 +887,13 @@ async function pollFrame() {
 }
 async function pollTelemetry() {
   try {
+    TEL.error = null;
     const b = await invoke('telemetry', { from: TEL.samples.length, epoch: TEL.epoch });
     if (b.epoch !== TEL.epoch) TEL = { epoch: b.epoch, samples: b.samples };
     else if (b.start === TEL.samples.length) TEL.samples.push(...b.samples);
     else TEL.samples = TEL.samples.slice(0, b.start).concat(b.samples);
-    if (b.total < TEL.samples.length) { TEL = { epoch: -1, samples: [] }; }
-  } catch (err) { console.error(err); }
+    if (b.total < TEL.samples.length) { TEL = { epoch: 0, samples: [] }; }
+  } catch (err) { console.error(err); TEL.error = String(err); }
 }
 async function pollGenetics(force) {
   if (!force && !(S.tab === 'celulas' && S.cellsView === 'gen' && !S.collapsed && S.mode === 'sessao')) return;
