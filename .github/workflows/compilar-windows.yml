@@ -1,0 +1,90 @@
+# Compila o New Gods Unlimited para Windows e publica a Release.
+#
+# A versão mora em "5 - Código-fonte/Cargo.toml" (campo version), no padrão
+# 1.2.0 ou 1.2.0-teste.1. Quando algo entra na main com uma versão que ainda
+# não tem Release, este workflow compila, cria a tag v<versão> e publica
+# "New Gods Unlimited V<versão>.exe". Testes saem como pre-release.
+#
+# Também roda manualmente pela aba Actions; nesse caso recompila e substitui
+# o .exe da Release da versão atual.
+name: Compilar versão Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ['5 - Código-fonte/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: '5 - Código-fonte'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ler versão do Cargo.toml
+        id: versao
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $linha = Get-Content Cargo.toml | Where-Object { $_ -match '^version\s*=\s*"(.+)"' } | Select-Object -First 1
+          $null = $linha -match '^version\s*=\s*"(.+)"'
+          $v = $Matches[1]
+          if ($v -notmatch '^\d+\.\d+\.\d+(-teste\.\d+)?$') { throw "Versão inválida no Cargo.toml: $v (use 1.2.0 ou 1.2.0-teste.1)" }
+          gh release view "v$v" --repo $env:GITHUB_REPOSITORY *> $null
+          $existe = ($LASTEXITCODE -eq 0)
+          $global:LASTEXITCODE = 0
+          $compilar = (-not $existe) -or ('${{ github.event_name }}' -eq 'workflow_dispatch')
+          "numero=$v" >> $env:GITHUB_OUTPUT
+          "arquivo=New Gods Unlimited V$v.exe" >> $env:GITHUB_OUTPUT
+          "teste=$(if ($v -match '-teste') { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          "existe=$(if ($existe) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          "compilar=$(if ($compilar) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          if (-not $compilar) { Write-Host "A Release v$v já existe; nada a compilar." }
+
+      - name: Rust estável
+        if: steps.versao.outputs.compilar == 'true'
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Compilar
+        if: steps.versao.outputs.compilar == 'true'
+        run: cargo build --release --locked --bin new_gods_unlimited
+
+      - name: Dar o nome da versão
+        if: steps.versao.outputs.compilar == 'true'
+        run: |
+          New-Item -ItemType Directory -Force -Path ../saida | Out-Null
+          Copy-Item target/release/new_gods_unlimited.exe "../saida/${{ steps.versao.outputs.arquivo }}"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.versao.outputs.compilar == 'true'
+        with:
+          name: New Gods Unlimited V${{ steps.versao.outputs.numero }}
+          path: saida/*.exe
+
+      - name: Publicar na Release
+        if: steps.versao.outputs.compilar == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMERO: ${{ steps.versao.outputs.numero }}
+          ARQUIVO: ${{ steps.versao.outputs.arquivo }}
+          TESTE: ${{ steps.versao.outputs.teste }}
+          EXISTE: ${{ steps.versao.outputs.existe }}
+        run: |
+          $tag = "v$env:NUMERO"
+          $exe = "../saida/$env:ARQUIVO"
+          if ($env:EXISTE -eq 'true') {
+            gh release upload $tag $exe --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            $extra = @()
+            if ($env:TESTE -eq 'true') { $extra += '--prerelease' }
+            gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --title "New Gods Unlimited V$env:NUMERO" --generate-notes --target $env:GITHUB_SHA @extra
+          }

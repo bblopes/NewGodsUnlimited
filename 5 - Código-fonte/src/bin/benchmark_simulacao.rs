@@ -172,7 +172,7 @@ fn run() -> Result<(), String> {
 
     let validated_run = match options.validated_run.clone() {
         Some(path) => path,
-        None => find_most_advanced_run(Path::new("data/runs"))?,
+        None => find_most_advanced_run(Path::new("../4 - Dados/runs"))?,
     };
     let founder_genomes = load_founder_genomes(&validated_run)?;
     if founder_genomes.is_empty() {
@@ -616,7 +616,7 @@ fn print_usage() {
     println!("  --cenario base|realista|estresse");
     println!("  --populacao N --ticks N --aquecimento N --repeticoes N --seed N");
     println!("  --run-validado CAMINHO   usa esta população salva como fundadora Val 2");
-    println!("  --sem-arquivo             não grava JSON em data/benchmarks");
+    println!("  --sem-arquivo             não grava JSON em ../4 - Dados/benchmarks");
 }
 
 fn option_value(
@@ -644,7 +644,7 @@ fn write_report(
     profile_elapsed: Duration,
     deterministic: bool,
 ) -> Result<PathBuf, String> {
-    let directory = Path::new("data/benchmarks");
+    let directory = Path::new("../4 - Dados/benchmarks");
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

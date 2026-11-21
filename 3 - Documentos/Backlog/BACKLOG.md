@@ -93,7 +93,7 @@ e direção de entidades no ambiente.
 O PF inicial é instantâneo e agregado por grade para manter custo limitado. A
 persistência, difusão, decaimento e interação com iluminação continuam no
 backlog. A especificação completa está em
-[PG, visão e canal de alimento](PG_E_CANAL_DE_ALIMENTO.md).
+[PG, visão e canal de alimento](../Documentação/PG_E_CANAL_DE_ALIMENTO.md).
 
 ### Iluminação contínua, temperatura e correntes
 
