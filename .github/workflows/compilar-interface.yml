@@ -1,7 +1,7 @@
 # Compila a interface nova (Tauri) para Windows.
 #
 # A versão mora em "5 - Código-fonte/interface/Cargo.toml" (só números).
-# - Em qualquer push na branch interface-nova: compila e guarda o .exe como
+# - Em qualquer branch que não seja a main: compila e guarda o .exe como
 #   artefato do workflow, para teste.
 # - Na main, quando a versão ainda não tem Release: compila e publica
 #   "New Gods Unlimited V<versão>.exe" como pre-release, com as notas do
@@ -10,7 +10,7 @@ name: Compilar interface nova
 
 on:
   push:
-    branches: [main, interface-nova]
+    branches: ['**']
     paths:
       - '5 - Código-fonte/**'
       - '.github/workflows/compilar-interface.yml'
