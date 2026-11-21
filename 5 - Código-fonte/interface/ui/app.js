@@ -282,7 +282,7 @@ function tabCelulas() {
       </div>`)}
     ${sec('corpo', 'Corpo', `<div class="readouts">${ro('Raio físico', fmt(d.radius, 1) + ' u', '', 'cRad')}${ro('Tamanho', fmt(r, 2) + ' R', '', 'cSize')}${ro('Velocidade máx.', fmt(8 / Math.sqrt(Math.max(r, 0.01)), 2) + ' u/tick', 'wide', 'cSpeed')}</div>`)}
     ${sec('sensores', 'Sensores', `<div class="readouts">${ro('Alcance visual', fmt(d.sensor_range) + ' u', '', 'cRange')}${ro('Custo do sensor', fmt(d.sensor_cost, 4) + '/tick', '', 'cCost')}${ro('Alcance químico', '500 u')}${ro('Idade máxima (alelo)', fmt(d.max_age) + ' ticks')}</div><button class="btn sm" data-act="layerOn" data-v="cones">${ic('eye')}Mostrar cones na arena</button>`)}
-    ${sec('rede', `Rede neural ao vivo`, `<div class="hint">P1, P2 e P3 deste indivíduo: <b class="mono">${d.genome_map ? d.genome_map.channels.map((c, k) => `P${k + 1}=C${c}`).join(' · ') : '—'}</b></div><div id="nnBox">${neuralNet({ ...d, channels: d.genome_map?.channels })}</div><div class="legend"><span><i style="background:var(--ok)"></i>sinal positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo geneticamente</span></div>`)}
+    ${sec('rede', `Rede neural ao vivo`, `<div class="hint">P1, P2 e P3 deste indivíduo: <b class="mono">${d.genome_map ? d.genome_map.channels.map((c, k) => `P${k + 1}=C${c}`).join(' · ') : '—'}</b></div><div id="nnBox">${neuralNet({ ...d, channels: d.genome_map?.channels })}</div><div class="legend"><span><i style="background:var(--ok)"></i>sinal positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo geneticamente</span><span><i style="background:none;border:1px dashed var(--mu2)"></i>sensor não lido (não calculado)</span><span><i style="background:none;border-top:1px dashed var(--mu2);border-radius:0;height:0;margin-top:5px"></i>ligação inerte (nó desligado)</span></div>`)}
     ${sec('genoma', 'Código genético', genomeDisclosure(d.genome, d.genome_map))}
   `;
   return head('Células', `${fmt(F?.population)} vivas`) + top + `<div class="side-body" style="padding-top:0">${body}</div>`;
@@ -306,6 +306,17 @@ const slotTitle = (i, channels) => { const c = chemOf(i, channels); return c == 
 const sigColor = v => v > 0.05 ? 'var(--ok)' : v < -0.05 ? 'var(--dg)' : 'var(--mu)';
 function neuralNet(d) {
   const { w, hgt, pos } = nnLayout();
+  // Sensores lidos por alguma ligação efetiva. Os demais não influenciam o
+  // cérebro e, desde a V3.0.4, nem são calculados pelo motor.
+  const readSensors = new Set(d.wires.map(([a]) => a | 0).filter(a => a < 26));
+  // Ligações que existem no genoma (registro ligado e válido) mas não
+  // funcionam porque um dos nós está desligado.
+  const inert = (d.genome_map?.records || []).filter(r => r.active && r.legal && !r.effective);
+  const inertWires = inert.map(r => {
+    const pa = pos[r.source], pb = pos[r.destination]; if (!pa || !pb) return '';
+    const [x1, y1] = pa, [x2, y2] = pb;
+    return `<path d="M${x1} ${y1} C${(x1 + x2) / 2} ${y1} ${(x1 + x2) / 2} ${y2} ${x2} ${y2}" stroke="var(--mu2)" stroke-opacity=".45" stroke-width="0.8" stroke-dasharray="3 3" fill="none"><title>Registro #${r.index}: ${SLOT_NAMES[r.source]} → ${SLOT_NAMES[r.destination]} · existe no genoma, mas não funciona (nó desligado)</title></path>`;
+  }).join('');
   const wires = d.wires.map(([a, b, wt, sig], i) => {
     const pa = pos[a | 0], pb = pos[b | 0]; if (!pa || !pb) return '';
     const [x1, y1] = pa, [x2, y2] = pb;
@@ -314,14 +325,16 @@ function neuralNet(d) {
   const nodes = pos.map(([x, y], i) => {
     const inactive = !d.active[i]; const v = d.slots[i] || 0;
     const kind = i < 26 ? 's' : i < 45 ? 'i' : 'm';
+    const unread = kind === 's' && !readSensors.has(i);
     const anchor = kind === 's' ? 'end' : kind === 'm' ? 'start' : 'middle'; const tx = kind === 's' ? x - 8 : kind === 'm' ? x + 8 : x;
     const ch = chemOf(i, d.channels), label = [12, 15, 18, 52, 53, 54].includes(i) && ch != null ? `${SLOT_NAMES[i]}·C${ch}` : SLOT_NAMES[i];
     const chemNote = ch != null ? ` · trabalha com a substância C${ch}` : '';
+    if (unread) return `<g style="opacity:.55"><title>${slotTitle(i, d.channels)} · ${slotDesc(i)}${chemNote} · nenhuma ligação lê este sensor: não é calculado</title><circle data-nn="${i}" data-unread="1" cx="${x}" cy="${y}" r="3" fill="none" stroke="var(--mu2)" stroke-width="1" stroke-dasharray="1.5 1.5"/><text x="${tx}" y="${y + 3}" text-anchor="${anchor}" style="fill:var(--mu2)">${label}</text></g>`;
     return `<g><title>${slotTitle(i, d.channels)} · ${slotDesc(i)}${chemNote}${inactive ? ' · inativo geneticamente' : ''} · ${v.toFixed(2)}</title><circle data-nn="${i}" cx="${x}" cy="${y}" r="${inactive ? 3 : 3 + Math.min(1, Math.abs(v)) * 2}" fill="${inactive ? 'var(--s4)' : sigColor(v)}" stroke="var(--s1)" stroke-width="1"/>${kind !== 'i' ? `<text x="${tx}" y="${y + 3}" text-anchor="${anchor}">${label}</text>` : ''}</g>`;
   }).join('');
   return `<svg class="nn" viewBox="0 0 ${w} ${hgt}" style="max-height:420px;width:100%">
     <text x="34" y="9" text-anchor="middle" style="fill:var(--mu2)">sensores</text><text x="150" y="9" text-anchor="middle" style="fill:var(--mu2)">internos</text><text x="266" y="9" text-anchor="middle" style="fill:var(--mu2)">motores</text>
-    ${wires}${nodes}</svg>`;
+    ${inertWires}${wires}${nodes}</svg>`;
 }
 const SECTION_COLORS = { fiacao: 'var(--ac)', canais: '#b48cf0', alcance: 'var(--ok)', atividade: 'var(--wa)', reserva: 'var(--mu2)' };
 function genomeGrid(bits, map) {
@@ -486,7 +499,7 @@ function renderLayer() {
 function individualDrawer() {
   const v = VIEW;
   if (!v) return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>Indivíduo</h3><p>Carregando…</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div></div>`;
-  const d = { slots: new Array(56).fill(0), active: v.active, wires: v.wires.map(([a, b, w]) => [a, b, w, w / 4]), channels: v.genome_map?.channels };
+  const d = { slots: new Array(56).fill(0), active: v.active, wires: v.wires.map(([a, b, w]) => [a, b, w, w / 4]), channels: v.genome_map?.channels, genome_map: v.genome_map };
   const when = v.created_at ? new Date(v.created_at * 1000).toLocaleString('pt-BR') : null;
   return `<div class="drawer" data-stop="1"><div class="drawer-h"><span class="cdot" style="background:${esc(v.color)};margin-top:2px"></span><div style="flex:1"><h3>${esc(v.name)}</h3><p>${esc(v.description)}</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div>
     <div class="drawer-b">
@@ -937,7 +950,7 @@ function updateLive() {
     set('cConn', `${d.connections} / ${d.active_nodes}`); set('cSim', d.similar_id != null ? `#${d.similar_id} · ${fmt(d.similar * 100, 1)}%` : 'sem outra célula');
     set('cRad', fmt(d.radius, 1) + ' u'); set('cSize', fmt(d.radius / INFO.cell_radius, 2) + ' R'); set('cRange', fmt(d.sensor_range) + ' u'); set('cCost', fmt(d.sensor_cost, 4) + '/tick');
     const b = document.querySelector('[data-live="cEbar"]'); if (b) b.style.width = clamp(d.energy / d.capacity * 100, 0, 100) + '%';
-    document.querySelectorAll('[data-nn]').forEach(n => { const i = +n.dataset.nn; if (!d.active[i]) return; const v = d.slots[i] || 0; n.setAttribute('fill', sigColor(v)); n.setAttribute('r', 3 + Math.min(1, Math.abs(v)) * 2); });
+    document.querySelectorAll('[data-nn]').forEach(n => { const i = +n.dataset.nn; if (!d.active[i] || n.dataset.unread) return; const v = d.slots[i] || 0; n.setAttribute('fill', sigColor(v)); n.setAttribute('r', 3 + Math.min(1, Math.abs(v)) * 2); });
     document.querySelectorAll('[data-w]').forEach(p => { const w = d.wires[+p.dataset.w]; if (w) p.setAttribute('stroke-opacity', 0.15 + Math.min(1, Math.abs(w[3])) * 0.7); });
   } else if (S.selected != null && !d && S.tab === 'celulas' && S.cellsView === 'ind' && document.querySelector('.cellhead')) {
     say(`A célula #${S.selected} morreu`, false); S.selected = null; S.follow = false; send({ type: 'select', id: null }); renderPanel();
