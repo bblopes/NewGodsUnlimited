@@ -1,0 +1,1234 @@
+//! Ponte entre a interface e o motor de simulação.
+//!
+//! O `World` vive só na thread do worker. A interface nunca recebe o mundo
+//! inteiro: o worker publica uma fotografia compacta (`Frame`) no ritmo de
+//! desenho e guarda a telemetria a cada 250 ticks. As regras da simulação são
+//! as mesmas do executável antigo; este arquivo só reproduz o laço de execução
+//! que antes ficava em `app.rs`.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use macroquad::prelude::Vec2;
+use serde::{Deserialize, Serialize};
+
+use new_gods_unlimited::config::{WORLD_HEIGHT, WORLD_WIDTH};
+use new_gods_unlimited::environment::flow::{FlowField, FlowPreset};
+use new_gods_unlimited::environment::map::{MapDefinition, MAP_GRID_HEIGHT, MAP_GRID_WIDTH};
+use new_gods_unlimited::simulation::brain::{INTERNAL_START, SLOT_COUNT};
+use new_gods_unlimited::simulation::genome::GENOME_BIT_COUNT;
+use new_gods_unlimited::simulation::pheromone::{PheromoneDisplay, FIELD_HEIGHT, FIELD_WIDTH};
+use new_gods_unlimited::simulation::world::{
+    AntiCrammingConfig, InitialNeuralConfiguration, World, CELL_RADIUS,
+    DEFAULT_MENTAL_ENERGY_COST, DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK, FOOD_ENERGY,
+    MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
+    MIN_EXCLUSION_DISTANCE,
+};
+
+pub const SPEED_MULTIPLIERS: [f32; 7] = [
+    1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0,
+];
+const TELEMETRY_INTERVAL_TICKS: u64 = 250;
+const MAX_TELEMETRY_SAMPLES: usize = 12_000;
+const DEFAULT_SEED: u64 = 847_291_530;
+const DEFAULT_REPRODUCTION_LIMIT: f32 = 5_000.0;
+const GENETIC_GROUP_THRESHOLD: f32 = 0.985;
+
+// ---------------------------------------------------------------------------
+// Configuração vinda da interface
+// ---------------------------------------------------------------------------
+
+/// Regras do mundo que valem ao clicar em Aplicar.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EnvSettings {
+    pub min_repro: f32,
+    pub limit: f32,
+    /// Custo físico por conexão/tick (a interface mostra ×40.000).
+    pub mental: f32,
+    /// Nascimento por abiogênese, em partículas por tick.
+    pub emission: f32,
+    pub lifetime: u32,
+    pub food_energy: f32,
+    /// Probabilidade por tick de multiplicação sob luz (0 a 0,02).
+    pub phyto_rate: f32,
+    pub flow_on: bool,
+    /// 0 a 1.
+    pub flow_intensity: f32,
+    pub flow_preset: String,
+    pub ac_on: bool,
+    pub ac_force: f32,
+    /// Distância mínima entre núcleos, em unidades do mundo.
+    pub ac_distance: f32,
+}
+
+impl Default for EnvSettings {
+    fn default() -> Self {
+        Self {
+            min_repro: MAX_ENERGY,
+            limit: DEFAULT_REPRODUCTION_LIMIT,
+            mental: DEFAULT_MENTAL_ENERGY_COST,
+            emission: 0.12,
+            lifetime: 600,
+            food_energy: FOOD_ENERGY,
+            phyto_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
+            flow_on: true,
+            flow_intensity: 1.0,
+            flow_preset: "Clássico".to_owned(),
+            ac_on: true,
+            ac_force: 1.0,
+            ac_distance: MIN_EXCLUSION_DISTANCE,
+        }
+    }
+}
+
+impl EnvSettings {
+    fn sanitized(mut self) -> Self {
+        self.min_repro = self.min_repro.max(1.0);
+        self.limit = self.limit.max(self.min_repro);
+        self.mental = self.mental.max(0.0);
+        self.emission = self.emission.max(0.0);
+        self.lifetime = self.lifetime.max(1);
+        self.food_energy = self.food_energy.max(0.0);
+        self.phyto_rate = self.phyto_rate.clamp(0.0, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK);
+        self.flow_intensity = self.flow_intensity.clamp(0.0, 1.0);
+        self.ac_force = self.ac_force.clamp(0.0, 1.0);
+        self.ac_distance = self
+            .ac_distance
+            .clamp(MIN_EXCLUSION_DISTANCE, MAX_EXCLUSION_DISTANCE);
+        self
+    }
+
+    fn flow_preset(&self) -> FlowPreset {
+        flow_preset_from(&self.flow_preset)
+    }
+
+    fn effective_flow_intensity(&self) -> f32 {
+        if self.flow_on {
+            self.flow_intensity
+        } else {
+            0.0
+        }
+    }
+
+    fn anti_cramming(&self) -> AntiCrammingConfig {
+        AntiCrammingConfig {
+            enabled: self.ac_on,
+            force: self.ac_force,
+            exclusion_distance: self.ac_distance,
+        }
+    }
+
+    fn flow_field(&self, seed: u64) -> FlowField {
+        FlowField::new(seed)
+            .with_preset(self.flow_preset())
+            .with_intensity(self.effective_flow_intensity())
+    }
+}
+
+/// Condições que só valem ao reiniciar.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InitSettings {
+    /// Texto, porque seeds de 64 bits não cabem num número do JavaScript.
+    pub seed: String,
+    pub cells: usize,
+    pub neural: String,
+    pub amadeus: bool,
+}
+
+impl Default for InitSettings {
+    fn default() -> Self {
+        Self {
+            seed: DEFAULT_SEED.to_string(),
+            cells: 20,
+            neural: "classica".to_owned(),
+            amadeus: false,
+        }
+    }
+}
+
+impl InitSettings {
+    fn seed(&self) -> u64 {
+        self.seed.trim().parse().unwrap_or(DEFAULT_SEED)
+    }
+}
+
+pub fn flow_preset_from(name: &str) -> FlowPreset {
+    match name {
+        "Oásis" | "Oasis" | "oasis" => FlowPreset::Oasis,
+        "Esquerda" | "esquerda" | "left" => FlowPreset::Left,
+        _ => FlowPreset::Classic,
+    }
+}
+
+fn neural_from(name: &str) -> InitialNeuralConfiguration {
+    match name {
+        "motor" => InitialNeuralConfiguration::MotorMinimum,
+        "val1" => InitialNeuralConfiguration::ValidatedV1,
+        "val2" => InitialNeuralConfiguration::ValidatedV2,
+        "pfguia" => InitialNeuralConfiguration::FoodGradient,
+        _ => InitialNeuralConfiguration::Classic,
+    }
+}
+
+fn chem_display_from(name: &str) -> Option<PheromoneDisplay> {
+    match name {
+        "PG" => Some(PheromoneDisplay::Pg),
+        "PF" => Some(PheromoneDisplay::Food),
+        "Todos" => Some(PheromoneDisplay::All),
+        other => other
+            .strip_prefix('C')
+            .and_then(|channel| channel.parse::<u8>().ok())
+            .map(PheromoneDisplay::Generic),
+    }
+}
+
+/// Pedidos da interface. Chegam do JavaScript como `{ "type": "...", ... }`.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UiCommand {
+    Pause { value: bool },
+    Speed { value: usize },
+    Headless { value: bool },
+    KeepAwake { value: bool },
+    Apply { env: EnvSettings },
+    Restart { init: InitSettings, env: EnvSettings },
+    Insert { x: f32, y: f32, neural: String },
+    Select { id: Option<u64> },
+    Chem { display: Option<String> },
+    MapStroke { erase: bool, x: f32, y: f32, radius: u8 },
+    MapSun { points: Vec<[f32; 2]> },
+    MapClearSun,
+    MapApply,
+    MapRevert,
+    MapUndo,
+    WantGenetics,
+}
+
+enum Command {
+    Ui(UiCommand),
+}
+
+// ---------------------------------------------------------------------------
+// O que a interface lê
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Default, Serialize)]
+pub struct CellDetail {
+    pub id: u64,
+    pub energy: f32,
+    pub capacity: f32,
+    pub age: u64,
+    pub max_age: u64,
+    pub generation: u32,
+    pub children: u32,
+    pub radius: f32,
+    pub sensor_range: f32,
+    pub sensor_cost: f32,
+    pub connections: usize,
+    pub active_nodes: usize,
+    pub color: String,
+    pub similar_id: Option<u64>,
+    pub similar: Option<f32>,
+    pub slots: Vec<f32>,
+    pub active: Vec<bool>,
+    /// [origem, destino, peso, sinal]
+    pub wires: Vec<[f32; 4]>,
+    pub genome: String,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct ChemLayer {
+    pub width: usize,
+    pub height: usize,
+    pub max: f32,
+    /// Valores normalizados de 0 a 255, linha a linha.
+    pub values: Vec<u8>,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct Notice {
+    pub seq: u64,
+    pub text: String,
+    pub ok: bool,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct Frame {
+    pub tick: u64,
+    pub population: usize,
+    pub food_count: usize,
+    pub tps: f32,
+    pub publish_hz: f32,
+    pub paused: bool,
+    pub speed: usize,
+    pub headless: bool,
+    pub run_id: u64,
+    pub epoch: u64,
+    pub births_total: u64,
+    pub deaths_total: u64,
+    pub energy_capacity: f32,
+    pub reproduction_minimum: f32,
+    pub crowding_pairs: usize,
+    pub crowding_min: Option<f32>,
+    pub ids: Vec<u64>,
+    pub xs: Vec<f32>,
+    pub ys: Vec<f32>,
+    pub radii: Vec<f32>,
+    pub colors: Vec<u32>,
+    pub energies: Vec<f32>,
+    pub ranges: Vec<f32>,
+    pub crowded: Vec<u8>,
+    /// x0, y0, x1, y1, ...
+    pub food: Vec<f32>,
+    pub chem: Option<ChemLayer>,
+    pub detail: Option<CellDetail>,
+    pub map_version: u64,
+    pub map_dirty: bool,
+    pub notice: Notice,
+}
+
+#[derive(Clone, Copy, Default, Serialize)]
+pub struct Sample {
+    pub tick: u64,
+    pub population: usize,
+    pub births_total: u64,
+    pub deaths_total: u64,
+    pub births_neural: u64,
+    pub births_limit: u64,
+    pub deaths_starvation: u64,
+    pub deaths_phagocytosis: u64,
+    pub deaths_age: u64,
+    pub average_energy: f32,
+    pub average_age: f32,
+    pub average_generation: f32,
+    pub max_generation: u32,
+    pub genetic_diversity: f32,
+    pub reproduction_minimum: f32,
+}
+
+#[derive(Default, Serialize)]
+pub struct TelemetryBatch {
+    pub epoch: u64,
+    pub total: usize,
+    pub start: usize,
+    pub samples: Vec<Sample>,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct MapData {
+    pub version: u64,
+    pub width: usize,
+    pub height: usize,
+    pub world_width: f32,
+    pub world_height: f32,
+    pub walls: Vec<u8>,
+    pub sun: Vec<u8>,
+    pub dirty: bool,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct GroupInfo {
+    pub color: String,
+    pub count: usize,
+    pub share: f32,
+    pub cohesion: f32,
+    pub average_generation: f32,
+    pub representative: u64,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct ConnectionInfo {
+    pub source: usize,
+    pub destination: usize,
+    pub frequency: f32,
+    pub mean_weight: f32,
+    pub groups: usize,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct SlotInfo {
+    pub slot: usize,
+    pub used: f32,
+    pub as_source: f32,
+    pub as_destination: f32,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct Genetics {
+    pub tick: u64,
+    pub population: usize,
+    pub group_count: usize,
+    pub dominant_share: f32,
+    pub dominant_cohesion: f32,
+    pub consensus: f32,
+    pub groups: Vec<GroupInfo>,
+    pub connections: Vec<ConnectionInfo>,
+    pub slots: Vec<SlotInfo>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct EngineInfo {
+    pub world_width: f32,
+    pub world_height: f32,
+    pub cell_radius: f32,
+    pub min_exclusion: f32,
+    pub max_exclusion: f32,
+    pub max_phyto_rate: f32,
+    pub speeds: Vec<f32>,
+    pub env: EnvSettings,
+    pub init: InitSettings,
+    pub version: String,
+}
+
+// ---------------------------------------------------------------------------
+// Estado compartilhado
+// ---------------------------------------------------------------------------
+
+struct Shared {
+    frame: Mutex<Arc<Frame>>,
+    telemetry: Mutex<(u64, Vec<Sample>)>,
+    map: Mutex<(u64, Arc<MapDefinition>, bool)>,
+    flow: Mutex<(u64, EnvSettings)>,
+    genetics: Mutex<Option<Arc<Genetics>>>,
+    genetics_wanted_at: AtomicU64,
+    started: Instant,
+}
+
+pub struct Engine {
+    commands: Mutex<mpsc::Sender<Command>>,
+    shared: Arc<Shared>,
+}
+
+impl Engine {
+    pub fn start() -> Self {
+        let env = EnvSettings::default();
+        let init = InitSettings::default();
+        let map = MapDefinition::default();
+        let shared = Arc::new(Shared {
+            frame: Mutex::new(Arc::new(Frame::default())),
+            telemetry: Mutex::new((0, Vec::new())),
+            map: Mutex::new((1, Arc::new(map.clone()), false)),
+            flow: Mutex::new((init.seed(), env.clone())),
+            genetics: Mutex::new(None),
+            genetics_wanted_at: AtomicU64::new(0),
+            started: Instant::now(),
+        });
+        let (sender, receiver) = mpsc::channel();
+        let worker_shared = Arc::clone(&shared);
+        thread::Builder::new()
+            .name("simulacao".to_owned())
+            .spawn(move || worker(env, init, map, receiver, worker_shared))
+            .expect("não foi possível iniciar a thread da simulação");
+        Self {
+            commands: Mutex::new(sender),
+            shared,
+        }
+    }
+
+    pub fn send(&self, command: UiCommand) {
+        if let UiCommand::WantGenetics = command {
+            let now = self.shared.started.elapsed().as_millis() as u64;
+            self.shared.genetics_wanted_at.store(now.max(1), Ordering::Relaxed);
+            return;
+        }
+        if let Ok(sender) = self.commands.lock() {
+            let _ = sender.send(Command::Ui(command));
+        }
+    }
+
+    pub fn frame(&self) -> Frame {
+        self.shared
+            .frame
+            .lock()
+            .map(|frame| (**frame).clone())
+            .unwrap_or_default()
+    }
+
+    pub fn telemetry(&self, from: usize, epoch: u64) -> TelemetryBatch {
+        let Ok(log) = self.shared.telemetry.lock() else {
+            return TelemetryBatch::default();
+        };
+        let start = if epoch == log.0 { from.min(log.1.len()) } else { 0 };
+        TelemetryBatch {
+            epoch: log.0,
+            total: log.1.len(),
+            start,
+            samples: log.1[start..].to_vec(),
+        }
+    }
+
+    pub fn map_data(&self) -> MapData {
+        let Ok(map) = self.shared.map.lock() else {
+            return MapData::default();
+        };
+        let mut walls = vec![0u8; MAP_GRID_WIDTH * MAP_GRID_HEIGHT];
+        let mut sun = vec![0u8; MAP_GRID_WIDTH * MAP_GRID_HEIGHT];
+        for (x, y) in map.1.wall_cells() {
+            walls[y * MAP_GRID_WIDTH + x] = 1;
+        }
+        for (x, y) in map.1.sunlight_cells() {
+            sun[y * MAP_GRID_WIDTH + x] = 1;
+        }
+        MapData {
+            version: map.0,
+            width: MAP_GRID_WIDTH,
+            height: MAP_GRID_HEIGHT,
+            world_width: WORLD_WIDTH,
+            world_height: WORLD_HEIGHT,
+            walls,
+            sun,
+            dirty: map.2,
+        }
+    }
+
+    /// Amostra a corrente numa grade `columns × rows`; devolve [x, y, fx, fy, ...].
+    pub fn flow_vectors(&self, columns: usize, rows: usize) -> Vec<f32> {
+        let (seed, env) = match self.shared.flow.lock() {
+            Ok(flow) => (flow.0, flow.1.clone()),
+            Err(_) => return Vec::new(),
+        };
+        let map = match self.shared.map.lock() {
+            Ok(map) => Arc::clone(&map.1),
+            Err(_) => return Vec::new(),
+        };
+        let field = env.flow_field(seed);
+        let columns = columns.clamp(4, 120);
+        let rows = rows.clamp(3, 80);
+        let mut result = Vec::with_capacity(columns * rows * 4);
+        for row in 0..rows {
+            for column in 0..columns {
+                let x = (column as f32 + 0.5) / columns as f32 * WORLD_WIDTH;
+                let y = (row as f32 + 0.5) / rows as f32 * WORLD_HEIGHT;
+                let position = Vec2::new(x, y);
+                if map.is_wall(position) {
+                    continue;
+                }
+                let flow = field.sample_with_map(position, Some(&map));
+                result.extend_from_slice(&[x, y, flow.x, flow.y]);
+            }
+        }
+        result
+    }
+
+    pub fn genetics(&self) -> Option<Genetics> {
+        let now = self.shared.started.elapsed().as_millis() as u64;
+        self.shared.genetics_wanted_at.store(now.max(1), Ordering::Relaxed);
+        self.shared
+            .genetics
+            .lock()
+            .ok()
+            .and_then(|genetics| genetics.as_ref().map(|g| (**g).clone()))
+    }
+
+    pub fn info() -> EngineInfo {
+        EngineInfo {
+            world_width: WORLD_WIDTH,
+            world_height: WORLD_HEIGHT,
+            cell_radius: CELL_RADIUS,
+            min_exclusion: MIN_EXCLUSION_DISTANCE,
+            max_exclusion: MAX_EXCLUSION_DISTANCE,
+            max_phyto_rate: MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
+            speeds: SPEED_MULTIPLIERS.to_vec(),
+            env: EnvSettings::default(),
+            init: InitSettings::default(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Worker
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+fn set_windows_keep_awake(enabled: bool) {
+    const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+    const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
+    const ES_CONTINUOUS: u32 = 0x8000_0000;
+
+    extern "system" {
+        fn SetThreadExecutionState(execution_state: u32) -> u32;
+    }
+
+    let execution_state = if enabled {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    unsafe {
+        let _ = SetThreadExecutionState(execution_state);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_windows_keep_awake(_: bool) {}
+
+fn make_world(init: &InitSettings, env: &EnvSettings, map: &MapDefinition) -> World {
+    let seed = init.seed();
+    let configuration = neural_from(&init.neural);
+    let mut world = if init.amadeus {
+        World::new_amadeus_with_initial_population(seed, map.clone(), configuration, &[])
+    } else {
+        World::new_with_initial_population(seed, init.cells, map.clone(), configuration, &[])
+    };
+    world.set_phytoplankton_reproduction_rate(env.phyto_rate);
+    world.set_anti_cramming(env.anti_cramming());
+    world.reproduction_minimum = env.min_repro;
+    world
+}
+
+fn target_publish_hz(speed: usize) -> f32 {
+    let speed_multiplier = SPEED_MULTIPLIERS[speed];
+    let speed_penalty = 1.0 + 0.35 * speed_multiplier.log10().max(0.0);
+    (60.0 * 0.9 / speed_penalty).clamp(5.0, 60.0)
+}
+
+struct WorkerState {
+    env: EnvSettings,
+    init: InitSettings,
+    world: World,
+    flow: FlowField,
+    applied_map: MapDefinition,
+    edited_map: MapDefinition,
+    map_history: Vec<MapDefinition>,
+    map_version: u64,
+    map_is_dirty: bool,
+    paused: bool,
+    keep_awake: bool,
+    headless: bool,
+    speed: usize,
+    selected: Option<u64>,
+    chem: Option<PheromoneDisplay>,
+    run_id: u64,
+    epoch: u64,
+    notice: Notice,
+    estimated_tps: f32,
+    last_telemetry_tick: u64,
+}
+
+impl WorkerState {
+    fn say(&mut self, text: impl Into<String>, ok: bool) {
+        self.notice = Notice {
+            seq: self.notice.seq + 1,
+            text: text.into(),
+            ok,
+        };
+    }
+
+    fn publish_map(&mut self, shared: &Shared) {
+        self.map_version += 1;
+        let dirty = self.map_dirty();
+        self.map_is_dirty = dirty;
+        if let Ok(mut map) = shared.map.lock() {
+            *map = (self.map_version, Arc::new(self.edited_map.clone()), dirty);
+        }
+    }
+
+    fn map_dirty(&self) -> bool {
+        self.edited_map.wall_cells().ne(self.applied_map.wall_cells())
+            || self.edited_map.sunlight_cells().ne(self.applied_map.sunlight_cells())
+    }
+
+    fn publish_flow(&self, shared: &Shared) {
+        if let Ok(mut flow) = shared.flow.lock() {
+            *flow = (self.init.seed(), self.env.clone());
+        }
+    }
+
+    fn reset_telemetry(&mut self, shared: &Shared) {
+        self.epoch += 1;
+        if let Ok(mut log) = shared.telemetry.lock() {
+            log.0 = self.epoch;
+            log.1.clear();
+            log.1.push(capture_sample(&self.world));
+        }
+        self.last_telemetry_tick = self.world.tick;
+    }
+
+    fn handle(&mut self, command: UiCommand, shared: &Shared) {
+        match command {
+            UiCommand::Pause { value } => {
+                self.paused = value;
+                set_windows_keep_awake(self.keep_awake && !self.paused);
+            }
+            UiCommand::Speed { value } => self.speed = value.min(SPEED_MULTIPLIERS.len() - 1),
+            UiCommand::Headless { value } => self.headless = value,
+            UiCommand::KeepAwake { value } => {
+                self.keep_awake = value;
+                set_windows_keep_awake(self.keep_awake && !self.paused);
+            }
+            UiCommand::Apply { env } => {
+                self.env = env.sanitized();
+                self.flow = self.env.flow_field(self.init.seed());
+                self.world.set_phytoplankton_reproduction_rate(self.env.phyto_rate);
+                self.world.set_anti_cramming(self.env.anti_cramming());
+                self.world.reproduction_minimum = self.env.min_repro;
+                self.publish_flow(shared);
+                let tick = self.world.tick;
+                self.say(format!("Parâmetros aplicados no tick {tick}"), true);
+            }
+            UiCommand::Restart { init, env } => {
+                self.init = init;
+                self.env = env.sanitized();
+                self.applied_map = self.edited_map.clone();
+                self.world = make_world(&self.init, &self.env, &self.applied_map);
+                self.flow = self.env.flow_field(self.init.seed());
+                self.run_id = self.init.seed() ^ shared.started.elapsed().as_nanos() as u64;
+                self.selected = None;
+                self.publish_flow(shared);
+                self.publish_map(shared);
+                self.reset_telemetry(shared);
+                if let Ok(mut genetics) = shared.genetics.lock() {
+                    *genetics = None;
+                }
+                self.say("Nova run iniciada", true);
+            }
+            UiCommand::Insert { x, y, neural } => {
+                let configuration = neural_from(&neural);
+                if self
+                    .world
+                    .insert_organism_at(Vec2::new(x, y), configuration, &[])
+                {
+                    self.selected = self.world.organisms.last().map(|organism| organism.id);
+                    self.say(format!("Célula inserida ({})", configuration.label()), true);
+                } else {
+                    self.say(
+                        "Posição inválida: parede, borda ou outra célula no lugar",
+                        false,
+                    );
+                }
+            }
+            UiCommand::Select { id } => self.selected = id,
+            UiCommand::Chem { display } => {
+                self.chem = display.as_deref().and_then(chem_display_from);
+            }
+            UiCommand::MapStroke {
+                erase,
+                x,
+                y,
+                radius,
+            } => {
+                self.edited_map
+                    .paint_wall_brush(Vec2::new(x, y), !erase, radius);
+                self.publish_map(shared);
+            }
+            UiCommand::MapSun { points } => {
+                self.map_history.push(self.edited_map.clone());
+                let polygon: Vec<Vec2> =
+                    points.iter().map(|point| Vec2::new(point[0], point[1])).collect();
+                self.edited_map.set_sunlight_polygon(&polygon);
+                self.publish_map(shared);
+            }
+            UiCommand::MapClearSun => {
+                self.map_history.push(self.edited_map.clone());
+                self.edited_map.clear_sunlight();
+                self.publish_map(shared);
+            }
+            UiCommand::MapApply => {
+                self.applied_map = self.edited_map.clone();
+                self.world.map = self.applied_map.clone();
+                self.map_history.clear();
+                self.publish_map(shared);
+                self.say("Mapa aplicado ao mundo", true);
+            }
+            UiCommand::MapRevert => {
+                self.edited_map = self.applied_map.clone();
+                self.map_history.clear();
+                self.publish_map(shared);
+                self.say("Edição do mapa descartada", true);
+            }
+            UiCommand::MapUndo => {
+                if let Some(previous) = self.map_history.pop() {
+                    self.edited_map = previous;
+                    self.publish_map(shared);
+                }
+            }
+            UiCommand::WantGenetics => {}
+        }
+    }
+
+    fn begin_stroke(&mut self) {
+        if self.map_history.len() > 40 {
+            self.map_history.remove(0);
+        }
+        self.map_history.push(self.edited_map.clone());
+    }
+
+    fn build_frame(&self, publish_hz: f32, light: bool) -> Frame {
+        let world = &self.world;
+        let mut frame = Frame {
+            tick: world.tick,
+            population: world.organisms.len(),
+            food_count: world.food.len(),
+            tps: if self.paused { 0.0 } else { self.estimated_tps },
+            publish_hz,
+            paused: self.paused,
+            speed: self.speed,
+            headless: self.headless,
+            run_id: self.run_id,
+            epoch: self.epoch,
+            births_total: world.births_total,
+            deaths_total: world.deaths_total,
+            energy_capacity: world.energy_capacity,
+            reproduction_minimum: world.reproduction_minimum,
+            crowding_pairs: world.crowding.violating_pairs,
+            crowding_min: world.crowding.minimum_violation_distance,
+            map_version: self.map_version,
+            map_dirty: self.map_is_dirty,
+            notice: self.notice.clone(),
+            ..Frame::default()
+        };
+        if light {
+            return frame;
+        }
+        let count = world.organisms.len();
+        frame.ids.reserve(count);
+        frame.xs.reserve(count);
+        frame.ys.reserve(count);
+        frame.radii.reserve(count);
+        frame.colors.reserve(count);
+        frame.energies.reserve(count);
+        frame.ranges.reserve(count);
+        frame.crowded.reserve(count);
+        for organism in &world.organisms {
+            let [r, g, b] = organism.genome.genetic_rgb();
+            frame.ids.push(organism.id);
+            frame.xs.push(organism.position.x);
+            frame.ys.push(organism.position.y);
+            frame.radii.push(organism.physical_radius());
+            frame.colors.push(((r as u32) << 16) | ((g as u32) << 8) | b as u32);
+            frame.energies.push(organism.energy);
+            frame.ranges.push(organism.food_sensor_range());
+            frame.crowded.push(organism.crowding_violation as u8);
+        }
+        frame.food.reserve(world.food.len() * 2);
+        for particle in &world.food {
+            frame.food.push(particle.position.x);
+            frame.food.push(particle.position.y);
+        }
+        if let Some(display) = self.chem {
+            let max = world.pheromones.display_max(display);
+            let scale = if max > 0.0 { 255.0 / max } else { 0.0 };
+            let mut values = Vec::with_capacity(FIELD_WIDTH * FIELD_HEIGHT);
+            for y in 0..FIELD_HEIGHT {
+                for x in 0..FIELD_WIDTH {
+                    let value = world.pheromones.display_value(display, x, y) * scale;
+                    values.push(value.clamp(0.0, 255.0) as u8);
+                }
+            }
+            frame.chem = Some(ChemLayer {
+                width: FIELD_WIDTH,
+                height: FIELD_HEIGHT,
+                max,
+                values,
+            });
+        }
+        if let Some(id) = self.selected {
+            frame.detail = cell_detail(world, id);
+        }
+        frame
+    }
+
+}
+
+fn worker(
+    env: EnvSettings,
+    init: InitSettings,
+    map: MapDefinition,
+    commands: mpsc::Receiver<Command>,
+    shared: Arc<Shared>,
+) {
+    let world = make_world(&init, &env, &map);
+    let flow = env.flow_field(init.seed());
+    let mut state = WorkerState {
+        run_id: init.seed(),
+        env,
+        init,
+        world,
+        flow,
+        applied_map: map.clone(),
+        edited_map: map,
+        map_history: Vec::new(),
+        map_version: 1,
+        map_is_dirty: false,
+        paused: false,
+        keep_awake: true,
+        headless: false,
+        speed: 0,
+        selected: None,
+        chem: None,
+        epoch: 0,
+        notice: Notice::default(),
+        estimated_tps: 1_000.0,
+        last_telemetry_tick: 0,
+    };
+    set_windows_keep_awake(true);
+    state.reset_telemetry(&shared);
+    state.publish_map(&shared);
+    let mut last_publish = Instant::now() - Duration::from_secs(1);
+    let mut last_genetics = Instant::now() - Duration::from_secs(10);
+    let mut stroke_open = false;
+    let mut last_stroke = Instant::now();
+
+    loop {
+        let mut force_publish = false;
+        while let Ok(Command::Ui(command)) = commands.try_recv() {
+            if let UiCommand::MapStroke { .. } = command {
+                // Uma pincelada contínua vira um único passo de desfazer.
+                if !stroke_open || last_stroke.elapsed() > Duration::from_millis(400) {
+                    state.begin_stroke();
+                    stroke_open = true;
+                }
+                last_stroke = Instant::now();
+            } else {
+                stroke_open = false;
+            }
+            state.handle(command, &shared);
+            force_publish = true;
+        }
+
+        // Relatório genético: só é calculado enquanto a interface pede.
+        let wanted = shared.genetics_wanted_at.load(Ordering::Relaxed);
+        let now_ms = shared.started.elapsed().as_millis() as u64;
+        if wanted > 0
+            && now_ms.saturating_sub(wanted) < 3_000
+            && last_genetics.elapsed() >= Duration::from_millis(1_500)
+        {
+            let report = genetics_report(&state.world);
+            if let Ok(mut genetics) = shared.genetics.lock() {
+                *genetics = Some(Arc::new(report));
+            }
+            last_genetics = Instant::now();
+        }
+
+        let publish_hz = target_publish_hz(state.speed);
+
+        if state.paused {
+            if force_publish || last_publish.elapsed() >= Duration::from_millis(100) {
+                let frame = state.build_frame(publish_hz, state.headless);
+                if let Ok(mut target) = shared.frame.lock() {
+                    *target = Arc::new(frame);
+                }
+                last_publish = Instant::now();
+            }
+            thread::sleep(Duration::from_millis(4));
+            continue;
+        }
+
+        let requested_tps = 10.0 * SPEED_MULTIPLIERS[state.speed];
+        let batch = if state.headless || requested_tps > state.estimated_tps {
+            (state.estimated_tps * 0.008).round().clamp(64.0, 8_192.0) as u32
+        } else {
+            (requested_tps / publish_hz).ceil().max(1.0) as u32
+        };
+        let started = Instant::now();
+        for _ in 0..batch {
+            state.world.tick(
+                &state.flow,
+                state.env.emission,
+                state.env.emission,
+                state.env.lifetime,
+                state.env.food_energy,
+                state.env.mental,
+                state.env.min_repro,
+                state.env.limit,
+            );
+            if state.world.tick.saturating_sub(state.last_telemetry_tick) >= TELEMETRY_INTERVAL_TICKS {
+                if let Ok(mut log) = shared.telemetry.lock() {
+                    let mut sample = capture_sample(&state.world);
+                    sample.reproduction_minimum = state.env.min_repro;
+                    if log.1.len() >= MAX_TELEMETRY_SAMPLES {
+                        // Mantém a série inteira com metade da resolução.
+                        let kept: Vec<Sample> = log.1.iter().copied().step_by(2).collect();
+                        log.1 = kept;
+                    }
+                    log.1.push(sample);
+                }
+                state.last_telemetry_tick = state.world.tick;
+            }
+        }
+        let elapsed = started.elapsed().as_secs_f32().max(0.000_001);
+        let observed_tps = batch as f32 / elapsed;
+        state.estimated_tps = state.estimated_tps * 0.85 + observed_tps * 0.15;
+
+        let interval = if state.headless {
+            0.25
+        } else {
+            1.0 / publish_hz
+        };
+        if force_publish || last_publish.elapsed().as_secs_f32() >= interval {
+            let frame = state.build_frame(if state.headless { 0.0 } else { publish_hz }, state.headless);
+            if let Ok(mut target) = shared.frame.lock() {
+                *target = Arc::new(frame);
+            }
+            last_publish = Instant::now();
+        }
+
+        if !state.headless && requested_tps < observed_tps {
+            let desired_seconds = batch as f32 / requested_tps;
+            let remaining = desired_seconds - elapsed;
+            if remaining > 0.000_5 {
+                thread::sleep(Duration::from_secs_f32(remaining.min(0.25)));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Leituras derivadas do mundo
+// ---------------------------------------------------------------------------
+
+fn cell_detail(world: &World, id: u64) -> Option<CellDetail> {
+    let organism = world.organisms.iter().find(|organism| organism.id == id)?;
+    let similar = world.most_similar_living_cell(id);
+    let slots = (0..SLOT_COUNT)
+        .map(|slot| organism.brain.slot_value(slot))
+        .collect();
+    let active = (0..SLOT_COUNT)
+        .map(|slot| slot < INTERNAL_START || organism.genome.neural_slot_is_active(slot))
+        .collect();
+    let wires = organism
+        .brain
+        .visual_connections()
+        .map(|(connection, signal)| {
+            [
+                connection.source as f32,
+                connection.destination as f32,
+                connection.weight,
+                signal,
+            ]
+        })
+        .collect();
+    Some(CellDetail {
+        id,
+        energy: organism.energy,
+        capacity: world.energy_capacity,
+        age: organism.age_ticks,
+        max_age: organism.maximum_age_ticks(),
+        generation: organism.generation,
+        children: organism.children_produced,
+        radius: organism.physical_radius(),
+        sensor_range: organism.food_sensor_range(),
+        sensor_cost: organism.food_sensor_energy_cost(),
+        connections: organism.brain.connection_count(),
+        active_nodes: organism.brain.active_node_count(),
+        color: organism.genome.genetic_hex(),
+        similar_id: similar.map(|(other, _)| other),
+        similar: similar.map(|(_, value)| value),
+        slots,
+        active,
+        wires,
+        genome: organism.genome.binary_string(),
+    })
+}
+
+fn ones_per_bit(world: &World) -> Vec<u32> {
+    let mut ones = vec![0u32; GENOME_BIT_COUNT];
+    for organism in &world.organisms {
+        for (byte_index, byte) in organism.genome.bytes().iter().enumerate() {
+            for bit_in_byte in 0..8 {
+                let bit_index = byte_index * 8 + bit_in_byte;
+                if bit_index >= GENOME_BIT_COUNT {
+                    continue;
+                }
+                ones[bit_index] += ((byte >> (7 - bit_in_byte)) & 1) as u32;
+            }
+        }
+    }
+    ones
+}
+
+fn binary_entropy(probability: f32) -> f32 {
+    if probability <= 0.0 || probability >= 1.0 {
+        0.0
+    } else {
+        -probability * probability.log2() - (1.0 - probability) * (1.0 - probability).log2()
+    }
+}
+
+fn capture_sample(world: &World) -> Sample {
+    let population = world.organisms.len();
+    let max_generation = world
+        .organisms
+        .iter()
+        .map(|organism| organism.generation)
+        .max()
+        .unwrap_or(0);
+    let genetic_diversity = if population == 0 {
+        0.0
+    } else {
+        let ones = ones_per_bit(world);
+        ones.iter()
+            .map(|count| binary_entropy(*count as f32 / population as f32))
+            .sum::<f32>()
+            / ones.len() as f32
+    };
+    Sample {
+        tick: world.tick,
+        population,
+        births_total: world.births_total,
+        deaths_total: world.deaths_total,
+        births_neural: world.births_by_neural_decision_total,
+        births_limit: world.births_by_energy_limit_total,
+        deaths_starvation: world.deaths_by_starvation_total,
+        deaths_phagocytosis: world.deaths_by_phagocytosis_total,
+        deaths_age: world.deaths_by_age_total,
+        average_energy: world.average_energy(),
+        average_age: world.average_age_ticks(),
+        average_generation: world.average_generation(),
+        max_generation,
+        genetic_diversity,
+        reproduction_minimum: world.reproduction_minimum,
+    }
+}
+
+fn genetics_report(world: &World) -> Genetics {
+    let population = world.organisms.len();
+    if population == 0 {
+        return Genetics {
+            tick: world.tick,
+            ..Genetics::default()
+        };
+    }
+    let mut order: Vec<usize> = (0..population).collect();
+    order.sort_by_key(|&index| world.organisms[index].id);
+
+    // Grupos por similaridade com a representante (heurística de 98,5%).
+    struct Group {
+        representative: usize,
+        members: Vec<usize>,
+        similarity_sum: f32,
+        generation_sum: f64,
+    }
+    let mut groups: Vec<Group> = Vec::new();
+    let mut group_of = vec![0usize; population];
+    for &index in &order {
+        let genome = &world.organisms[index].genome;
+        let mut best: Option<(usize, f32)> = None;
+        for (group_index, group) in groups.iter().enumerate() {
+            let similarity = genome.similarity_to(&world.organisms[group.representative].genome);
+            if similarity >= GENETIC_GROUP_THRESHOLD
+                && best.map_or(true, |(_, current)| similarity > current)
+            {
+                best = Some((group_index, similarity));
+            }
+        }
+        let generation = world.organisms[index].generation as f64;
+        match best {
+            Some((group_index, similarity)) => {
+                let group = &mut groups[group_index];
+                group.members.push(index);
+                group.similarity_sum += similarity;
+                group.generation_sum += generation;
+                group_of[index] = group_index;
+            }
+            None => {
+                group_of[index] = groups.len();
+                groups.push(Group {
+                    representative: index,
+                    members: vec![index],
+                    similarity_sum: 1.0,
+                    generation_sum: generation,
+                });
+            }
+        }
+    }
+
+    let mut group_infos: Vec<GroupInfo> = groups
+        .iter()
+        .map(|group| GroupInfo {
+            color: world.organisms[group.representative].genome.genetic_hex(),
+            count: group.members.len(),
+            share: group.members.len() as f32 / population as f32,
+            cohesion: group.similarity_sum / group.members.len() as f32,
+            average_generation: (group.generation_sum / group.members.len() as f64) as f32,
+            representative: world.organisms[group.representative].id,
+        })
+        .collect();
+    group_infos.sort_by(|a, b| b.count.cmp(&a.count));
+    let dominant = group_infos.first().cloned().unwrap_or_default();
+
+    // Concordância do consenso: média do alelo majoritário por bit.
+    let ones = ones_per_bit(world);
+    let consensus = ones
+        .iter()
+        .map(|count| {
+            let fraction = *count as f32 / population as f32;
+            fraction.max(1.0 - fraction)
+        })
+        .sum::<f32>()
+        / ones.len().max(1) as f32;
+
+    // Circuitos e uso de slots.
+    let mut pairs: HashMap<(usize, usize), (usize, f32, HashSet<usize>)> = HashMap::new();
+    let mut used = vec![0usize; SLOT_COUNT];
+    let mut as_source = vec![0usize; SLOT_COUNT];
+    let mut as_destination = vec![0usize; SLOT_COUNT];
+    for (index, organism) in world.organisms.iter().enumerate() {
+        let mut seen_pairs: HashSet<(usize, usize)> = HashSet::new();
+        let mut seen_used = vec![false; SLOT_COUNT];
+        let mut seen_source = vec![false; SLOT_COUNT];
+        let mut seen_destination = vec![false; SLOT_COUNT];
+        for (connection, _) in organism.brain.visual_connections() {
+            let source = connection.source.min(SLOT_COUNT - 1);
+            let destination = connection.destination.min(SLOT_COUNT - 1);
+            let entry = pairs
+                .entry((source, destination))
+                .or_insert_with(|| (0, 0.0, HashSet::new()));
+            if seen_pairs.insert((source, destination)) {
+                entry.0 += 1;
+                entry.2.insert(group_of[index]);
+            }
+            entry.1 += connection.weight;
+            seen_used[source] = true;
+            seen_used[destination] = true;
+            seen_source[source] = true;
+            seen_destination[destination] = true;
+        }
+        for slot in 0..SLOT_COUNT {
+            used[slot] += seen_used[slot] as usize;
+            as_source[slot] += seen_source[slot] as usize;
+            as_destination[slot] += seen_destination[slot] as usize;
+        }
+    }
+    let mut connections: Vec<ConnectionInfo> = pairs
+        .into_iter()
+        .map(|((source, destination), (count, weight_sum, group_set))| ConnectionInfo {
+            source,
+            destination,
+            frequency: count as f32 / population as f32,
+            mean_weight: weight_sum / count.max(1) as f32,
+            groups: group_set.len(),
+        })
+        .collect();
+    connections.sort_by(|a, b| {
+        b.frequency
+            .partial_cmp(&a.frequency)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    connections.truncate(24);
+    let mut slots: Vec<SlotInfo> = (0..SLOT_COUNT)
+        .map(|slot| SlotInfo {
+            slot,
+            used: used[slot] as f32 / population as f32,
+            as_source: as_source[slot] as f32 / population as f32,
+            as_destination: as_destination[slot] as f32 / population as f32,
+        })
+        .collect();
+    slots.sort_by(|a, b| b.used.partial_cmp(&a.used).unwrap_or(std::cmp::Ordering::Equal));
+
+    Genetics {
+        tick: world.tick,
+        population,
+        group_count: group_infos.len(),
+        dominant_share: dominant.share,
+        dominant_cohesion: dominant.cohesion,
+        consensus,
+        groups: group_infos.into_iter().take(30).collect(),
+        connections,
+        slots,
+    }
+}
