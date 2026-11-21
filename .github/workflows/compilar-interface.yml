@@ -88,4 +88,4 @@ jobs:
           NUMERO: ${{ steps.versao.outputs.numero }}
           ARQUIVO: ${{ steps.versao.outputs.arquivo }}
         run: |
-          gh release create "v$env:NUMERO" "../../saida/$env:ARQUIVO" --repo $env:GITHUB_REPOSITORY --title "New Gods Unlimited V$env:NUMERO" --notes-file NOTAS_DA_VERSAO.md --target $env:GITHUB_SHA --prerelease
+          gh release create "v$env:NUMERO" "../../saida/$env:ARQUIVO" --repo $env:GITHUB_REPOSITORY --title "New Gods Unlimited V$env:NUMERO — Revamp da interface" --notes-file NOTAS_DA_VERSAO.md --target $env:GITHUB_SHA --prerelease

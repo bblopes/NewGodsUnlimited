@@ -13,7 +13,7 @@ dentro** (`5 - Código-fonte/`).
 │   ├── simulation/           World, genoma, cérebro, feromônios
 │   ├── environment/          corrente e mapa
 │   └── bin/                  benchmark_simulacao, laboratorio_experimentos
-├── interface/                interface nova (Tauri, V2.x): src/engine.rs + ui/
+├── interface/                V2 — Revamp da interface (Tauri): src/engine.rs + ui/
 ├── assets/presets/           presets embutidos no programa
 ├── scripts/                  compilação local (reserva do GitHub Actions)
 └── target/                   saída do compilador (recriável, fora do Git)
@@ -49,5 +49,6 @@ Windows e publica a Release. A reserva local é:
 scripts\COMPILAR_VERSAO.bat 1.2.0
 ```
 
-que gera `New Gods Unlimited V1.2.0.exe` direto em `2 - Versões de teste/`. Detalhes em
+que gera `New Gods Unlimited V1.2.0.exe` direto em
+`2 - Versões de teste/V1 - Interface original/`. Detalhes em
 [`VERSOES_E_DISTRIBUICAO.md`](../3%20-%20Documentos/Documentação/VERSOES_E_DISTRIBUICAO.md).

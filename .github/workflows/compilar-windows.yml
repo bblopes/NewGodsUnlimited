@@ -83,5 +83,5 @@ jobs:
           if ($env:EXISTE -eq 'true') {
             gh release upload $tag $exe --clobber --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --title "New Gods Unlimited V$env:NUMERO" --generate-notes --target $env:GITHUB_SHA --prerelease
+            gh release create $tag $exe --repo $env:GITHUB_REPOSITORY --title "New Gods Unlimited V$env:NUMERO — Interface original" --generate-notes --target $env:GITHUB_SHA --prerelease
           }

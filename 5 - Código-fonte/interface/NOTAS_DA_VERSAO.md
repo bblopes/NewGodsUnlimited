@@ -1,4 +1,6 @@
-## New Gods Unlimited V2.0.0 — primeira versão da interface nova
+## New Gods Unlimited V2.0.0 — Revamp da interface
+
+Primeira versão da V2, a versão maior do **revamp da interface de usuário**.
 
 Interface nova (Tauri) sobre o **mesmo motor de simulação** da V1.1.0: nenhuma regra biológica mudou.
 

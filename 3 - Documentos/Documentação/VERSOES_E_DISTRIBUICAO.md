@@ -17,11 +17,23 @@ A tag no Git tem o mesmo número com `v` minúsculo: `v1.1.0`.
 Histórico: o que estava publicado em 21/11/2026 virou `V1.0.0`. As entregas de
 outubro de 2026 ("Ecossistema Neural") estão em `2 - Versões de teste/_histórico/`.
 
+## Títulos das versões maiores
+
+Cada versão maior tem um título fixo, usado no nome da pasta de testes e no
+título das Releases do GitHub:
+
+| Versão maior | Título | O que mudou |
+| --- | --- | --- |
+| V1 | **Interface original** | o programa com a interface desenhada em Macroquad |
+| V2 | **Revamp da interface** | interface de usuário refeita (Tauri), mesmo motor de simulação |
+
+Uma nova versão maior (V3…) ganha o título da mudança grande que ela traz.
+
 ## Onde cada versão fica
 
 | Onde | O quê |
 | --- | --- |
-| `2 - Versões de teste/` | todo build novo, até ser aprovado |
+| `2 - Versões de teste/V<n> - <título>/` | todo build novo, até ser aprovado, na pasta da sua versão maior |
 | `1 - Versão oficial/` | só a última aprovada, mais presets e runs salvas |
 | `2 - Versões de teste/_histórico/` | versões substituídas ou reprovadas |
 | GitHub → Releases | todas as versões; as ainda não aprovadas marcadas como *pre-release* |

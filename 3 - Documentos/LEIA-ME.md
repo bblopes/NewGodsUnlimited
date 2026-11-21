@@ -34,7 +34,7 @@ programa, o que vem a seguir, o que ainda é ideia e o que foi medido.
 | Documento | Assunto |
 | --- | --- |
 | [Pendências e roadmap](Backlog/PENDENCIAS_E_ROADMAP.md) | tudo que está pendente, agrupado por tema |
-| [Nova interface](Backlog/NOVA_INTERFACE.md) | troca da UI Macroquad por Tauri + React |
+| [V2 — Revamp da interface](Backlog/NOVA_INTERFACE.md) | troca da UI Macroquad pela interface nova (Tauri) |
 | [Backlog de entregas](Backlog/BACKLOG.md) | escopo aprovado por entrega e histórico |
 
 ## Propostas — especificadas, ainda não feitas
