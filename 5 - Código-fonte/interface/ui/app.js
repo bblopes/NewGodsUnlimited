@@ -44,13 +44,13 @@ const TABS = [
   { id: 'mapa', label: 'Mapa', icon: 'map' }, { id: 'celulas', label: 'Células', icon: 'cells' },
   { id: 'demografia', label: 'Demografia', icon: 'demo' }, { id: 'camadas', label: 'Camadas', icon: 'layers' },
 ];
-const NEURAL = [
-  { id: 'classica', name: 'Clássica', desc: 'Genomas iniciais totalmente aleatórios.' },
-  { id: 'motor', name: 'Motor', desc: '4 caminhos diretos visão → motor; resto aleatório.' },
-  { id: 'pfguia', name: 'PF guia', desc: 'Fundador experimental: segue PFx ou PFy dominante, sem diagonal.' },
-  { id: 'val1', name: 'Val 1.0', desc: 'Pool validado de uma run salva. Volta quando salvar/carregar runs chegar.', disabled: true },
-  { id: 'val2', name: 'Val 2.0', desc: 'Pool validado + Ct + PG → Doar. Volta com salvar/carregar runs.', disabled: true },
-];
+// Configurações neurais: geradores fixos + indivíduos salvos no banco (vem do motor).
+let CATALOG = { version: 0, bank_path: '', bank_error: null, options: [
+  { key: 'classica', name: 'Clássica', description: 'Genomas iniciais totalmente aleatórios.', saved: false, compatible: true },
+  { key: 'motor', name: 'Motor', description: '4 caminhos diretos visão → motor; resto aleatório.', saved: false, compatible: true },
+  { key: 'pfguia', name: 'PF guia', description: 'Fundador experimental: segue PFx ou PFy dominante, sem diagonal.', saved: false, compatible: true },
+] };
+const neuralOption = key => CATALOG.options.find(o => o.key === key) || CATALOG.options[0];
 const ENV_LABELS = { min_repro: 'Mínimo reprodução', limit: 'Limite obrigatório', mental: 'Custo mental', emission: 'Abiogênese', lifetime: 'Vida-base sem sol', phyto_rate: 'Multiplicação sob luz', food_energy: 'Energia por fito', flow_on: 'Corrente ligada', flow_intensity: 'Intensidade da corrente', flow_preset: 'Modelo de corrente', ac_on: 'Anti-cramming', ac_force: 'Força anti-cramming', ac_distance: 'Espaço anti-cramming' };
 const SLOT_NAMES = ['V<', 'V>', 'V^', 'Vv', 'Cx', 'Cy', 'En', '+1', 'Ct', 'PG', 'PGx', 'PGy', 'P1', 'P1x', 'P1y', 'P2', 'P2x', 'P2y', 'P3', 'P3x', 'P3y', 'Fx', 'Fy', 'PF', 'PFx', 'PFy',
   'I0', 'I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9', 'I10', 'I11', 'I12', 'I13', 'I14', 'I15', 'T1', 'T2', 'T3',
@@ -75,6 +75,8 @@ let MAP = null;               // último MapData
 let TEL = { epoch: -1, samples: [] };
 let GEN = null;
 let FLOW = { key: '', data: [] };
+let VIEW = null;               // indivíduo aberto na gaveta
+let lastBankVersion = -1;
 
 /* ------------------------------ Componentes ------------------------------ */
 const getF = path => { if (!path.includes('.')) return S[path]; const [g, k] = path.split('.'); return S[g][k]; };
@@ -158,7 +160,11 @@ function renderPanel() {
 
 function tabSessao() {
   const ip = initPending().length;
-  const neural = NEURAL.find(n => n.id === S.init.neural) || NEURAL[0];
+  const neural = neuralOption(S.init.neural);
+  const saved = CATALOG.options.filter(o => o.saved);
+  const option = o => `<div class="choice ${S.init.neural === o.key ? 'on' : ''}" style="padding:0;align-items:stretch">
+      <button class="choice" style="border:0;background:none;flex:1" data-act="neural" data-v="${esc(o.key)}" ${o.compatible ? '' : 'disabled'}><span class="rd"></span>${o.color ? `<span class="sw-c" style="background:${esc(o.color)};margin-top:1px"></span>` : ''}<span><b>${esc(o.name)}</b><small>${esc(o.description)}</small></span></button>
+      <button class="btn icon ghost" style="height:auto;width:38px;border-radius:0 8px 8px 0" data-act="viewInd" data-v="${esc(o.key)}" title="Ver o indivíduo">${ic('eye')}</button></div>`;
   const body = `
     ${section('s-exec', 'Execução', `
       <div class="readouts">${ro('Tick', fmt(F?.tick), '', 'tick')}${ro('Células vivas', fmt(F?.population), '', 'cells')}${ro('Ticks/s', fmt(F?.tps), '', 'tps')}${ro('Publicação', fmt(F?.publish_hz) + ' Hz', '', 'pub')}</div>
@@ -170,13 +176,16 @@ function tabSessao() {
       <div class="field ${isDirty('init.seed') ? 'dirty' : ''}" data-row="init.seed"><div class="field-top"><label>Seed</label></div>
         <div class="row"><input class="txt mono" type="text" data-f="init.seed" value="${esc(S.init.seed)}"><button class="btn sm" data-act="newSeed">${ic('shuffle')}Nova</button></div></div>
       ${slider('init.cells', 'Células iniciais', 1, 400, 1)}
-      <div class="field"><div class="field-top"><label>Configuração neural</label></div>
-        <div class="choices">${NEURAL.map(n => `<button class="choice ${S.init.neural === n.id ? 'on' : ''}" data-act="neural" data-v="${n.id}" ${n.disabled ? 'disabled' : ''}><span class="rd"></span><span><b>${n.name}</b><small>${n.desc}</small></span></button>`).join('')}</div></div>
+      <div class="field"><div class="field-top"><label>Configuração neural</label><span class="unit" style="margin-left:auto">${ic('eye')} abre o indivíduo</span></div>
+        <div class="choices">${CATALOG.options.filter(o => !o.saved).map(option).join('')}</div>
+        <div class="field-top" style="margin-top:6px"><label>Indivíduos salvos</label><span class="unit" style="margin-left:auto">${saved.length}</span></div>
+        ${saved.length ? `<div class="choices">${saved.map(option).join('')}</div>` : `<div class="hint">Abra uma célula em <b>Células › Indivíduo</b> e clique em <b>${ic('save')} Salvar</b> para ela aparecer aqui.</div>`}
+        ${CATALOG.bank_error ? `<div class="hint" style="color:var(--dg)">${esc(CATALOG.bank_error)}</div>` : ''}</div>
       ${toggle('init.amadeus', 'Modo Amadeus', 'Uma única célula central; descendentes ainda mutam')}
       <button class="btn ${ip ? 'warn' : ''} block" data-act="askRestart">${ic('restart')}Reiniciar com estas condições</button>
     `, `<span class="tag ${ip ? 'wa' : ''}">ao reiniciar</span>`)}
     ${section('s-insert', 'Inserir célula', `
-      <div class="hint">Cria uma célula no ponto clicado sem reiniciar a run, com a configuração neural escolhida acima: <b>${neural.name}</b>.</div>
+      <div class="hint">Cria uma célula no ponto clicado sem reiniciar a run, com a configuração neural escolhida acima: <b>${esc(neural.name)}</b>.</div>
       <button class="btn ${S.insert ? 'pri' : ''} block" data-act="insert">${ic(S.insert ? 'x' : 'plus')}${S.insert ? 'Cancelar inserção' : 'Inserir célula no mapa'}</button>
     `)}
     ${section('s-persist', 'Salvar e presets', `
@@ -249,6 +258,7 @@ function tabCelulas() {
       <button class="btn icon ${S.follow ? 'pri' : ''}" data-act="follow" title="Seguir na arena">${ic('target')}</button>
       <button class="btn icon" data-act="cellNav" data-v="1" title="]">${ic('right')}</button>
     </div>
+    <div style="padding:10px 16px 0"><button class="btn block" data-act="askSave">${ic('save')}Salvar este indivíduo no banco</button></div>
     <div style="padding:10px 16px;border-bottom:1px solid var(--bd)"><div class="row"><span class="muted">${ic('search')}</span><input class="txt mono" placeholder="Buscar por id e Enter…" data-g="cellSearch" style="height:28px"></div></div>
     ${sec('resumo', 'Resumo', `
       <div class="field"><div class="field-top"><label>Energia</label><span class="mono" style="margin-left:auto" data-live="cE">${fmt(d.energy, 1)} / ${fmt(d.capacity)}</span></div><div class="bar"><i data-live="cEbar" style="width:${clamp(d.energy / d.capacity * 100, 0, 100)}%"></i></div></div>
@@ -405,7 +415,23 @@ function renderLayer() {
   if (S.modal) { L.innerHTML = `<div class="scrim" data-act="closeLayer">${modalContent(S.modal)}</div>`; return; }
   L.innerHTML = '';
 }
+function individualDrawer() {
+  const v = VIEW;
+  if (!v) return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>Indivíduo</h3><p>Carregando…</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div></div>`;
+  const d = { slots: new Array(56).fill(0), active: v.active, wires: v.wires.map(([a, b, w]) => [a, b, w, w / 4]) };
+  const when = v.created_at ? new Date(v.created_at * 1000).toLocaleString('pt-BR') : null;
+  return `<div class="drawer" data-stop="1"><div class="drawer-h"><span class="cdot" style="background:${esc(v.color)};margin-top:2px"></span><div style="flex:1"><h3>${esc(v.name)}</h3><p>${esc(v.description)}</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div>
+    <div class="drawer-b">
+      <div class="readouts">${ro('Origem', esc(v.origin), 'wide')}${v.generation != null ? ro('Geração', fmt(v.generation)) : ''}${ro('Conexões ativas', fmt(v.connections))}${when ? ro('Salvo em', when, 'wide') : ''}${ro('Cor genética', esc(v.color))}</div>
+      <div class="hint">Fiação do genoma (os sinais aparecem quando a célula está viva na arena).</div>
+      ${neuralNet(d)}
+      <div class="legend"><span><i style="background:var(--ok)"></i>peso positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo geneticamente</span></div>
+      <div class="hint mono">${v.genome.length} bits</div>${genomeGrid(v.genome)}
+    </div>
+    <div class="drawer-f">${v.saved ? `<button class="btn danger ghost" data-act="askDelete" style="margin-right:auto">Apagar do banco</button>` : ''}<button class="btn" data-act="closeLayer">Fechar</button><button class="btn pri" data-act="useInd" data-v="${esc(v.key)}">Usar como configuração neural</button></div></div>`;
+}
 function drawerContent(d) {
+  if (d === 'individual') return individualDrawer();
   if (d === 'runs') return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>Estado da sessão</h3><p>Salvar e carregar runs completas (.ecosrun).</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div>
     <div class="drawer-b"><div class="soon"><b>Chega na próxima versão.</b><br>Esta é a primeira versão da interface nova. Salvar e carregar runs, presets de sessão e presets de mapa estão sendo portados do executável antigo. Até lá, use a <b>V1.1.0</b> (em <i>2 - Versões de teste</i>) para salvar uma run.</div></div>
     <div class="drawer-f"><button class="btn" data-act="closeLayer">Fechar</button></div></div>`;
@@ -414,6 +440,14 @@ function drawerContent(d) {
 function modalContent(m) {
   const shell = (t, p, f) => `<div class="modal" data-stop="1"><div class="modal-b"><h3>${t}</h3>${p}</div><div class="modal-f">${f}</div></div>`;
   if (m === 'restart') return shell('Reiniciar a sessão?', `<p>A run atual (tick ${fmt(F?.tick)}) será descartada e uma nova começa com as condições iniciais${initPending().length ? ' editadas' : ''} e o mapa do editor.</p><p>Nesta versão ainda não dá para salvar a run antes.</p>`, `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn pri" data-act="restart">Reiniciar</button>`);
+  if (m === 'saveInd') {
+    const d = F?.detail;
+    if (!d) return shell('Salvar indivíduo', '<p>A célula selecionada não está mais viva.</p>', `<button class="btn" data-act="closeLayer">Fechar</button>`);
+    return shell('Salvar indivíduo no banco', `<p>O genoma da célula #${d.id} (geração ${fmt(d.generation)}) fica guardado no banco e aparece em <b>Sessão › Configuração neural</b>, inclusive nas próximas versões.</p>
+      <div class="field"><div class="field-top"><label>Nome</label></div><input class="txt" id="saveName" maxlength="60" value="Célula #${d.id} · gen ${d.generation}"></div>`,
+      `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn pri" data-act="saveInd" data-v="${d.id}">${ic('save')}Salvar</button>`);
+  }
+  if (m === 'delInd') return shell('Apagar indivíduo?', `<p>“${esc(VIEW?.name || '')}” será removido do banco. Runs em andamento não mudam.</p><p>Esta ação não pode ser desfeita.</p>`, `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn danger" data-act="deleteInd" data-v="${esc(VIEW?.key || '')}">Apagar</button>`);
   if (m === 'headless') return shell('Ativar execução headless?', `<p>A simulação continua, mas a arena deixa de ser desenhada e o motor para de enviar o mundo para a tela. Você verá tick, população e ticks/s.</p><p>Use para medir o teto de cálculo; o estado biológico continua o mesmo.</p>`, `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn pri" data-act="headlessOn">${ic('bolt')}Ativar</button>`);
   return '';
 }
@@ -443,8 +477,8 @@ function renderStage() {
       <div class="demogrid">${demoKpis()}${demoCharts(true)}</div></div>`;
   } else ov.innerHTML = '';
   let b = '';
-  const neural = NEURAL.find(n => n.id === S.init.neural) || NEURAL[0];
-  if (S.insert) b = `<div class="banner">${ic('plus')}<span>Inserir célula <b>${neural.name}</b> · clique no mapa</span><span class="kbd">Esc</span><button class="btn sm ghost" data-act="insert">Cancelar</button></div>`;
+  const neural = neuralOption(S.init.neural);
+  if (S.insert) b = `<div class="banner">${ic('plus')}<span>Inserir célula <b>${esc(neural.name)}</b> · clique no mapa</span><span class="kbd">Esc</span><button class="btn sm ghost" data-act="insert">Cancelar</button></div>`;
   else if (S.tab === 'mapa' && S.mapTool !== 'none') b = `<div class="banner wa">${ic(S.mapTool)}<span>Editando mapa · ${{ wall: 'Parede', eraser: 'Borracha', sun: 'Região ensolarada (contorno)' }[S.mapTool]}${S.mapTool !== 'sun' ? ' · raio ' + S.brush : ''}</span>${F?.map_dirty ? '<button class="btn sm warn" data-act="mapApply">Aplicar mapa</button>' : ''}<button class="btn sm ghost" data-act="tool" data-v="none">Sair</button></div>`;
   $('#stageBanner').innerHTML = b;
   renderChips();
@@ -518,7 +552,21 @@ const ACT = {
   fit() { cam.zoom = 1; cam.cx = INFO.world_width / 2; cam.cy = INFO.world_height / 2; S.follow = false; renderStage(); },
   openRep(v) { selectCell(+v); S.cellsView = 'ind'; renderPanel(); },
   demoFull() { S.demoFull = !S.demoFull; renderStage(); },
+  askSave() { S.modal = 'saveInd'; S.drawer = null; renderLayer(); setTimeout(() => { const i = $('#saveName'); if (i) { i.focus(); i.select(); } }, 30); },
+  saveInd(v) { const name = $('#saveName')?.value || ''; S.modal = null; renderLayer(); send({ type: 'save_individual', id: +v, name }); },
+  async viewInd(v) { VIEW = null; S.drawer = 'individual'; S.modal = null; renderLayer(); try { VIEW = await invoke('individual_view', { key: v }); } catch (err) { console.error(err); } if (!VIEW) { S.drawer = null; say('Não foi possível abrir este indivíduo', false); } renderLayer(); },
+  useInd(v) { S.init.neural = v; S.drawer = null; renderLayer(); renderAll(); say('Configuração escolhida; vale ao reiniciar (ou ao inserir célula)'); },
+  askDelete() { S.modal = 'delInd'; S.drawer = null; renderLayer(); },
+  deleteInd(v) { S.modal = null; renderLayer(); send({ type: 'delete_individual', key: v }); say('Indivíduo apagado do banco'); },
 };
+async function refreshCatalog() {
+  try {
+    CATALOG = await invoke('neural_catalog');
+    if (!CATALOG.options.some(o => o.key === S.init.neural)) S.init.neural = 'classica';
+    if (!CATALOG.options.some(o => o.key === S.initApplied.neural)) S.initApplied.neural = 'classica';
+    if (S.tab === 'sessao') renderPanel();
+  } catch (err) { console.error(err); }
+}
 function selectCell(id) {
   S.selected = id; send({ type: 'select', id });
   if (S.mode !== 'lab') { S.tab = 'celulas'; S.cellsView = 'ind'; S.collapsed = false; renderRail(); }
@@ -559,6 +607,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('keydown', e => {
   const typing = e.target.matches('input,textarea,select');
+  if (e.target.id === 'saveName' && e.key === 'Enter') { const b = document.querySelector('[data-act="saveInd"]'); if (b) ACT.saveInd(b.dataset.v); return; }
   if (e.target.dataset?.g === 'cellSearch' && e.key === 'Enter') { const id = +e.target.value; if (F?.ids.includes(id)) selectCell(id); else say('Nenhuma célula viva com esse id', false); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (S.mode !== 'lab') ACT.drawer('runs'); return; }
   if (e.key === 'Escape') {
@@ -767,6 +816,7 @@ async function pollFrame() {
     const f = await invoke('frame');
     const prev = F; F = f;
     if (F.notice && F.notice.seq !== S.lastNoticeSeq) { S.lastNoticeSeq = F.notice.seq; if (F.notice.text) say(F.notice.text, F.notice.ok); }
+    if (F.bank_version !== lastBankVersion) { lastBankVersion = F.bank_version; refreshCatalog(); }
     if (F.map_version !== lastMapVersion) { lastMapVersion = F.map_version; MAP = await invoke('map_data'); buildMap(MAP); }
     if (F.paused !== lastPaused || F.speed !== lastSpeed) { lastPaused = F.paused; lastSpeed = F.speed; renderTop(); }
     if (F.headless !== lastHeadless) { lastHeadless = F.headless; renderStage(); }

@@ -31,11 +31,14 @@ comandos e recebe estado.
 
 1. ~~Esqueleto Tauri: ponte, comandos e arena com o mundo real.~~ Feito na V2.0.0.
 2. ~~Portar as abas.~~ Feito na V2.0.0, exceto salvar/carregar e presets.
-3. Salvar e carregar runs (`.ecosrun`), presets de sessão e de mapa, Val 1.0/2.0.
-4. Laboratório dentro do app.
-5. Acabamento visual: variações de estilo.
-6. Separar o motor num crate próprio (`ngu-core`), validado pelo hash do benchmark.
-7. Checklist de paridade completo; aí a V1 pode ser aposentada.
+3. ~~Banco de indivíduos salvos como configuração neural~~ (V2.0.1).
+4. Salvar e carregar runs (`.ecosrun`), presets de sessão e de mapa.
+5. Laboratório dentro do app.
+6. Acabamento visual: variações de estilo.
+7. Separar o motor num crate próprio (`ngu-core`), validado pelo hash do benchmark.
+8. Checklist de paridade completo; aí a V1 pode ser aposentada.
+
+Val 1.0 e Val 2.0 não voltam na V2 (decisão de 21/11/2026).
 
 Na V2.0.0 a interface usa HTML/JS sem etapa de build (a mesma base do
 protótipo), para não depender de npm. A migração para React pode vir junto do

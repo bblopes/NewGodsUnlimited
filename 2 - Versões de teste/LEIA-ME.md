@@ -12,13 +12,22 @@ grande mudança dela:
 ```text
 2 - Versões de teste/
 ├── V1 - Interface original/
-│   └── New Gods Unlimited V1.1.0.exe
+│   └── V1.1.0/
+│       ├── New Gods Unlimited V1.1.0.exe
+│       └── ENTREGA.md
 ├── V2 - Revamp da interface/
-│   └── New Gods Unlimited V2.0.0.exe
+│   ├── V2.0.0/
+│   │   ├── New Gods Unlimited V2.0.0.exe
+│   │   └── ENTREGA.md
+│   └── V2.0.1/
+│       ├── New Gods Unlimited V2.0.1.exe
+│       └── ENTREGA.md
 └── _histórico/
 ```
 
-Dentro de cada pasta, o número sobe a cada build (`V2.0.0`, `V2.0.1`, `V2.1.0`…).
+Cada entrega tem a sua pasta, com o `.exe` e um `ENTREGA.md` curto: o que foi
+pedido, o que foi entregue, como testar e o que ficou de fora. O número sobe a
+cada entrega (`V2.0.0`, `V2.0.1`, `V2.1.0`…).
 Quando você aprova uma versão, o mesmo arquivo passa para `1 - Versão oficial/`
 e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão para
 `_histórico/`.
@@ -27,8 +36,9 @@ e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão p
 
 | Arquivo | O que validar | Data |
 | --- | --- | --- |
-| `V2 - Revamp da interface/New Gods Unlimited V2.0.0.exe` | primeira versão da interface nova; salvar/carregar e Laboratório ainda não portados | 21/11/2026 |
-| `V1 - Interface original/New Gods Unlimited V1.1.0.exe` | visão genérica e quimiorrecepção PF (antiga build experimental "PF Vision") | 21/11/2026 |
+| `V2 - Revamp da interface/V2.0.1/` | salvar indivíduo no banco e usá-lo como configuração neural | 21/11/2026 |
+| `V2 - Revamp da interface/V2.0.0/` | primeira versão da interface nova | 21/11/2026 |
+| `V1 - Interface original/V1.1.0/` | visão genérica e quimiorrecepção PF | 21/11/2026 |
 
 ## `_histórico/`
 

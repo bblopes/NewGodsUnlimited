@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -19,7 +20,7 @@ use new_gods_unlimited::config::{WORLD_HEIGHT, WORLD_WIDTH};
 use new_gods_unlimited::environment::flow::{FlowField, FlowPreset};
 use new_gods_unlimited::environment::map::{MapDefinition, MAP_GRID_HEIGHT, MAP_GRID_WIDTH};
 use new_gods_unlimited::simulation::brain::{INTERNAL_START, SLOT_COUNT};
-use new_gods_unlimited::simulation::genome::GENOME_BIT_COUNT;
+use new_gods_unlimited::simulation::genome::{Genome, GENOME_BIT_COUNT};
 use new_gods_unlimited::simulation::pheromone::{PheromoneDisplay, FIELD_HEIGHT, FIELD_WIDTH};
 use new_gods_unlimited::simulation::world::{
     AntiCrammingConfig, InitialNeuralConfiguration, World, CELL_RADIUS,
@@ -27,6 +28,8 @@ use new_gods_unlimited::simulation::world::{
     MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
     MIN_EXCLUSION_DISTANCE,
 };
+
+use crate::banco::{genoma_de, Banco};
 
 pub const SPEED_MULTIPLIERS: [f32; 7] = [
     1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0,
@@ -205,6 +208,9 @@ pub enum UiCommand {
     MapRevert,
     MapUndo,
     WantGenetics,
+    /// Salva a célula viva `id` no banco de indivíduos.
+    SaveIndividual { id: u64, name: String },
+    DeleteIndividual { key: String },
 }
 
 enum Command {
@@ -287,6 +293,7 @@ pub struct Frame {
     pub detail: Option<CellDetail>,
     pub map_version: u64,
     pub map_dirty: bool,
+    pub bank_version: u64,
     pub notice: Notice,
 }
 
@@ -369,6 +376,43 @@ pub struct Genetics {
     pub slots: Vec<SlotInfo>,
 }
 
+/// Uma opção de configuração neural: geradores fixos ou indivíduos salvos.
+#[derive(Clone, Serialize)]
+pub struct NeuralOption {
+    /// "classica", "motor", "pfguia" ou "ind:<id>".
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub color: Option<String>,
+    pub saved: bool,
+    pub compatible: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct NeuralCatalog {
+    pub version: u64,
+    pub bank_path: String,
+    pub bank_error: Option<String>,
+    pub options: Vec<NeuralOption>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct IndividualView {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub origin: String,
+    pub generation: Option<u32>,
+    pub created_at: Option<u64>,
+    pub color: String,
+    pub connections: usize,
+    pub active: Vec<bool>,
+    /// [origem, destino, peso]
+    pub wires: Vec<[f32; 3]>,
+    pub genome: String,
+    pub saved: bool,
+}
+
 #[derive(Clone, Serialize)]
 pub struct EngineInfo {
     pub world_width: f32,
@@ -395,6 +439,8 @@ struct Shared {
     genetics: Mutex<Option<Arc<Genetics>>>,
     genetics_wanted_at: AtomicU64,
     started: Instant,
+    banco: Mutex<Banco>,
+    bank_version: AtomicU64,
 }
 
 pub struct Engine {
@@ -403,7 +449,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn start() -> Self {
+    pub fn start(caminho_do_banco: Option<PathBuf>) -> Self {
         let env = EnvSettings::default();
         let init = InitSettings::default();
         let map = MapDefinition::default();
@@ -415,6 +461,8 @@ impl Engine {
             genetics: Mutex::new(None),
             genetics_wanted_at: AtomicU64::new(0),
             started: Instant::now(),
+            banco: Mutex::new(Banco::abrir(caminho_do_banco)),
+            bank_version: AtomicU64::new(1),
         });
         let (sender, receiver) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
@@ -429,6 +477,10 @@ impl Engine {
     }
 
     pub fn send(&self, command: UiCommand) {
+        if let UiCommand::DeleteIndividual { key } = &command {
+            self.delete_individual(key);
+            return;
+        }
         if let UiCommand::WantGenetics = command {
             let now = self.shared.started.elapsed().as_millis() as u64;
             self.shared.genetics_wanted_at.store(now.max(1), Ordering::Relaxed);
@@ -523,6 +575,150 @@ impl Engine {
             .and_then(|genetics| genetics.as_ref().map(|g| (**g).clone()))
     }
 
+    fn delete_individual(&self, key: &str) {
+        let id = key.strip_prefix("ind:").unwrap_or(key);
+        if let Ok(mut banco) = self.shared.banco.lock() {
+            if let Err(erro) = banco.remover(id) {
+                banco.erro = Some(format!("não foi possível apagar: {erro}"));
+            } else {
+                banco.erro = None;
+            }
+        }
+        self.shared.bank_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn neural_catalog(&self) -> NeuralCatalog {
+        let mut options = vec![
+            NeuralOption {
+                key: "classica".to_owned(),
+                name: "Clássica".to_owned(),
+                description: "Genomas iniciais totalmente aleatórios.".to_owned(),
+                color: None,
+                saved: false,
+                compatible: true,
+            },
+            NeuralOption {
+                key: "motor".to_owned(),
+                name: "Motor".to_owned(),
+                description: "4 caminhos diretos visão → motor; resto aleatório.".to_owned(),
+                color: None,
+                saved: false,
+                compatible: true,
+            },
+            NeuralOption {
+                key: "pfguia".to_owned(),
+                name: "PF guia".to_owned(),
+                description: "Fundador experimental: segue PFx ou PFy dominante, sem diagonal."
+                    .to_owned(),
+                color: None,
+                saved: false,
+                compatible: true,
+            },
+        ];
+        let (bank_path, bank_error) = match self.shared.banco.lock() {
+            Ok(banco) => {
+                for individuo in banco.dados.individuos.iter().rev() {
+                    let compatible = genoma_de(individuo).is_some();
+                    options.push(NeuralOption {
+                        key: format!("ind:{}", individuo.id),
+                        name: individuo.nome.clone(),
+                        description: if compatible {
+                            format!("Indivíduo salvo · geração {} · {}", individuo.geracao, individuo.origem)
+                        } else {
+                            "Genoma salvo num formato antigo; precisa de migração.".to_owned()
+                        },
+                        color: Some(individuo.cor.clone()),
+                        saved: true,
+                        compatible,
+                    });
+                }
+                (banco.caminho_texto(), banco.erro.clone())
+            }
+            Err(_) => (String::new(), Some("banco indisponível".to_owned())),
+        };
+        NeuralCatalog {
+            version: self.shared.bank_version.load(Ordering::Relaxed),
+            bank_path,
+            bank_error,
+            options,
+        }
+    }
+
+    pub fn individual_view(&self, key: &str) -> Option<IndividualView> {
+        let mut random_state = 0x5EED_1234_ABCD_0001u64;
+        let (genome, name, description, origin, generation, created_at, saved) = match key {
+            "classica" => (
+                Genome::random(&mut random_state),
+                "Clássica".to_owned(),
+                "Exemplo de fundador: cada célula nasce com um genoma aleatório diferente.".to_owned(),
+                "gerador fixo".to_owned(),
+                None,
+                None,
+                false,
+            ),
+            "motor" => (
+                Genome::random_with_motor_minimum(&mut random_state),
+                "Motor".to_owned(),
+                "Exemplo de fundador: 4 caminhos visão → motor garantidos, o resto aleatório.".to_owned(),
+                "gerador fixo".to_owned(),
+                None,
+                None,
+                false,
+            ),
+            "pfguia" => (
+                Genome::food_gradient_ideal(),
+                "PF guia".to_owned(),
+                "Fundador fixo: todas as células começam com este mesmo genoma.".to_owned(),
+                "gerador fixo".to_owned(),
+                None,
+                None,
+                false,
+            ),
+            other => {
+                let id = other.strip_prefix("ind:")?;
+                let banco = self.shared.banco.lock().ok()?;
+                let individuo = banco.buscar(id)?.clone();
+                let genome = genoma_de(&individuo)?;
+                (
+                    genome,
+                    individuo.nome.clone(),
+                    "Indivíduo salvo: todas as células da run começam com este genoma.".to_owned(),
+                    individuo.origem.clone(),
+                    Some(individuo.geracao),
+                    Some(individuo.criado_em),
+                    true,
+                )
+            }
+        };
+        let connections = genome.decode_connections();
+        let active = (0..SLOT_COUNT)
+            .map(|slot| slot < INTERNAL_START || genome.neural_slot_is_active(slot))
+            .collect();
+        Some(IndividualView {
+            key: key.to_owned(),
+            name,
+            description,
+            origin,
+            generation,
+            created_at,
+            color: genome.genetic_hex(),
+            connections: connections.len(),
+            active,
+            wires: connections
+                .iter()
+                .map(|connection| {
+                    [
+                        connection.source as f32,
+                        connection.destination as f32,
+                        connection.weight,
+                    ]
+                })
+                .collect(),
+            genome: genome.binary_string(),
+            saved,
+        })
+    }
+
     pub fn info() -> EngineInfo {
         EngineInfo {
             world_width: WORLD_WIDTH,
@@ -566,10 +762,35 @@ fn set_windows_keep_awake(enabled: bool) {
 #[cfg(not(target_os = "windows"))]
 fn set_windows_keep_awake(_: bool) {}
 
-fn make_world(init: &InitSettings, env: &EnvSettings, map: &MapDefinition) -> World {
+fn saved_genome(key: &str, shared: &Shared) -> Option<Genome> {
+    let id = key.strip_prefix("ind:")?;
+    let banco = shared.banco.lock().ok()?;
+    genoma_de(banco.buscar(id)?)
+}
+
+fn make_world(
+    init: &InitSettings,
+    env: &EnvSettings,
+    map: &MapDefinition,
+    founder: Option<&Genome>,
+) -> World {
     let seed = init.seed();
     let configuration = neural_from(&init.neural);
-    let mut world = if init.amadeus {
+    let mut world = if let Some(genome) = founder {
+        let cells = if init.amadeus { 1 } else { init.cells };
+        let mut world = World::new_with_founder_genomes(
+            seed,
+            cells,
+            map.clone(),
+            std::slice::from_ref(genome),
+        );
+        if init.amadeus {
+            if let Some(organism) = world.organisms.first_mut() {
+                organism.position = Vec2::new(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5);
+            }
+        }
+        world
+    } else if init.amadeus {
         World::new_amadeus_with_initial_population(seed, map.clone(), configuration, &[])
     } else {
         World::new_with_initial_population(seed, init.cells, map.clone(), configuration, &[])
@@ -674,7 +895,17 @@ impl WorkerState {
                 self.init = init;
                 self.env = env.sanitized();
                 self.applied_map = self.edited_map.clone();
-                self.world = make_world(&self.init, &self.env, &self.applied_map);
+                let founder = if self.init.neural.starts_with("ind:") {
+                    let genome = saved_genome(&self.init.neural, shared);
+                    if genome.is_none() {
+                        self.say("Indivíduo não encontrado no banco; usando a Clássica", false);
+                        self.init.neural = "classica".to_owned();
+                    }
+                    genome
+                } else {
+                    None
+                };
+                self.world = make_world(&self.init, &self.env, &self.applied_map, founder.as_ref());
                 self.flow = self.env.flow_field(self.init.seed());
                 self.run_id = self.init.seed() ^ shared.started.elapsed().as_nanos() as u64;
                 self.selected = None;
@@ -684,16 +915,32 @@ impl WorkerState {
                 if let Ok(mut genetics) = shared.genetics.lock() {
                     *genetics = None;
                 }
-                self.say("Nova run iniciada", true);
+                if founder.is_some() || !self.init.neural.starts_with("ind:") {
+                    self.say("Nova run iniciada", true);
+                }
             }
             UiCommand::Insert { x, y, neural } => {
                 let configuration = neural_from(&neural);
-                if self
-                    .world
-                    .insert_organism_at(Vec2::new(x, y), configuration, &[])
-                {
+                let saved = if neural.starts_with("ind:") {
+                    saved_genome(&neural, shared)
+                } else {
+                    None
+                };
+                if neural.starts_with("ind:") && saved.is_none() {
+                    self.say("Indivíduo não encontrado no banco", false);
+                    return;
+                }
+                let inserted = match saved {
+                    Some(genome) => self
+                        .world
+                        .insert_organism_with_genome_at(Vec2::new(x, y), genome),
+                    None => self
+                        .world
+                        .insert_organism_at(Vec2::new(x, y), configuration, &[]),
+                };
+                if inserted {
                     self.selected = self.world.organisms.last().map(|organism| organism.id);
-                    self.say(format!("Célula inserida ({})", configuration.label()), true);
+                    self.say("Célula inserida", true);
                 } else {
                     self.say(
                         "Posição inválida: parede, borda ou outra célula no lugar",
@@ -746,7 +993,46 @@ impl WorkerState {
                     self.publish_map(shared);
                 }
             }
-            UiCommand::WantGenetics => {}
+            UiCommand::SaveIndividual { id, name } => {
+                let found = self
+                    .world
+                    .organisms
+                    .iter()
+                    .find(|organism| organism.id == id)
+                    .map(|organism| (organism.generation, organism.genome.clone()));
+                let Some((generation, genome)) = found else {
+                    self.say("A célula não está mais viva; nada foi salvo", false);
+                    return;
+                };
+                let name = if name.trim().is_empty() {
+                    format!("Célula #{id}")
+                } else {
+                    name.trim().chars().take(60).collect()
+                };
+                let origin = format!(
+                    "run #{} · tick {} · célula #{id}",
+                    self.run_id % 10_000_000,
+                    self.world.tick
+                );
+                let result = match shared.banco.lock() {
+                    Ok(mut banco) => banco.adicionar(name.clone(), origin, generation, &genome),
+                    Err(_) => Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "banco indisponível",
+                    )),
+                };
+                match result {
+                    Ok(_) => {
+                        shared.bank_version.fetch_add(1, Ordering::Relaxed);
+                        self.say(
+                            format!("“{name}” salvo; já aparece em Sessão › Configuração neural"),
+                            true,
+                        );
+                    }
+                    Err(erro) => self.say(format!("Não foi possível salvar: {erro}"), false),
+                }
+            }
+            UiCommand::DeleteIndividual { .. } | UiCommand::WantGenetics => {}
         }
     }
 
@@ -841,7 +1127,7 @@ fn worker(
     commands: mpsc::Receiver<Command>,
     shared: Arc<Shared>,
 ) {
-    let world = make_world(&init, &env, &map);
+    let world = make_world(&init, &env, &map, None);
     let flow = env.flow_field(init.seed());
     let mut state = WorkerState {
         run_id: init.seed(),
@@ -908,7 +1194,8 @@ fn worker(
 
         if state.paused {
             if force_publish || last_publish.elapsed() >= Duration::from_millis(100) {
-                let frame = state.build_frame(publish_hz, state.headless);
+                let mut frame = state.build_frame(publish_hz, state.headless);
+                frame.bank_version = shared.bank_version.load(Ordering::Relaxed);
                 if let Ok(mut target) = shared.frame.lock() {
                     *target = Arc::new(frame);
                 }
@@ -960,7 +1247,9 @@ fn worker(
             1.0 / publish_hz
         };
         if force_publish || last_publish.elapsed().as_secs_f32() >= interval {
-            let frame = state.build_frame(if state.headless { 0.0 } else { publish_hz }, state.headless);
+            let mut frame =
+                state.build_frame(if state.headless { 0.0 } else { publish_hz }, state.headless);
+            frame.bank_version = shared.bank_version.load(Ordering::Relaxed);
             if let Ok(mut target) = shared.frame.lock() {
                 *target = Arc::new(frame);
             }

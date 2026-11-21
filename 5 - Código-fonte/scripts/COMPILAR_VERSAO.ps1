@@ -2,7 +2,7 @@
 #
 # Uso:  scripts\COMPILAR_VERSAO.bat 1.2.0
 #
-# O .exe vai para "2 - Versões de teste\V1 - Interface original". Ao aprovar, ele é movido para
+# O .exe vai para "2 - Versões de teste\V1 - Interface original\V<versão>". Ao aprovar, ele é movido para
 # "1 - Versão oficial".
 param(
     [Parameter(Mandatory = $true)][string]$Versao

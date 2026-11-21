@@ -2176,6 +2176,55 @@ impl World {
         self.food.extend(births);
     }
 
+    /// Cria um mundo cujos fundadores carregam exatamente os genomas dados,
+    /// sem nenhuma amarração extra. Usado pela interface nova para iniciar uma
+    /// run a partir de indivíduos salvos no banco. As regras do mundo são as
+    /// mesmas; só a origem do genoma fundador muda.
+    pub fn new_with_founder_genomes(
+        seed: u64,
+        initial_cells: usize,
+        map: MapDefinition,
+        founders: &[Genome],
+    ) -> Self {
+        let mut world = Self::new_with_initial_population(
+            seed,
+            0,
+            map,
+            InitialNeuralConfiguration::Classic,
+            &[],
+        );
+        if founders.is_empty() {
+            return world;
+        }
+        for index in 0..initial_cells {
+            let genome = founders[index % founders.len()].clone();
+            world.spawn_organism(InitialNeuralConfiguration::Classic, Some(genome));
+        }
+        world
+    }
+
+    /// Insere uma célula com um genoma exato, com as mesmas validações de
+    /// [`Self::insert_organism_at`].
+    pub fn insert_organism_with_genome_at(&mut self, position: Vec2, genome: Genome) -> bool {
+        let radius = physical_radius_for_energy(STARTING_ENERGY);
+        let inside_bounds = (radius..=WORLD_WIDTH - radius).contains(&position.x)
+            && (radius..=WORLD_HEIGHT - radius).contains(&position.y);
+        let overlaps_organism = self.organisms.iter().any(|organism| {
+            organism.position.distance(position) < organism.physical_radius() + radius
+        });
+        if !inside_bounds
+            || self.map.has_wall_within_distance(position, radius)
+            || overlaps_organism
+        {
+            return false;
+        }
+        let longevity_gene =
+            LongevityGene::founder(self.next_random_unit(), InitialNeuralConfiguration::Classic);
+        let organism = self.make_organism(position, genome, longevity_gene, 1, STARTING_ENERGY);
+        self.organisms.push(organism);
+        true
+    }
+
     /// Insere um fundador na posição indicada pela interface. A validação fica
     /// no mundo para que uma ordem de UI nunca consiga atravessar paredes ou
     /// sobrepor um organismo que se moveu entre a prévia e o próximo tick.
