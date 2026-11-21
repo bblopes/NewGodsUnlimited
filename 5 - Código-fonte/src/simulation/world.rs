@@ -13,7 +13,7 @@ use crate::{
     simulation::genome::{
         Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES, PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
     },
-    simulation::pheromone::{PheromoneField, pheromone_energy_cost},
+    simulation::pheromone::{ChemicalSensors, PheromoneField, pheromone_energy_cost},
 };
 
 pub const FOOD_RADIUS: f32 = 5.0;
@@ -126,7 +126,13 @@ pub struct TickProfile {
     pub clock: Duration,
     pub food_emission: Duration,
     pub pheromones: Duration,
+    /// Parte de `pheromones` gasta espalhando PF (fitoplâncton).
+    pub pheromones_food: Duration,
     pub sensors: Duration,
+    /// Parte dos sensores gasta na visão (cones + linha de visão).
+    pub sensor_vision: Duration,
+    /// Parte dos sensores gasta lendo a malha química.
+    pub sensor_chemical: Duration,
     pub brain: Duration,
     pub food_movement: Duration,
     pub organism_movement: Duration,
@@ -143,7 +149,10 @@ impl TickProfile {
         self.clock += other.clock;
         self.food_emission += other.food_emission;
         self.pheromones += other.pheromones;
+        self.pheromones_food += other.pheromones_food;
         self.sensors += other.sensors;
+        self.sensor_vision += other.sensor_vision;
+        self.sensor_chemical += other.sensor_chemical;
         self.brain += other.brain;
         self.food_movement += other.food_movement;
         self.organism_movement += other.organism_movement;
@@ -159,7 +168,10 @@ impl TickProfile {
         self.clock
             + self.food_emission
             + self.pheromones
+            + self.pheromones_food
             + self.sensors
+            + self.sensor_vision
+            + self.sensor_chemical
             + self.brain
             + self.food_movement
             + self.organism_movement
@@ -171,12 +183,15 @@ impl TickProfile {
             + self.reproduction
     }
 
-    pub fn phases(&self) -> [(&'static str, Duration); 13] {
+    pub fn phases(&self) -> [(&'static str, Duration); 16] {
         [
             ("tempo", self.clock),
             ("emissão de alimento", self.food_emission),
-            ("feromônios", self.pheromones),
-            ("sensores", self.sensors),
+            ("feromônios · células", self.pheromones),
+            ("feromônios · PF", self.pheromones_food),
+            ("sensores · grades e contato", self.sensors),
+            ("sensores · visão", self.sensor_vision),
+            ("sensores · químicos", self.sensor_chemical),
             ("cérebro", self.brain),
             ("movimento do alimento", self.food_movement),
             ("movimento das células", self.organism_movement),
@@ -195,7 +210,10 @@ enum TickPhase {
     Clock,
     FoodEmission,
     Pheromones,
+    PheromonesFood,
     Sensors,
+    SensorVision,
+    SensorChemical,
     Brain,
     FoodMovement,
     OrganismMovement,
@@ -252,7 +270,10 @@ impl TickObserver for ProfileTickObserver {
             TickPhase::Clock => self.profile.clock += elapsed,
             TickPhase::FoodEmission => self.profile.food_emission += elapsed,
             TickPhase::Pheromones => self.profile.pheromones += elapsed,
+            TickPhase::PheromonesFood => self.profile.pheromones_food += elapsed,
             TickPhase::Sensors => self.profile.sensors += elapsed,
+            TickPhase::SensorVision => self.profile.sensor_vision += elapsed,
+            TickPhase::SensorChemical => self.profile.sensor_chemical += elapsed,
             TickPhase::Brain => self.profile.brain += elapsed,
             TickPhase::FoodMovement => self.profile.food_movement += elapsed,
             TickPhase::OrganismMovement => self.profile.organism_movement += elapsed,
@@ -763,16 +784,17 @@ impl World {
         // dos motores decididos no tick anterior. Assim, não há persistência
         // química, mas existe uma defasagem causal de um tick.
         observer.begin(TickPhase::Pheromones);
-        self.pheromones
-            .rebuild(&self.organisms, &self.food, &self.map);
+        self.pheromones.clear();
+        self.pheromones.deposit_organisms(&self.organisms, &self.map);
         observer.end(TickPhase::Pheromones);
+        observer.begin(TickPhase::PheromonesFood);
+        self.pheromones.deposit_phytoplankton(&self.food, &self.map);
+        observer.end(TickPhase::PheromonesFood);
 
         // ── Etapas 4 e 5: perceber e decidir ─────────────────────────────
         // Sensores veem o retrato do mundo no início do tick. O cérebro
         // decide usando este mesmo retrato antes do movimento.
-        observer.begin(TickPhase::Sensors);
-        self.update_sensors(flow, reproduction_limit);
-        observer.end(TickPhase::Sensors);
+        self.update_sensors(flow, reproduction_limit, observer);
         observer.begin(TickPhase::Brain);
         for organism in &mut self.organisms {
             organism.motors = organism.brain.tick(organism.sensors);
@@ -1521,7 +1543,13 @@ impl World {
             .max_by(|left, right| left.1.total_cmp(&right.1))
     }
 
-    fn update_sensors(&mut self, flow: &FlowField, reproduction_limit: f32) {
+    fn update_sensors<Observer: TickObserver>(
+        &mut self,
+        flow: &FlowField,
+        reproduction_limit: f32,
+        observer: &mut Observer,
+    ) {
+        observer.begin(TickPhase::Sensors);
         // A visão responde a qualquer entidade visível, não a uma categoria
         // de alimento. A grade limita a busca ao alcance anatômico e junta
         // fitoplâncton e outras células no mesmo retrato espacial.
@@ -1545,12 +1573,36 @@ impl World {
         let contacts: Vec<bool> = (0..self.organisms.len())
             .map(|index| self.has_contact(index, &organism_grid))
             .collect();
+        observer.end(TickPhase::Sensors);
+        // Visão e química só leem o retrato; separá-las em passadas próprias
+        // não muda o resultado e permite medir cada custo.
+        observer.begin(TickPhase::SensorVision);
+        let visions: Vec<[Option<f32>; 4]> = self
+            .organisms
+            .iter()
+            .map(|organism| {
+                nearest_visible_in_cones(
+                    &visible_grid,
+                    organism.position,
+                    organism.food_sensor_range(),
+                    &self.map,
+                )
+            })
+            .collect();
+        observer.end(TickPhase::SensorVision);
+        observer.begin(TickPhase::SensorChemical);
+        let chemicals: Vec<[ChemicalSensors; 5]> = self
+            .organisms
+            .iter()
+            .map(|organism| self.pheromones.sensors_for(organism))
+            .collect();
+        observer.end(TickPhase::SensorChemical);
+        observer.begin(TickPhase::Sensors);
         for (index, organism) in self.organisms.iter_mut().enumerate() {
             let current = flow.sample_with_map(organism.position, Some(&self.map)) / MAX_FLOW_SPEED;
             let vision_range = organism.food_sensor_range();
-            let nearest =
-                nearest_visible_in_cones(&visible_grid, organism.position, vision_range, &self.map);
-            let chemical = self.pheromones.sensors_for(organism);
+            let nearest = visions[index];
+            let chemical = chemicals[index];
             organism.sensors = SensorInput {
                 vision_left: cone_signal(nearest[0], vision_range),
                 vision_right: cone_signal(nearest[1], vision_range),
@@ -1584,6 +1636,7 @@ impl World {
                 food_pheromone_gradient_y: chemical[4].gradient_y,
             };
         }
+        observer.end(TickPhase::Sensors);
     }
 
     fn organism_grid(&self) -> HashMap<(i32, i32), Vec<usize>> {

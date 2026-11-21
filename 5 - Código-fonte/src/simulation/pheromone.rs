@@ -87,6 +87,13 @@ impl PheromoneField {
         phytoplankton: &[Phytoplankton],
         map: &MapDefinition,
     ) {
+        self.clear();
+        self.deposit_organisms(organisms, map);
+        self.deposit_phytoplankton(phytoplankton, map);
+    }
+
+    /// Zera todas as camadas antes de um novo retrato.
+    pub fn clear(&mut self) {
         self.pg.fill(0.0);
         self.pg_signature_x.fill(0.0);
         self.pg_signature_y.fill(0.0);
@@ -94,7 +101,10 @@ impl PheromoneField {
         for field in &mut self.generic {
             field.fill(0.0);
         }
+    }
 
+    /// PG e canais genéricos emitidos pelas células.
+    pub fn deposit_organisms(&mut self, organisms: &[Organism], map: &MapDefinition) {
         for organism in organisms {
             let emission_scale = chemical_emission_scale(organism);
             let signature = organism.genome.pheromone_signature();
@@ -123,7 +133,10 @@ impl PheromoneField {
                 map,
             );
         }
+    }
 
+    /// PF: fitoplâncton agregado na malha e espalhado uma vez por célula.
+    pub fn deposit_phytoplankton(&mut self, phytoplankton: &[Phytoplankton], map: &MapDefinition) {
         // A população de fitoplâncton pode ser muito maior do que a de
         // células. Agregamos primeiro as partículas na própria malha química
         // (O(n)); em seguida cada célula ocupada é espalhada uma vez. O custo
