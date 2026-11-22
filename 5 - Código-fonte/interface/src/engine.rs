@@ -1066,7 +1066,6 @@ impl WorkerState {
                     *genetics = None;
                 }
                 self.say("Nova run iniciada", true);
-            }
                 if let Some(gravacao) = self.gravacao.as_mut() {
                     let tick = self.world.tick;
                     gravacao.eco(
@@ -1081,6 +1080,7 @@ impl WorkerState {
                     );
                     gravacao.mapa(tick, &self.applied_map, "reinicio");
                 }
+            }
             UiCommand::Insert { x, y, neural } => {
                 let Some(genome) = founder_genome(&neural, shared) else {
                     self.say("Indivíduo não encontrado no banco", false);
