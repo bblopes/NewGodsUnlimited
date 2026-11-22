@@ -42,7 +42,25 @@ anteriores.
 
 ## Medição
 
-A preencher com a comparação main × branch do CI.
+Mesma máquina do GitHub, main (V4.0.1) × V5.0.0:
+
+| Caso | main (ticks/s) | V5.0.0 (ticks/s) | Ganho | Estado igual | Comportamento igual |
+|---|---:|---:|---:|---|---|
+| Realista (100 células) | 6.463 | 6.602 | 1,02× | não | sim |
+| Estresse (300 células) | 952 | 956 | 1,00× | não | não |
+| Sessão (100 células) | 1.853 | 1.661 | 0,90× | sim | sim |
+| Sessão (200 células) | 1.962 | 2.005 | 1,02× | sim | sim |
+
+**Resultado honesto:** a velocidade fica igual, dentro do ruído das máquinas
+do GitHub. O 0,90× da sessão com 100 células não se repete com 200, e o
+sensor é só uma divisão por célula. **O estado mudou de propósito:** o save
+agora guarda 27 sensores, e a rede de 57 slots muda o que uma mutação pode
+produzir (um registro que antes apontava para um slot inexistente pode cair
+num slot válido). Por isso o comportamento só diverge onde há muitos
+nascimentos e mutações (estresse). 62 testes passam, inclusive os novos:
+Baseline decide reproduzir a partir de Id ≈ 0,89 e não antes, segue o PF
+(inclusive na diagonal), a migração de 56 para 57 slots preserva todas as
+ligações e a amarração nova não mexe nas ligações que já existiam.
 
 ## Como testar
 
