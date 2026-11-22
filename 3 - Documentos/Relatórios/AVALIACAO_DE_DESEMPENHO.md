@@ -197,3 +197,11 @@ velocidade real (por isso 1× aparecia como ~200 ticks/s). Corrigido.
 Ganho dentro do ruído, como previsto: depois da V3.0.1 os sensores já
 custavam pouco. O maior custo restante da sessão é o fitoplâncton
 (movimento, PF e limpeza), e reduzi-lo exige mudar regras.
+
+## 8. Encerramento da V3
+
+A V3.0.4 foi aprovada como versão oficial em 21/11/2026. Ficou para uma
+próxima etapa, se você decidir: regras mais leves para o fitoplâncton
+(atualização menos frequente das partículas paradas, corrente lida de uma
+grade, PF recalculado a cada poucos ticks). Todas mudam o resultado da
+simulação.

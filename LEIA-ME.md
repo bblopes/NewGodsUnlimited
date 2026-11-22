@@ -8,7 +8,7 @@ comportamento é programado: a seleção natural decide o que funciona.
 
 | Quero… | Abra |
 | --- | --- |
-| **Rodar a versão oficial** | [`1 - Versão oficial/`](1%20-%20Versão%20oficial/) → `New Gods Unlimited V1.0.0.exe` |
+| **Rodar a versão oficial** | [`1 - Versão oficial/`](1%20-%20Versão%20oficial/) → `New Gods Unlimited V3.0.4.exe` |
 | Experimentar o revamp da interface (V2) | [`2 - Versões de teste/V2 - Revamp da interface/`](2%20-%20Versões%20de%20teste/) → `New Gods Unlimited V2.0.0.exe` |
 | Testar uma versão em validação | [`2 - Versões de teste/`](2%20-%20Versões%20de%20teste/) |
 | Mostrar o projeto para alguém | [`3 - Documentos/Apresentação/`](3%20-%20Documentos/Apresentação/) |

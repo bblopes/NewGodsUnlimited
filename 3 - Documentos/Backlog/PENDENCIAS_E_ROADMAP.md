@@ -7,7 +7,7 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 
 1. ~~Reorganização das pastas e fluxo de versões~~ (feito em 21/11/2026)
 2. **V2 — Revamp da interface**: fechada em 21/11/2026 na V2.0.3; salvar/carregar runs, presets e Laboratório ficam para uma retomada da V2
-3. **V3 — Otimização**: estudo de desempenho e paralelização (ver `Relatórios/AVALIACAO_DE_DESEMPENHO.md`). Diagnóstico de 21/11/2026: o
+3. **V3 — Otimização** (fechada em 21/11/2026 na V3.0.4, aprovada como versão oficial): estudo de desempenho e paralelização (ver `Relatórios/AVALIACAO_DE_DESEMPENHO.md`). Diagnóstico de 21/11/2026: o
    feromônio de alimento (PF) consome 88% do tick com ~5.000 fitoplânctons.
    Roteiro: V3.0.0 PF pré-calculado · V3.0.1 assinatura PG em cache ·
    V3.0.2 grades planas · V3.0.3 paralelismo (rayon) · V3.0.4 interações em
