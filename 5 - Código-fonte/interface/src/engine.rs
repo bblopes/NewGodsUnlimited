@@ -217,6 +217,8 @@ pub fn flow_preset_from(name: &str) -> FlowPreset {
     match name {
         "Oásis" | "Oasis" | "oasis" => FlowPreset::Oasis,
         "Esquerda" | "esquerda" | "left" => FlowPreset::Left,
+        "Redemoinho" | "redemoinho" | "whirlpool" => FlowPreset::Whirlpool,
+        "Circular" | "circular" => FlowPreset::Circular,
         _ => FlowPreset::Classic,
     }
 }

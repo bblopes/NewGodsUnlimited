@@ -281,8 +281,8 @@ function tabAmbiente() {
     ${section('a-corr', 'Física do mapa · Corrente', `
       ${toggle('env.flow_on', 'Corrente ligada')}
       ${slider('env.flow_intensity', 'Intensidade', 0, 100, 1, '%', '', 100, 0)}
-      <div class="field"><div class="field-top"><label>Modelo</label></div>${segF('env.flow_preset', ['Clássico', 'Oásis', 'Esquerda'])}</div>
-      <div class="hint">Clássico: recirculante com giros locais. Esquerda: vento contínuo. Oásis: giro em torno do oásis. Vetores: aba Camadas.</div>
+      <div class="field"><div class="field-top"><label>Modelo</label></div>${segF('env.flow_preset', ['Clássico', 'Oásis', 'Esquerda', 'Redemoinho', 'Circular'])}</div>
+      <div class="hint">Clássico: recirculante com giros locais. Esquerda: vento contínuo. Oásis: giro em torno do oásis. Redemoinho: espiral que abre do centro e vira anel na borda. Circular: anéis girando em torno do centro. Vetores: aba Camadas.</div>
     `)}
     ${section('a-sol', 'Física do mapa · Sol', `
       ${slider('env.sun_intensity', 'Intensidade do sol', 0, 100, 1, '%', '<span>escala toda a luz pintada</span>', 100, 0)}
