@@ -19,6 +19,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const IC = {
   flag: '<path d="M5 21V4h12l-2 4 2 4H5"/>',
   play: '<path d="M7 4.5v15l12-7.5z"/>', pause: '<path d="M8 5v14M16 5v14"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
   save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
   restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/>', chev: '<path d="M6 9l6 6 6-6"/>',
   session: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>', env: '<path d="M3 9c3-3 6 3 9 0s6 3 9 0M3 15c3-3 6 3 9 0s6 3 9 0"/>',
@@ -42,7 +43,7 @@ const ic = n => `<svg class="i" viewBox="0 0 24 24">${IC[n] || ''}</svg>`;
 const SPEEDS = ['1×', '10×', '100×', '1.000×', '10.000×', '100.000×', '1.000.000×'];
 const MENTAL_SCALE = 40000;
 const TABS = [
-  { id: 'sessao', label: 'Sessão', icon: 'session' }, { id: 'biologia', label: 'Biologia', icon: 'bio' }, { id: 'ambiente', label: 'Ambiente', icon: 'env' },
+  { id: 'sessao', label: 'Sessão', icon: 'session' }, { id: 'biologia', label: 'Biologia', icon: 'bio' }, { id: 'ambiente', label: 'Física', icon: 'env' },
   { id: 'mapa', label: 'Mapa', icon: 'map' }, { id: 'celulas', label: 'Células', icon: 'cells' },
   { id: 'demografia', label: 'Demografia', icon: 'demo' }, { id: 'camadas', label: 'Camadas', icon: 'layers' },
   { id: 'spotter', label: 'Behavior Spotter', icon: 'target' },
@@ -183,6 +184,7 @@ function renderTop() {
     <button class="btn ${paused ? 'pri' : ''}" data-act="pause" title="Espaço">${ic(paused ? 'play' : 'pause')}${paused ? 'Iniciar' : 'Pausar'}</button>
     <div class="speed"><button class="btn" data-act="speedMenu" title="Teclas 1–7"><span class="mono">${SPEEDS[F?.speed ?? 0]}</span>${ic('chev')}</button>
       ${S.speedMenu ? `<div class="menu">${SPEEDS.map((s, i) => `<button class="${i === F?.speed ? 'on' : ''}" data-act="speed" data-v="${i}"><span class="mono">${s}</span><span class="kbd">${i + 1}</span></button>`).join('')}</div>` : ''}</div>
+    <button class="btn icon ghost" data-act="theme" title="${S.theme === 'light' ? 'Modo noturno' : 'Modo dia'}">${ic(S.theme === 'light' ? 'moon' : 'sun')}</button>
     ${recControl()}
     <div class="vsep"></div>
     <div class="pend">
@@ -250,9 +252,7 @@ function tabSessao() {
       <div class="hint">Cria uma célula no ponto clicado sem reiniciar a run: uma cópia exata do indivíduo escolhido acima, <b>${esc(neural.name)}</b>.</div>
       <button class="btn ${S.insert ? 'pri' : ''} block" data-act="insert">${ic(S.insert ? 'x' : 'plus')}${S.insert ? 'Cancelar inserção' : 'Inserir célula no mapa'}</button>
     `)}
-    ${section('s-persist', 'Salvar e presets', `
-      <div class="soon"><b>Chega na próxima versão.</b> Salvar e carregar runs (.ecosrun) e presets de sessão ainda não passaram para a interface nova. Enquanto isso, use a V1.1.0 para salvar runs.</div>
-    `)}`;
+    ${section('s-persist', 'Runs salvas', runsBlock())}`;
   return head('Sessão', `run #${String(F?.run_id ?? '').slice(-7)}`) + `<div class="side-body">${body}</div>`;
 }
 
@@ -275,39 +275,63 @@ function tabBiologia() {
 }
 
 function tabAmbiente() {
+  const dirty = !!F?.map_dirty, sunOn = S.mapTool === 'sun';
   const body = `
-    ${section('a-corr', 'Corrente', `
+    ${section('a-corr', 'Física do mapa · Corrente', `
       ${toggle('env.flow_on', 'Corrente ligada')}
       ${slider('env.flow_intensity', 'Intensidade', 0, 100, 1, '%', '', 100, 0)}
       <div class="field"><div class="field-top"><label>Modelo</label></div>${segF('env.flow_preset', ['Clássico', 'Oásis', 'Esquerda'])}</div>
-      <div class="hint">Vetores da corrente: aba Camadas.</div>
+      <div class="hint">Clássico: recirculante com giros locais. Esquerda: vento contínuo. Oásis: giro em torno do oásis. Vetores: aba Camadas.</div>
     `)}
-    ${section('a-dens', 'Densidade', `
+    ${section('a-sol', 'Física do mapa · Sol', `
+      <div class="row"><button class="btn ${sunOn ? 'pri' : ''}" data-act="tool" data-v="${sunOn ? 'none' : 'sun'}">${ic('sun')}${sunOn ? 'Parar de desenhar' : 'Desenhar região de sol'}</button><button class="btn sm" data-act="mapClearSun">Limpar sol</button><div class="grow"></div>${toggle('sun', 'Ver iluminação', '', true)}</div>
+      <div class="hint">Desenhe o contorno da região arrastando na arena; ao soltar, ela substitui a área ensolarada. Nada entra no mundo antes de aplicar. A luz contínua e o pincel com borda suave chegam na V5.1.</div>
+      <div class="row"><button class="btn ${dirty ? 'warn' : ''}" style="flex:1" data-act="mapApply" ${dirty ? '' : 'disabled'}>Aplicar mapa${dirty ? ' *' : ''}</button><button class="btn ghost" data-act="mapRevert" ${dirty ? '' : 'disabled'}>Descartar</button></div>
+    `)}
+    ${section('a-dens', 'Interações', `
       ${toggle('env.ac_on', 'Anti-cramming', 'Separa células sobrepostas')}
       ${slider('env.ac_force', 'Força', 0, 1, 0.05)}
       ${slider('env.ac_distance', 'Espaço mínimo', 1, +(INFO.max_exclusion / INFO.min_exclusion).toFixed(2), 0.05, '× contato', '', 1 / INFO.min_exclusion, 2)}
       <div class="li"><div class="meta"><b class="mono" data-live="conflicts">${fmt(F?.crowding_pairs)} pares em conflito</b><small>abaixo do espaço mínimo</small></div><button class="btn sm" data-act="layerOn" data-v="conflicts">${ic('eye')}Ver na arena</button></div>
     `)}`;
-  return head('Ambiente', 'Física do mundo · valem ao aplicar', `<span data-pending="phys">${pendingPill(physPending())}</span>`) + `<div class="side-body">${body}</div>`;
+  return head('Física', 'Corrente, sol e interações · valem ao aplicar', `<span data-pending="phys">${pendingPill(physPending())}</span>`) + `<div class="side-body">${body}</div>`;
 }
 
 function tabMapa() {
-  const tools = [['none', 'Selecionar', 'cursor'], ['wall', 'Parede', 'wall'], ['eraser', 'Borracha', 'eraser'], ['sun', 'Sol', 'sun']];
+  const tools = [['none', 'Selecionar', 'cursor'], ['wall', 'Parede', 'wall'], ['eraser', 'Borracha', 'eraser']];
   const dirty = !!F?.map_dirty;
+  const st = STORE.data;
+  const presets = st?.map_presets || [];
   const body = `
-    ${section('m-tools', 'Ferramentas', `
+    ${section('m-tools', 'Construção', `
       <div class="seg">${tools.map(([id, l, i]) => `<button class="${S.mapTool === id ? 'on' : ''}" data-act="tool" data-v="${id}" style="display:flex;align-items:center;justify-content:center;gap:5px">${ic(i)}${l}</button>`).join('')}</div>
       <div class="field"><div class="field-top"><label>Raio do pincel</label><span class="unit">pixels do mapa</span><input class="num" type="number" data-g="brush" min="0" max="12" value="${S.brush}"></div><input type="range" data-g="brush" min="0" max="12" step="1" value="${S.brush}"></div>
-      <div class="hint">${S.mapTool === 'sun' ? 'Sol: desenhe o contorno da região arrastando na arena; ao soltar, ela substitui a área ensolarada.' : 'Parede e Borracha: arraste na arena para pintar.'} Nada entra no mundo antes de aplicar o mapa.</div>
-      <div class="row"><button class="btn sm" data-act="mapUndo">${ic('undo')}Desfazer</button><button class="btn sm" data-act="mapClearSun">${ic('sun')}Limpar sol</button><div class="grow"></div>${toggle('sun', 'Ver iluminação', '', true)}</div>
+      <div class="hint">Parede e Borracha: arraste na arena para pintar. Nada entra no mundo antes de aplicar o mapa. O sol fica em Física.</div>
+      <div class="row"><button class="btn sm" data-act="mapUndo">${ic('undo')}Desfazer</button></div>
       <div class="row"><button class="btn ${dirty ? 'warn' : ''}" style="flex:1" data-act="mapApply" ${dirty ? '' : 'disabled'}>Aplicar mapa${dirty ? ' *' : ''}</button><button class="btn ghost" data-act="mapRevert" ${dirty ? '' : 'disabled'}>Descartar</button></div>
     `)}
-    ${section('m-flow', 'Correnteza do mapa', `
-      ${segF('env.flow_preset', ['Clássico', 'Oásis', 'Esquerda'])}
-      <div class="hint">Clássico: recirculante com giros locais. Esquerda: vento contínuo. Oásis: giro em torno do oásis. Vale ao aplicar.</div>
-    `)}
-    ${section('m-presets', 'Presets de mapa', `<div class="soon"><b>Chega na próxima versão.</b> Salvar e carregar mapas ainda não passou para a interface nova.</div>`)}`;
-  return head('Mapa', S.mapTool === 'none' ? 'Editor de paredes, sol e correnteza' : 'Editando · arraste na arena', dirty ? '<span class="pill wa">não aplicado</span>' : '') + `<div class="side-body">${body}</div>`;
+    ${section('m-presets', 'Presets de mapa', `
+      <div class="hint">Guarda paredes, sol e corrente do mundo como está aplicado agora. Carregar aplica tudo de uma vez.</div>
+      <div class="row"><input class="txt" placeholder="Nome do mapa" data-g="mapName" value="${esc(S.mapName || '')}" style="flex:1;height:28px"><button class="btn sm pri" data-act="mapPresetSave">${ic('save')}Salvar</button></div>
+      ${presets.length ? `<div class="list">${presets.map(p => `<div class="li"><div class="meta"><b>${esc(p.name)}</b><small>${new Date(p.modified * 1000).toLocaleString('pt-BR')}</small></div><button class="btn sm" data-act="mapPresetLoad" data-v="${esc(p.file)}">Carregar</button><button class="btn sm ${S.delArm === p.file ? 'danger' : 'ghost'}" data-act="mapPresetDelete" data-v="${esc(p.file)}">${S.delArm === p.file ? 'Confirmar' : ic('x')}</button></div>`).join('')}</div>` : '<div class="hint">Nenhum mapa salvo ainda.</div>'}
+      ${st ? `<div class="hint">Pasta: <span class="mono">${esc(st.maps_folder)}</span>. Para importar ou exportar, copie arquivos <b>.ngumapa</b> para dentro ou para fora dela.</div>` : ''}
+    `)}`;
+  return head('Mapa', S.mapTool === 'none' ? 'Construção e presets' : 'Editando · arraste na arena', dirty ? '<span class="pill wa">não aplicado</span>' : '') + `<div class="side-body">${body}</div>`;
+}
+
+/* ------------------------------ Runs salvas e presets (V5.0.3) ------------------------------ */
+const STORE = { data: null };
+async function refreshStorage() {
+  try { STORE.data = await invoke('storage'); } catch { return; }
+  if (S.tab === 'mapa' || S.tab === 'sessao') renderPanel();
+  if (S.drawer === 'runs') renderLayer();
+}
+function runsBlock() {
+  const st = STORE.data, runs = st?.runs || [];
+  return `<div class="hint">Salva o mundo inteiro (células, fitoplâncton, mapa), as configurações e a telemetria. Carregar continua a run de onde parou.</div>
+    <div class="row"><input class="txt" placeholder="Nome da run" data-g="runName" value="${esc(S.runName || '')}" style="flex:1;height:28px"><button class="btn sm pri" data-act="runSave">${ic('save')}Salvar run</button></div>
+    ${runs.length ? `<div class="list">${runs.map(f => `<div class="li"><div class="meta"><b>${esc(f.name)}</b><small>${new Date(f.modified * 1000).toLocaleString('pt-BR')} · ${fmt(f.bytes / 1048576, 1)} MB</small></div><button class="btn sm" data-act="runLoad" data-v="${esc(f.file)}">Carregar</button></div>`).join('')}</div>` : '<div class="hint">Nenhuma run salva ainda.</div>'}
+    ${st ? `<div class="hint">Pasta: <span class="mono">${esc(st.runs_folder)}</span></div>` : ''}`;
 }
 
 function tabCelulas() {
@@ -530,6 +554,23 @@ function tabDemografia() {
   return head('Demografia', `Telemetria da sessão · amostra a cada ${fmt(F?.telemetry_interval ?? 500)} ticks`, `<button class="btn sm" data-act="demoFull">${ic('maxim')}Expandir</button>`) + `<div class="side-body">${body}</div>`;
 }
 
+// Edição do mapa ativa: paredes na aba Mapa, sol na aba Física.
+function editingMap() { return S.mapTool !== 'none' && ((S.tab === 'mapa' && S.mapTool !== 'sun') || (S.tab === 'ambiente' && S.mapTool === 'sun')); }
+
+/* ------------------------------ Tema dia / noite ------------------------------ */
+// O escuro de sempre é o modo noturno; o claro é o modo dia. Tudo que for
+// desenhado precisa usar as variáveis de tema (CSS) ou ARENA (canvas).
+const ARENA = { bg: '#121518', grid: 'rgba(255,255,255,.025)', bd: '#2a3036' };
+function setTheme(t) {
+  S.theme = t === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = S.theme;
+  try { localStorage.setItem('ngu-theme', S.theme); } catch { }
+  const cs = getComputedStyle(document.documentElement);
+  ARENA.bg = cs.getPropertyValue('--arena').trim() || ARENA.bg;
+  ARENA.grid = cs.getPropertyValue('--arena-grid').trim() || ARENA.grid;
+  ARENA.bd = cs.getPropertyValue('--arena-bd').trim() || ARENA.bd;
+}
+
 /* ------------------------------ Behavior Spotter ------------------------------ */
 // Rastreio de uma fagocitose: { predator, prey }. A câmera segue o predador.
 const SPOT = { track: null, idx: -1, lastRender: 0 };
@@ -633,8 +674,8 @@ function individualDrawer() {
 }
 function drawerContent(d) {
   if (d === 'individual') return individualDrawer();
-  if (d === 'runs') return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>Estado da sessão</h3><p>Salvar e carregar runs completas (.ecosrun).</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div>
-    <div class="drawer-b"><div class="soon"><b>Chega na próxima versão.</b><br>Esta é a primeira versão da interface nova. Salvar e carregar runs, presets de sessão e presets de mapa estão sendo portados do executável antigo. Até lá, use a <b>V1.1.0</b> (em <i>2 - Versões de teste</i>) para salvar uma run.</div></div>
+  if (d === 'runs') return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>Estado da sessão</h3><p>Salvar e carregar runs completas (.ngurun).</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div>
+    <div class="drawer-b">${runsBlock()}</div>
     <div class="drawer-f"><button class="btn" data-act="closeLayer">Fechar</button></div></div>`;
   return '';
 }
@@ -680,10 +721,10 @@ function renderStage() {
   let b = '';
   const neural = neuralOption(S.init.neural);
   if (S.insert) b = `<div class="banner">${ic('plus')}<span>Inserir célula <b>${esc(neural.name)}</b> · clique no mapa</span><span class="kbd">Esc</span><button class="btn sm ghost" data-act="insert">Cancelar</button></div>`;
-  else if (S.tab === 'mapa' && S.mapTool !== 'none') b = `<div class="banner wa">${ic(S.mapTool)}<span>Editando mapa · ${{ wall: 'Parede', eraser: 'Borracha', sun: 'Região ensolarada (contorno)' }[S.mapTool]}${S.mapTool !== 'sun' ? ' · raio ' + S.brush : ''}</span>${F?.map_dirty ? '<button class="btn sm warn" data-act="mapApply">Aplicar mapa</button>' : ''}<button class="btn sm ghost" data-act="tool" data-v="none">Sair</button></div>`;
+  else if (editingMap()) b = `<div class="banner wa">${ic(S.mapTool)}<span>Editando mapa · ${{ wall: 'Parede', eraser: 'Borracha', sun: 'Região ensolarada (contorno)' }[S.mapTool]}${S.mapTool !== 'sun' ? ' · raio ' + S.brush : ''}</span>${F?.map_dirty ? '<button class="btn sm warn" data-act="mapApply">Aplicar mapa</button>' : ''}<button class="btn sm ghost" data-act="tool" data-v="none">Sair</button></div>`;
   $('#stageBanner').innerHTML = b;
   renderChips();
-  $('#camCtl').innerHTML = `<button class="btn sm ${S.follow ? 'pri' : ''}" data-act="follow" title="Seguir célula selecionada">${ic('target')}Seguir</button><button class="btn sm" data-act="fit">${ic('fit')}Encaixar</button><span class="pill mono" style="height:26px;background:rgba(20,23,26,.88)">${Math.round(cam.zoom * 100)}%</span>`;
+  $('#camCtl').innerHTML = `<button class="btn sm ${S.follow ? 'pri' : ''}" data-act="follow" title="Seguir célula selecionada">${ic('target')}Seguir</button><button class="btn sm" data-act="fit">${ic('fit')}Encaixar</button><span class="pill mono" style="height:26px;background:var(--ov)">${Math.round(cam.zoom * 100)}%</span>`;
 }
 function renderChips() {
   const L = S.layers, chips = [];
@@ -708,7 +749,7 @@ function renderAll() { renderTop(); renderRail(); renderPanel(); renderStage(); 
 /* ------------------------------ Ações ------------------------------ */
 const ACT = {
   mode(v) { S.mode = v; S.speedMenu = false; S.demoFull = false; renderAll(); },
-  tab(v) { if (S.tab === v && !S.collapsed) S.collapsed = true; else { S.tab = v; S.collapsed = false; } if (v !== 'mapa') S.mapTool = 'none'; renderRail(); renderPanel(); renderStage(); },
+  tab(v) { if (S.tab === v && !S.collapsed) S.collapsed = true; else { S.tab = v; S.collapsed = false; } S.mapTool = 'none'; renderRail(); renderPanel(); renderStage(); },
   collapse() { S.collapsed = !S.collapsed; renderRail(); if (!S.collapsed) renderPanel(); },
   pause() { send({ type: 'pause', value: !F?.paused }); },
   speedMenu() { S.speedMenu = !S.speedMenu; renderTop(); },
@@ -741,6 +782,12 @@ const ACT = {
   closeLayer(v, t, e) { if (t.classList.contains('scrim') && e.target.closest('[data-stop]')) return; S.drawer = null; S.modal = null; renderLayer(); },
   headlessOn() { S.modal = null; renderLayer(); send({ type: 'headless', value: true }); },
   headlessOff() { send({ type: 'headless', value: false }); },
+  runSave() { const name = (S.runName || '').trim() || `run ${new Date().toLocaleString('pt-BR').replace(/[/:]/g, '-')}`; send({ type: 'run_save', name }); setTimeout(refreshStorage, 800); },
+  runLoad(v) { send({ type: 'run_load', file: v }); S.drawer = null; renderLayer(); },
+  mapPresetSave() { const name = (S.mapName || '').trim(); if (!name) { say('Dê um nome ao mapa', false); return; } send({ type: 'map_preset_save', name }); setTimeout(refreshStorage, 500); },
+  mapPresetLoad(v) { send({ type: 'map_preset_load', file: v }); },
+  mapPresetDelete(v) { if (S.delArm !== v) { S.delArm = v; renderPanel(); return; } S.delArm = null; send({ type: 'map_preset_delete', file: v }); setTimeout(refreshStorage, 500); },
+  theme() { setTheme(S.theme === 'light' ? 'dark' : 'light'); renderTop(); },
   spotPause() { send({ type: 'spotter_pause', on: !F?.spotter_pause }); if (F?.spotter_pause) { /* desligando: segue o predador */ } },
   spotGo(v) { SPOT.idx = +v; spotGo((F?.spotter || [])[+v]); },
   spotNext() { const l = F?.spotter || []; if (!l.length) return; SPOT.idx = (SPOT.idx + 1) % l.length; spotGo(l[SPOT.idx]); },
@@ -817,6 +864,8 @@ document.addEventListener('input', e => {
     if (k === 'flow' && t.checked) FLOW.key = '';
     renderStage(); return;
   }
+  if (t.dataset.g === 'runName') { S.runName = t.value; return; }
+  if (t.dataset.g === 'mapName') { S.mapName = t.value; return; }
   if (t.dataset.g === 'brush') { S.brush = clamp(+t.value || 0, 0, 12); document.querySelectorAll('[data-g="brush"]').forEach(o => { if (o !== t) o.value = t.value; }); renderStage(); return; }
 });
 document.addEventListener('keydown', e => {
@@ -904,14 +953,14 @@ function draw() {
   computeView();
   const W = INFO.world_width, H = INFO.world_height;
   const [x0, y0] = toScreen(0, 0), ww = W * view.s, hh = H * view.s;
-  ctx.fillStyle = '#121518'; ctx.fillRect(x0, y0, ww, hh);
+  ctx.fillStyle = ARENA.bg; ctx.fillRect(x0, y0, ww, hh);
   ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, ww, hh); ctx.clip();
-  ctx.strokeStyle = 'rgba(255,255,255,.025)'; ctx.lineWidth = 1;
+  ctx.strokeStyle = ARENA.grid; ctx.lineWidth = 1;
   const g = 800;
   for (let gx = 0; gx <= W; gx += g) { const [sx] = toScreen(gx, 0); ctx.beginPath(); ctx.moveTo(sx, y0); ctx.lineTo(sx, y0 + hh); ctx.stroke(); }
   for (let gy = 0; gy <= H; gy += g) { const [, sy] = toScreen(0, gy); ctx.beginPath(); ctx.moveTo(x0, sy); ctx.lineTo(x0 + ww, sy); ctx.stroke(); }
   if (S.layers.chem && F.chem) drawChem(x0, y0, ww, hh);
-  if (MAP && (S.layers.sun || (S.tab === 'mapa' && S.mapTool === 'sun'))) { ctx.imageSmoothingEnabled = true; ctx.drawImage(sunCv, x0, y0, ww, hh); }
+  if (MAP && (S.layers.sun || (S.tab === 'ambiente' && S.mapTool === 'sun'))) { ctx.imageSmoothingEnabled = true; ctx.drawImage(sunCv, x0, y0, ww, hh); }
   if (MAP) { ctx.imageSmoothingEnabled = false; ctx.drawImage(wallCv, x0, y0, ww, hh); }
   if (S.layers.flow) drawFlow();
   // fitoplâncton
@@ -937,7 +986,7 @@ function draw() {
   }
   // hover
   const tip = $('#tip');
-  if (mouse.inside && !S.insert && !(S.tab === 'mapa' && S.mapTool !== 'none')) {
+  if (mouse.inside && !S.insert && !(editingMap())) {
     const [wx, wy] = toWorld(mouse.x, mouse.y); const h = cellAt(wx, wy);
     if (h >= 0) {
       const [sx, sy] = toScreen(F.xs[h], F.ys[h]), r = Math.max(2, F.radii[h] * view.s);
@@ -958,7 +1007,7 @@ function draw() {
     cv.style.cursor = ok ? 'crosshair' : 'not-allowed';
   }
   // pincel e laço do mapa
-  if (S.tab === 'mapa' && S.mapTool !== 'none' && mouse.inside && MAP) {
+  if (editingMap() && mouse.inside && MAP) {
     if (S.mapTool === 'sun') {
       cv.style.cursor = 'crosshair';
       if (mouse.lasso.length > 1) { ctx.strokeStyle = '#e3b341'; ctx.fillStyle = 'rgba(227,179,65,.12)'; ctx.lineWidth = 1.5; ctx.beginPath(); mouse.lasso.forEach(([x, y], i) => { const [sx, sy] = toScreen(x, y); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); }); ctx.closePath(); ctx.fill(); ctx.stroke(); }
@@ -970,7 +1019,7 @@ function draw() {
   }
   drawSpotter();
   ctx.restore();
-  ctx.strokeStyle = '#2a3036'; ctx.lineWidth = 1; ctx.strokeRect(x0 + .5, y0 + .5, ww - 1, hh - 1);
+  ctx.strokeStyle = ARENA.bd; ctx.lineWidth = 1; ctx.strokeRect(x0 + .5, y0 + .5, ww - 1, hh - 1);
 }
 function drawChem(x0, y0, ww, hh) {
   const c = F.chem; chemCv.width = c.width; chemCv.height = c.height;
@@ -1001,7 +1050,7 @@ cv.addEventListener('mousemove', e => {
   const r = cv.getBoundingClientRect(); mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; mouse.inside = true;
   if (!mouse.down) return;
   if (Math.abs(mouse.x - mouse.sx) + Math.abs(mouse.y - mouse.sy) > 4) mouse.moved = true;
-  const editing = S.tab === 'mapa' && S.mapTool !== 'none' && mouse.btn === 0;
+  const editing = editingMap() && mouse.btn === 0;
   if (editing) { const [wx, wy] = toWorld(mouse.x, mouse.y); if (S.mapTool === 'sun') { const lp = mouse.lasso[mouse.lasso.length - 1]; if (!lp || Math.hypot(lp[0] - wx, lp[1] - wy) > 40) mouse.lasso.push([wx, wy]); } else stroke(wx, wy); }
   else if (mouse.moved) { cam.cx -= e.movementX / view.s; cam.cy -= e.movementY / view.s; S.follow = false; }
 });
@@ -1009,20 +1058,20 @@ cv.addEventListener('mouseleave', () => { mouse.inside = false; if (mouse.down &
 cv.addEventListener('mousedown', e => {
   mouse.down = true; mouse.moved = false; mouse.sx = mouse.x; mouse.sy = mouse.y; mouse.btn = e.button;
   if (e.button === 2 && S.insert) { ACT.insert(); return; }
-  if (S.tab === 'mapa' && S.mapTool !== 'none' && e.button === 0) { const [wx, wy] = toWorld(mouse.x, mouse.y); if (S.mapTool === 'sun') mouse.lasso = [[wx, wy]]; else { lastStroke = 0; stroke(wx, wy); } }
+  if (editingMap() && e.button === 0) { const [wx, wy] = toWorld(mouse.x, mouse.y); if (S.mapTool === 'sun') mouse.lasso = [[wx, wy]]; else { lastStroke = 0; stroke(wx, wy); } }
 });
 function finishLasso() { if (mouse.lasso.length >= 3) send({ type: 'map_sun', points: mouse.lasso }); mouse.lasso = []; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('mouseup', e => {
   const click = mouse.down && !mouse.moved; mouse.down = false;
-  if (S.tab === 'mapa' && S.mapTool === 'sun' && e.button === 0) { finishLasso(); return; }
+  if (S.tab === 'ambiente' && S.mapTool === 'sun' && e.button === 0) { finishLasso(); return; }
   if (!click || e.button !== 0) return;
   const [wx, wy] = toWorld(mouse.x, mouse.y);
   if (S.insert) {
     if (!S.insertOk) { say('Posição inválida: parede, borda ou célula no lugar', false); return; }
     send({ type: 'insert', x: wx, y: wy, neural: S.init.neural }); S.insert = false; renderPanel(); renderStage(); renderStatus(); return;
   }
-  if (S.tab === 'mapa' && S.mapTool !== 'none') return;
+  if (editingMap()) return;
   const h = cellAt(wx, wy); if (h >= 0) selectCell(F.ids[h]);
 });
 cv.addEventListener('wheel', e => {
@@ -1035,19 +1084,23 @@ cv.addEventListener('wheel', e => {
 }, { passive: false });
 
 /* ------------------------------ Laços de dados ------------------------------ */
-let fps = 60, frames = 0, fpsT = performance.now(), lastPaused = null, lastSpeed = null, lastHeadless = null, lastMapDirty = null, lastRec = null;
+let fps = 60, frames = 0, fpsT = performance.now(), lastPaused = null, lastSpeed = null, lastHeadless = null, lastMapDirty = null, lastRec = null, lastEnvVersion = null;
 let frameBusy = false;
 async function pollFrame() {
   if (frameBusy) return; frameBusy = true;
   try {
     const f = await invoke('frame');
     const prev = F; F = f;
-    if (F.notice && F.notice.seq !== S.lastNoticeSeq) { S.lastNoticeSeq = F.notice.seq; if (F.notice.text) say(F.notice.text, F.notice.ok); }
+    if (F.notice && F.notice.seq !== S.lastNoticeSeq) { S.lastNoticeSeq = F.notice.seq; if (F.notice.text) say(F.notice.text, F.notice.ok); refreshStorage(); }
     if (F.bank_version !== lastBankVersion) { lastBankVersion = F.bank_version; refreshCatalog(); }
+    if (F.env && F.env_version !== lastEnvVersion) {
+      const first = lastEnvVersion === null; lastEnvVersion = F.env_version;
+      if (!first) { S.env = { ...F.env }; S.envApplied = { ...F.env }; if (F.init) { S.init = { ...F.init }; S.initApplied = { ...F.init }; } FLOW.key = ''; renderAll(); }
+    }
     if (F.map_version !== lastMapVersion) { lastMapVersion = F.map_version; MAP = await invoke('map_data'); buildMap(MAP); }
     if (F.paused !== lastPaused || F.speed !== lastSpeed || (F.rec_mode || '') !== lastRec) { lastPaused = F.paused; lastSpeed = F.speed; lastRec = F.rec_mode || ''; renderTop(); }
     if (F.headless !== lastHeadless) { lastHeadless = F.headless; renderStage(); }
-    if (F.map_dirty !== lastMapDirty) { lastMapDirty = F.map_dirty; renderRail(); if (S.tab === 'mapa') { renderPanel(); renderStage(); } }
+    if (F.map_dirty !== lastMapDirty) { lastMapDirty = F.map_dirty; renderRail(); if (S.tab === 'mapa' || S.tab === 'ambiente') { renderPanel(); renderStage(); } }
     if (S.selected != null && !F.detail && prev && prev.detail) { pendingDetailRender = true; }
     if (pendingDetailRender && S.tab === 'celulas') { pendingDetailRender = false; renderPanel(); }
   } catch (err) { console.error(err); }
@@ -1098,7 +1151,7 @@ function loop(now) {
 /* ------------------------------ Tooltip próprio ------------------------------ */
 // O tooltip nativo (<title>) demora e quase não se acerta nos nós pequenos da
 // rede. Este aparece na hora sobre qualquer elemento com data-tip.
-function tipEl() { let t = $('#tip'); if (!t) { t = document.createElement('div'); t.id = 'tip'; t.className = 'tip'; document.body.appendChild(t); } return t; }
+function tipEl() { let t = $('#uitip'); if (!t) { t = document.createElement('div'); t.id = 'uitip'; t.className = 'uitip'; document.body.appendChild(t); } return t; }
 document.addEventListener('mousemove', e => {
   const el = e.target?.closest?.('[data-tip]');
   const t = tipEl();
@@ -1116,6 +1169,9 @@ async function boot() {
   if (!TAURI) { $('#boot').innerHTML = '<b>New Gods Unlimited</b><span>Esta página precisa rodar dentro do aplicativo.</span>'; return; }
   INFO = await invoke('info');
   if (INFO.topology) TOPO = INFO.topology;
+  let savedTheme = 'dark'; try { savedTheme = localStorage.getItem('ngu-theme') || 'dark'; } catch { }
+  setTheme(savedTheme);
+  refreshStorage();
   S.env = { ...INFO.env }; S.envApplied = { ...INFO.env };
   S.init = { ...INFO.init }; S.initApplied = { ...INFO.init };
   cam.cx = INFO.world_width / 2; cam.cy = INFO.world_height / 2;

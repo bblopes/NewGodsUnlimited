@@ -1,5 +1,12 @@
 # Proposta: coeficientes hereditários de mutação
 
+> **Revisão pedida pelo Bruno em 22/11/2026 (a detalhar quando este item
+> entrar no cronograma):** em vez de três genes para a rede inteira, os
+> reguladores formam uma **matriz**: cada **grupo de ligações** tem o seu gene
+> de topologia, o seu de peso e o seu de ativação. As taxas devem ser
+> apresentadas também como **chance**, não só como multiplicador. Ver a seção
+> "Versão em matriz" no fim deste documento.
+
 ## Decisão resumida
 
 O filho continuará a herdar a fiação neural do pai, com *flips* de bits. A
@@ -150,3 +157,26 @@ Validar somente a faixa inicial: manter `0,25× … 3,36×` é a opção recomen
 Se quisermos uma evolução mais agressiva, podemos abrir o teto para `4×`, mas
 isso deve ser uma escolha explícita porque aumenta muito a variância entre
 linhagens.
+
+
+## Versão em matriz (pedido de 22/11/2026, a detalhar)
+
+**Ideia:** os 64 registros de ligação são divididos em grupos (por exemplo 8
+grupos de 8 ligações). Cada grupo tem três genes reguladores de 4 bits:
+topologia, peso e ativação. São 8 × 3 = 24 genes, 96 bits. Uma linhagem pode
+deixar um grupo quase congelado (um circuito que já funciona) e outro bem
+exploratório.
+
+**Em chance, por nascimento, para um grupo de 8 ligações** (taxa-base de
+1/1.024 por bit; "chance" é a de pelo menos um bit daquele tipo mudar no filho):
+
+| Tipo (bits no grupo) | Nível 0 (0,25×) | Nível 8 (1×, hoje) | Nível 15 (3,36×) |
+|---|---:|---:|---:|
+| Topologia (96 bits: origem e destino) | 2,3% | 9,0% | 27,1% |
+| Peso (48 bits) | 1,2% | 4,6% | 14,6% |
+| Ativação (8 bits: liga/desliga) | 0,2% | 0,8% | 2,6% |
+
+Pontos a decidir quando o item entrar no cronograma: o tamanho dos grupos
+(8 de 8, 16 de 4, …), se os 30 bits de atividade dos neurônios entram num
+grupo próprio, e o custo de genoma (96 bits na proposta acima, contra 16 da
+versão simples).
