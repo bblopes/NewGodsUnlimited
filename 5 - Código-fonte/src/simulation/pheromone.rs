@@ -6,7 +6,7 @@ use macroquad::prelude::*;
 use crate::{
     config::{WORLD_HEIGHT, WORLD_WIDTH},
     environment::map::{MapDefinition, WallClearance},
-    simulation::parallel::map_indices,
+    simulation::parallel::{for_each_chunk_mut, map_indices},
     simulation::world::{CELL_RADIUS, Organism, Phytoplankton},
 };
 
@@ -25,6 +25,13 @@ pub const BASAL_PG_COST: f32 = 0.0004;
 pub const GENERIC_PPM_COST: f32 = 0.0010;
 const SENSOR_PPM_SCALE: f32 = 1.25;
 const PHEROMONE_RANGE_SQUARED: f32 = PHEROMONE_RANGE * PHEROMONE_RANGE;
+/// Linhas da malha por faixa no espalhamento paralelo do PF. Uma tabela de
+/// alcance 500 cobre ~11 linhas, então cada fonte toca no máximo 3 faixas.
+const PF_BAND_ROWS: usize = 6;
+/// Amostras a espalhar abaixo das quais o PF fica em uma thread: acordar as
+/// outras custa mais que o trabalho (o cenário realista, com ~150 fontes
+/// ocupadas, ficava mais lento em paralelo).
+const PF_PARALLEL_MIN_SAMPLES: usize = 40_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PheromoneDisplay {
@@ -276,14 +283,46 @@ impl PheromoneField {
             food_sources[self.nearest_index(particle.position)] += FOOD_PHEROMONE_PPM;
         }
         self.prepare_geometry(map);
+        // As tabelas são preenchidas sob demanda: isso fica sequencial, e na
+        // sessão quase sempre já estão prontas.
+        let mut occupied: Vec<(usize, f32)> = Vec::new();
+        let mut samples = 0;
         for (source, amount) in food_sources.into_iter().enumerate() {
             if amount <= 0.0 {
                 continue;
             }
-            for &(index, weight) in self.food_kernels.kernel(source, map, &self.clearance) {
-                self.food[index as usize] += amount * weight;
-            }
+            samples += self.food_kernels.kernel(source, map, &self.clearance).len();
+            occupied.push((source, amount));
         }
+        // O espalhamento é dividido em faixas de linhas da malha. Cada faixa
+        // percorre as fontes na mesma ordem crescente de antes e só aplica as
+        // amostras que caem nela. Cada destino recebe as mesmas parcelas, na
+        // mesma ordem, de uma única thread: o campo é idêntico bit a bit ao
+        // sequencial. As amostras de cada tabela estão em ordem crescente de
+        // índice (linha por linha), o que permite achar a faixa por busca.
+        let kernels = &self.food_kernels.kernels;
+        let occupied = &occupied;
+        for_each_chunk_mut(
+            &mut self.food,
+            FIELD_WIDTH * PF_BAND_ROWS,
+            samples >= PF_PARALLEL_MIN_SAMPLES,
+            |band_start, band| {
+                let band_end = band_start + band.len();
+                for &(source, amount) in occupied {
+                    let kernel: &[(u32, f32)] = kernels[source].as_deref().unwrap_or(&[]);
+                    match (kernel.first(), kernel.last()) {
+                        (Some(&(first, _)), Some(&(last, _)))
+                            if (first as usize) < band_end && (last as usize) >= band_start => {}
+                        _ => continue,
+                    }
+                    let from = kernel.partition_point(|&(index, _)| (index as usize) < band_start);
+                    let to = kernel.partition_point(|&(index, _)| (index as usize) < band_end);
+                    for &(index, weight) in &kernel[from..to] {
+                        band[index as usize - band_start] += amount * weight;
+                    }
+                }
+            },
+        );
     }
 
     pub fn sensors_for(&self, organism: &Organism) -> [ChemicalSensors; 5] {
@@ -633,6 +672,41 @@ mod tests {
         let mut copy = cached.clone();
         copy.rebuild(&world.organisms, &world.food, &world.map);
         assert_eq!(copy.food, reference.food);
+    }
+
+    #[test]
+    fn parallel_food_field_matches_the_sequential_one() {
+        let mut world = World::new(4_247, 4);
+        world.food.clear();
+        // Bem mais do que PF_PARALLEL_MIN_SAMPLES amostras, inclusive
+        // junto às paredes, para o caminho em faixas ser usado de verdade.
+        for index in 0..3_000 {
+            let fx = (index as f32 * 0.618_034).fract();
+            let fy = (index as f32 * 0.414_214).fract();
+            world.food.push(Phytoplankton {
+                position: vec2(fx * WORLD_WIDTH, fy * WORLD_HEIGHT),
+                age_ticks: 0,
+            });
+        }
+        let organisms = &world.organisms;
+        let food = &world.food;
+        let map = &world.map;
+        let field_with = |threads: usize| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            let mut field = PheromoneField::default();
+            pool.install(|| field.rebuild(organisms, food, map));
+            field.food
+        };
+        let single = field_with(1);
+        assert!(single.iter().any(|value| *value > 0.0));
+        assert_eq!(single, field_with(4));
+        assert_eq!(single, field_with(3));
+        let mut reference = PheromoneField::default();
+        reference.rebuild_reference(organisms, food, map);
+        assert_eq!(single, reference.food);
     }
 
     #[test]
