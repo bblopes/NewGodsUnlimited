@@ -35,7 +35,26 @@ luz máxima.
 
 ## Medição
 
-A preencher com a comparação main × branch do CI.
+Mesma máquina do GitHub, main (V5.0.3) × V5.1.0, com as configurações padrão
+do motor (luz basal 0, intensidade 1, limiar 0, que repetem a regra antiga):
+
+| Caso | main (ticks/s) | V5.1.0 (ticks/s) | Ganho | Estado igual | Comportamento igual |
+|---|---:|---:|---:|---|---|
+| Realista (100 células) | 6.445 | 5.860 | 0,91× | não* | sim |
+| Estresse (300 células) | 955 | 956 | 1,00× | não* | sim |
+| Sessão (100 células) | 1.841 | 1.550 | 0,84× | não* | sim |
+| Sessão (200 células) | 1.964 | 1.632 | 0,83× | não* | sim |
+
+\* O save agora guarda a luz de 0 a 255 (antes 0 ou 1), então os bytes mudam;
+posições, energia, idades e alimento são idênticos aos da main.
+
+**Resultado honesto:** a regra antiga continua exata, mas a sessão (com
+muito fitoplâncton) ficou ~15% mais lenta nesta medição. Cada partícula agora
+calcula a luz efetiva (basal, intensidade, limiar) em vez de só testar "tem
+sol". Dá para recuperar com um atalho quando basal = 0 e intensidade = 1, ou
+pré-calculando a luz efetiva na malha uma vez por mudança; fica anotado.
+66 testes passam, inclusive os novos do pincel (força e borda), da leitura de
+mapas antigos e da luz efetiva.
 
 ## Como testar
 
