@@ -34,6 +34,13 @@ pub struct PresetDeMapa {
     pub flow_on: bool,
     pub flow_intensity: f32,
     pub flow_preset: String,
+    /// Sol (V5.1.1); mapas antigos abrem com os valores padrão.
+    #[serde(default = "um")]
+    pub sun_intensity: f32,
+    #[serde(default = "basal_padrao")]
+    pub sun_basal: f32,
+    #[serde(default)]
+    pub sun_threshold: f32,
     /// Mapa binário (`MapDefinition::write_to`) compactado por repetição.
     pub mapa: String,
 }
@@ -48,6 +55,9 @@ impl PresetDeMapa {
             flow_on: env.flow_on,
             flow_intensity: env.flow_intensity,
             flow_preset: env.flow_preset.clone(),
+            sun_intensity: env.sun_intensity,
+            sun_basal: env.sun_basal,
+            sun_threshold: env.sun_threshold,
             mapa: compactar(&bytes),
         })
     }
@@ -56,6 +66,14 @@ impl PresetDeMapa {
         let bytes = descompactar(&self.mapa)?;
         MapDefinition::read_from(&mut Cursor::new(bytes))
     }
+}
+
+fn um() -> f32 {
+    1.0
+}
+
+fn basal_padrao() -> f32 {
+    0.01
 }
 
 #[derive(Clone, Serialize)]
@@ -73,6 +91,8 @@ pub struct Armazenamento {
     pub runs_folder: String,
     pub map_presets: Vec<ArquivoListado>,
     pub runs: Vec<ArquivoListado>,
+    pub sun_presets: Vec<ArquivoListado>,
+    pub build_presets: Vec<ArquivoListado>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -114,10 +134,15 @@ pub fn listar(base: &Path) -> Armazenamento {
         runs_folder: pasta_runs(base).display().to_string(),
         map_presets: listar_pasta(&pasta_mapas(base), EXTENSAO_MAPA),
         runs: listar_pasta(&pasta_runs(base), EXTENSAO_RUN),
+        sun_presets: listar_pasta(&crate::embutidos::pasta_sol(base), crate::embutidos::EXTENSAO_SOL),
+        build_presets: listar_pasta(
+            &crate::embutidos::pasta_construcao(base),
+            crate::embutidos::EXTENSAO_CONSTRUCAO,
+        ),
     }
 }
 
-fn listar_pasta(pasta: &Path, extensao: &str) -> Vec<ArquivoListado> {
+pub fn listar_pasta(pasta: &Path, extensao: &str) -> Vec<ArquivoListado> {
     let Ok(entradas) = fs::read_dir(pasta) else {
         return Vec::new();
     };
@@ -210,7 +235,7 @@ pub fn ler_run(base: &Path, arquivo: &str) -> io::Result<(CabecalhoDaRun, World)
 }
 
 /// Compactação por repetição: "quantidade*valor," (o mapa é quase todo zeros).
-fn compactar(bytes: &[u8]) -> String {
+pub fn compactar(bytes: &[u8]) -> String {
     let mut texto = String::new();
     let mut indice = 0;
     while indice < bytes.len() {
@@ -225,7 +250,7 @@ fn compactar(bytes: &[u8]) -> String {
     texto
 }
 
-fn descompactar(texto: &str) -> io::Result<Vec<u8>> {
+pub fn descompactar(texto: &str) -> io::Result<Vec<u8>> {
     let invalido = || io::Error::new(io::ErrorKind::InvalidData, "mapa corrompido");
     let mut bytes = Vec::new();
     for pedaco in texto.split(',').filter(|p| !p.is_empty()) {
