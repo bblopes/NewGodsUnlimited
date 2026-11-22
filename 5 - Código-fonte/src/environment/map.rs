@@ -68,6 +68,31 @@ impl MapDefinition {
             .unwrap_or(0.0)
     }
 
+    /// Paredes cruas (0/1), para presets de construção.
+    pub fn wall_values(&self) -> &[u8] {
+        &self.walls
+    }
+
+    /// Troca só as paredes (preset de construção). Tamanho errado é ignorado.
+    pub fn set_wall_values(&mut self, values: &[u8]) -> bool {
+        if values.len() != self.walls.len() {
+            return false;
+        }
+        for (target, value) in self.walls.iter_mut().zip(values) {
+            *target = (*value != 0) as u8;
+        }
+        true
+    }
+
+    /// Troca só a malha de luz (preset de sol). Tamanho errado é ignorado.
+    pub fn set_sunlight_values(&mut self, values: &[u8]) -> bool {
+        if values.len() != self.sunlight.len() {
+            return false;
+        }
+        self.sunlight.copy_from_slice(values);
+        true
+    }
+
     /// Valores crus da malha de luz (0–255), para a interface desenhar.
     pub fn sunlight_values(&self) -> &[u8] {
         &self.sunlight

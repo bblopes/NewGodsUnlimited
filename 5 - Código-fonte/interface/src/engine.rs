@@ -35,6 +35,7 @@ use new_gods_unlimited::simulation::world::{
 };
 
 use crate::arquivos::{self, Armazenamento, CabecalhoDaRun, PresetDeMapa};
+use crate::embutidos::{self, PresetDeConstrucao, PresetDeSol};
 use crate::banco::{genoma_de, Banco};
 use crate::gravador::{
     diferenca_de_mapa, diferenca_de_parametros, resumo_de_parametros, Gravacao, ModoGravacao,
@@ -313,6 +314,13 @@ pub enum UiCommand {
     MapPresetSave { name: String },
     MapPresetLoad { file: String },
     MapPresetDelete { file: String },
+    /// Presets de Sol (Física) e de Construção (Mapa), V5.1.1.
+    SunPresetSave { name: String },
+    SunPresetLoad { file: String },
+    SunPresetDelete { file: String },
+    BuildPresetSave { name: String },
+    BuildPresetLoad { file: String },
+    BuildPresetDelete { file: String },
     /// Lote de entradas de mouse e teclado vindas da interface (modo sistema).
     UiInput { events: Vec<serde_json::Value> },
     /// Cria no banco uma cópia do indivíduo com a reprodução de última hora.
@@ -802,14 +810,7 @@ impl Engine {
     /// Runs salvas e presets de mapa. Garante o preset embutido "Oásis original".
     pub fn storage(&self) -> Armazenamento {
         let base = pasta_dados(&self.shared);
-        let oasis = arquivos::pasta_mapas(&base).join("Oásis original.ngumapa");
-        if !oasis.exists() {
-            if let Ok(preset) =
-                PresetDeMapa::novo("Oásis original", &MapDefinition::default(), &EnvSettings::default())
-            {
-                let _ = arquivos::salvar_preset(&base, &preset);
-            }
-        }
+        embutidos::garantir_embutidos(&base);
         arquivos::listar(&base)
     }
 
@@ -1477,8 +1478,12 @@ impl WorkerState {
                         self.env.flow_on = preset.flow_on;
                         self.env.flow_intensity = preset.flow_intensity;
                         self.env.flow_preset = preset.flow_preset.clone();
+                        self.env.sun_intensity = preset.sun_intensity;
+                        self.env.sun_basal = preset.sun_basal;
+                        self.env.sun_threshold = preset.sun_threshold;
                         self.env = self.env.clone().sanitized();
                         self.flow = self.env.flow_field(self.init.seed());
+                        self.world.sun = self.env.sun();
                         self.publish_flow(shared);
                         self.publish_map(shared);
                         self.env_version += 1;
@@ -1490,6 +1495,89 @@ impl WorkerState {
             UiCommand::MapPresetDelete { file } => {
                 match arquivos::apagar_preset(&pasta_dados(shared), &file) {
                     Ok(()) => self.say(format!("Mapa apagado: {file}"), true),
+                    Err(erro) => self.say(format!("Não foi possível apagar: {erro}"), false),
+                }
+            }
+            UiCommand::SunPresetSave { name } => {
+                let preset = PresetDeSol::novo(&name, &self.applied_map, &self.env);
+                match embutidos::salvar_sol(&pasta_dados(shared), &preset) {
+                    Ok(arquivo) => self.say(format!("Preset de sol salvo: {arquivo}"), true),
+                    Err(erro) => self.say(format!("Não foi possível salvar o sol: {erro}"), false),
+                }
+            }
+            UiCommand::SunPresetLoad { file } => {
+                let lido = embutidos::ler_sol(&pasta_dados(shared), &file)
+                    .and_then(|preset| preset.malha().map(|malha| (preset, malha)));
+                match lido {
+                    Ok((preset, malha)) => {
+                        let mut mapa = self.applied_map.clone();
+                        if !mapa.set_sunlight_values(&malha) {
+                            self.say("Preset de sol com tamanho errado", false);
+                            return;
+                        }
+                        if let Some(gravacao) = self.gravacao.as_mut() {
+                            let tick = self.world.tick;
+                            gravacao.eco(tick, "preset_de_sol", serde_json::json!({ "resumo": format!("sol: {}", preset.nome) }));
+                            gravacao.mapa(tick, &mapa, "preset de sol");
+                        }
+                        self.applied_map = mapa;
+                        self.edited_map = self.applied_map.clone();
+                        self.world.map = self.applied_map.clone();
+                        self.map_history.clear();
+                        self.env.sun_intensity = preset.sun_intensity;
+                        self.env.sun_basal = preset.sun_basal;
+                        self.env.sun_threshold = preset.sun_threshold;
+                        self.env = self.env.clone().sanitized();
+                        self.world.sun = self.env.sun();
+                        self.publish_map(shared);
+                        self.env_version += 1;
+                        self.say(format!("Sol “{}” aplicado", preset.nome), true);
+                    }
+                    Err(erro) => self.say(format!("Não foi possível carregar o sol: {erro}"), false),
+                }
+            }
+            UiCommand::SunPresetDelete { file } => {
+                match embutidos::apagar(&embutidos::pasta_sol(&pasta_dados(shared)), &file) {
+                    Ok(()) => self.say(format!("Preset de sol apagado: {file}"), true),
+                    Err(erro) => self.say(format!("Não foi possível apagar: {erro}"), false),
+                }
+            }
+            UiCommand::BuildPresetSave { name } => {
+                let preset = PresetDeConstrucao::novo(&name, &self.applied_map);
+                match embutidos::salvar_construcao(&pasta_dados(shared), &preset) {
+                    Ok(arquivo) => self.say(format!("Preset de construção salvo: {arquivo}"), true),
+                    Err(erro) => self.say(format!("Não foi possível salvar a construção: {erro}"), false),
+                }
+            }
+            UiCommand::BuildPresetLoad { file } => {
+                let lido = embutidos::ler_construcao(&pasta_dados(shared), &file)
+                    .and_then(|preset| preset.paredes().map(|paredes| (preset, paredes)));
+                match lido {
+                    Ok((preset, paredes)) => {
+                        let mut mapa = self.applied_map.clone();
+                        if !mapa.set_wall_values(&paredes) {
+                            self.say("Preset de construção com tamanho errado", false);
+                            return;
+                        }
+                        if let Some(gravacao) = self.gravacao.as_mut() {
+                            let tick = self.world.tick;
+                            let diferenca = diferenca_de_mapa(&self.applied_map, &mapa);
+                            gravacao.eco(tick, "preset_de_construcao", diferenca);
+                            gravacao.mapa(tick, &mapa, "preset de construção");
+                        }
+                        self.applied_map = mapa;
+                        self.edited_map = self.applied_map.clone();
+                        self.world.map = self.applied_map.clone();
+                        self.map_history.clear();
+                        self.publish_map(shared);
+                        self.say(format!("Construção “{}” aplicada", preset.nome), true);
+                    }
+                    Err(erro) => self.say(format!("Não foi possível carregar a construção: {erro}"), false),
+                }
+            }
+            UiCommand::BuildPresetDelete { file } => {
+                match embutidos::apagar(&embutidos::pasta_construcao(&pasta_dados(shared)), &file) {
+                    Ok(()) => self.say(format!("Preset de construção apagado: {file}"), true),
                     Err(erro) => self.say(format!("Não foi possível apagar: {erro}"), false),
                 }
             }

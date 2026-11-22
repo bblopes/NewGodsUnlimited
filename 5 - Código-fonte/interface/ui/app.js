@@ -298,6 +298,7 @@ function tabAmbiente() {
       <div class="row"><button class="btn sm" data-act="mapUndo">${ic('undo')}Desfazer</button><button class="btn sm" data-act="mapClearSun">Limpar sol</button><div class="grow"></div>${toggle('sun', 'Ver intensidade', '', true)}</div>
       <div class="row"><button class="btn ${dirty ? 'warn' : ''}" style="flex:1" data-act="mapApply" ${dirty ? '' : 'disabled'}>Aplicar mapa${dirty ? ' *' : ''}</button><button class="btn ghost" data-act="mapRevert" ${dirty ? '' : 'disabled'}>Descartar</button></div>
     `)}
+    ${section('p-sun-presets', 'Presets de sol', presetList('sun'))}
     ${section('a-dens', 'Interações', `
       ${toggle('env.ac_on', 'Anti-cramming', 'Separa células sobrepostas')}
       ${slider('env.ac_force', 'Força', 0, 1, 0.05)}
@@ -320,8 +321,12 @@ function tabMapa() {
       <div class="row"><button class="btn sm" data-act="mapUndo">${ic('undo')}Desfazer</button></div>
       <div class="row"><button class="btn ${dirty ? 'warn' : ''}" style="flex:1" data-act="mapApply" ${dirty ? '' : 'disabled'}>Aplicar mapa${dirty ? ' *' : ''}</button><button class="btn ghost" data-act="mapRevert" ${dirty ? '' : 'disabled'}>Descartar</button></div>
     `)}
+    ${section('m-build-presets', 'Presets de construção', presetList('build'))}
     ${section('m-presets', 'Presets de mapa', `
       <div class="hint">Guarda paredes, sol e corrente do mundo como está aplicado agora. Carregar aplica tudo de uma vez.</div>
+      ${(st?.build_presets?.length && st?.sun_presets?.length) ? `<div class="hint">Ou monte um mapa juntando uma construção e um sol (a corrente é a atual):</div>
+      <div class="row"><select class="txt" data-g="mixBuild" style="flex:1;height:28px">${st.build_presets.map(p => `<option value="${esc(p.file)}" ${S.mixBuild === p.file ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select><select class="txt" data-g="mixSun" style="flex:1;height:28px">${st.sun_presets.map(p => `<option value="${esc(p.file)}" ${S.mixSun === p.file ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+      <div class="row"><button class="btn sm" style="flex:1" data-act="mapCompose">Aplicar combinação</button></div>` : ''}
       <div class="row"><input class="txt" placeholder="Nome do mapa" data-g="mapName" value="${esc(S.mapName || '')}" style="flex:1;height:28px"><button class="btn sm pri" data-act="mapPresetSave">${ic('save')}Salvar</button></div>
       ${presets.length ? `<div class="list">${presets.map(p => `<div class="li"><div class="meta"><b>${esc(p.name)}</b><small>${new Date(p.modified * 1000).toLocaleString('pt-BR')}</small></div><button class="btn sm" data-act="mapPresetLoad" data-v="${esc(p.file)}">Carregar</button><button class="btn sm ${S.delArm === p.file ? 'danger' : 'ghost'}" data-act="mapPresetDelete" data-v="${esc(p.file)}">${S.delArm === p.file ? 'Confirmar' : ic('x')}</button></div>`).join('')}</div>` : '<div class="hint">Nenhum mapa salvo ainda.</div>'}
       ${st ? `<div class="hint">Pasta: <span class="mono">${esc(st.maps_folder)}</span>. Para importar ou exportar, copie arquivos <b>.ngumapa</b> para dentro ou para fora dela.</div>` : ''}
@@ -329,11 +334,23 @@ function tabMapa() {
   return head('Mapa', S.mapTool === 'none' ? 'Construção e presets' : 'Editando · arraste na arena', dirty ? '<span class="pill wa">não aplicado</span>' : '') + `<div class="side-body">${body}</div>`;
 }
 
+/* Lista de presets de Sol ou de Construção (V5.1.1). kind: 'sun' | 'build' */
+function presetList(kind) {
+  const st = STORE.data;
+  const list = (kind === 'sun' ? st?.sun_presets : st?.build_presets) || [];
+  const g = kind === 'sun' ? 'sunPresetName' : 'buildPresetName';
+  const pre = kind === 'sun' ? 'sunPreset' : 'buildPreset';
+  const what = kind === 'sun' ? 'a malha de luz aplicada e os controles de intensidade, basal e limiar' : 'só as paredes aplicadas';
+  return `<div class="hint">Salva ${what}. Carregar aplica na hora e descarta edições não aplicadas.</div>
+    <div class="row"><input class="txt" placeholder="Nome do preset" data-g="${g}" value="${esc(S[g] || '')}" style="flex:1;height:28px"><button class="btn sm pri" data-act="${pre}Save">${ic('save')}Salvar</button></div>
+    ${list.length ? `<div class="list">${list.map(p => `<div class="li"><div class="meta"><b>${esc(p.name)}</b></div><button class="btn sm" data-act="${pre}Load" data-v="${esc(p.file)}">Carregar</button><button class="btn sm ${S.delArm === p.file ? 'danger' : 'ghost'}" data-act="${pre}Delete" data-v="${esc(p.file)}">${S.delArm === p.file ? 'Confirmar' : ic('x')}</button></div>`).join('')}</div>` : '<div class="hint">Nenhum preset ainda.</div>'}`;
+}
+
 /* ------------------------------ Runs salvas e presets (V5.0.3) ------------------------------ */
 const STORE = { data: null };
 async function refreshStorage() {
   try { STORE.data = await invoke('storage'); } catch { return; }
-  if (S.tab === 'mapa' || S.tab === 'sessao') renderPanel();
+  if (S.tab === 'mapa' || S.tab === 'sessao' || S.tab === 'ambiente') renderPanel();
   if (S.drawer === 'runs') renderLayer();
 }
 function runsBlock() {
@@ -803,6 +820,13 @@ const ACT = {
   runSave() { const name = (S.runName || '').trim() || `run ${new Date().toLocaleString('pt-BR').replace(/[/:]/g, '-')}`; send({ type: 'run_save', name }); setTimeout(refreshStorage, 800); },
   runLoad(v) { send({ type: 'run_load', file: v }); S.drawer = null; renderLayer(); },
   mapPresetSave() { const name = (S.mapName || '').trim(); if (!name) { say('Dê um nome ao mapa', false); return; } send({ type: 'map_preset_save', name }); setTimeout(refreshStorage, 500); },
+  sunPresetSave() { const name = (S.sunPresetName || '').trim(); if (!name) { say('Dê um nome ao preset de sol', false); return; } send({ type: 'sun_preset_save', name }); setTimeout(refreshStorage, 500); },
+  mapCompose() { const st = STORE.data; const build = S.mixBuild || st?.build_presets?.[0]?.file, sun = S.mixSun || st?.sun_presets?.[0]?.file; if (!build || !sun) return; send({ type: 'build_preset_load', file: build }); send({ type: 'sun_preset_load', file: sun }); },
+  sunPresetLoad(v) { send({ type: 'sun_preset_load', file: v }); },
+  sunPresetDelete(v) { if (S.delArm !== v) { S.delArm = v; renderPanel(); return; } S.delArm = null; send({ type: 'sun_preset_delete', file: v }); setTimeout(refreshStorage, 500); },
+  buildPresetSave() { const name = (S.buildPresetName || '').trim(); if (!name) { say('Dê um nome ao preset de construção', false); return; } send({ type: 'build_preset_save', name }); setTimeout(refreshStorage, 500); },
+  buildPresetLoad(v) { send({ type: 'build_preset_load', file: v }); },
+  buildPresetDelete(v) { if (S.delArm !== v) { S.delArm = v; renderPanel(); return; } S.delArm = null; send({ type: 'build_preset_delete', file: v }); setTimeout(refreshStorage, 500); },
   mapPresetLoad(v) { send({ type: 'map_preset_load', file: v }); },
   mapPresetDelete(v) { if (S.delArm !== v) { S.delArm = v; renderPanel(); return; } S.delArm = null; send({ type: 'map_preset_delete', file: v }); setTimeout(refreshStorage, 500); },
   theme() { setTheme(S.theme === 'light' ? 'dark' : 'light'); renderTop(); },
@@ -887,6 +911,7 @@ document.addEventListener('input', e => {
   if (t.dataset.g === 'sunHard') { SUNB.hardness = +t.value / 100; t.closest('.field').querySelector('.unit').textContent = t.value + '%'; return; }
   if (t.dataset.g === 'runName') { S.runName = t.value; return; }
   if (t.dataset.g === 'mapName') { S.mapName = t.value; return; }
+  if (['sunPresetName', 'buildPresetName', 'mixSun', 'mixBuild'].includes(t.dataset.g)) { S[t.dataset.g] = t.value; return; }
   if (t.dataset.g === 'brush') { S.brush = clamp(+t.value || 0, 0, 12); document.querySelectorAll('[data-g="brush"]').forEach(o => { if (o !== t) o.value = t.value; }); renderStage(); return; }
 });
 document.addEventListener('keydown', e => {
