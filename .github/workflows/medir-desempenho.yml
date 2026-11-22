@@ -71,16 +71,25 @@ jobs:
             $comp = [regex]::Match($texto, 'comportamento ([0-9a-f]{16})').Groups[1].Value
             return @{ tps = $tps; hash = $hash; comp = $comp }
           }
-          # A branch entende --sensores-completos? (para comparar o estado salvo)
+          # A main já entende --sensores-completos (V3.0.4+)? Então as duas
+          # calculam só os sensores lidos e se compara normal × normal. Antes
+          # disso, a branch com todos os sensores é que equivale à main.
+          $ajudaRef = & $ref --ajuda | Out-String
+          $refNova = $ajudaRef -match 'sensores-completos'
           $ajuda = & $novo --ajuda | Out-String
-          $completos = if ($ajuda -match 'sensores-completos') { @('--sensores-completos') } else { @() }
-          $linhas = @('| Caso | main (ticks/s) | branch (ticks/s) | Ganho | Estado igual à main | Comportamento igual |', '|---|---:|---:|---:|---|---|')
+          $completos = if (-not $refNova -and $ajuda -match 'sensores-completos') { @('--sensores-completos') } else { @() }
+          $linhas = @('| Caso | main (ticks/s) | branch (ticks/s) | Ganho | Branch: todos os núcleos × 1 thread | Estado igual à main | Comportamento igual |', '|---|---:|---:|---:|---:|---|---|')
           foreach ($c in $casos) {
             # Alterna referência e branch duas vezes e fica com a melhor de cada.
             $r1 = Medir $ref $c 'ref1'; $n1 = Medir $novo $c 'novo1'
             $n2 = Medir $novo $c 'novo2'; $r2 = Medir $ref $c 'ref2'
+            $u1 = Medir $novo $c 'novo-1thread' @('--threads','1')
             $r = [math]::Max($r1.tps, $r2.tps); $n = [math]::Max($n1.tps, $n2.tps)
-            if ($completos.Count -gt 0) {
+            $par = "$([math]::Round($n / $u1.tps, 2))×"
+            if ($refNova) {
+              $igual = if ($r1.hash -eq $n1.hash) { 'sim' } else { "NÃO ($($r1.hash) × $($n1.hash))" }
+              $comp = if ($r1.comp -eq $n1.comp) { 'sim' } else { 'NÃO' }
+            } elseif ($completos.Count -gt 0) {
               # Estado salvo: branch calculando todos os sensores × main.
               # Comportamento: branch normal × branch com todos os sensores.
               $f = Medir $novo $c 'completo' $completos
@@ -90,7 +99,8 @@ jobs:
               $igual = if ($r1.hash -eq $n1.hash) { 'sim' } else { "NÃO ($($r1.hash) × $($n1.hash))" }
               $comp = '—'
             }
-            $linhas += "| $($c.nome) | $([math]::Round($r,1)) | $([math]::Round($n,1)) | $([math]::Round($n / $r, 2))× | $igual | $comp |"
+            $mesmaThread = if ($u1.hash -eq $n1.hash) { '' } else { ' (1 thread com estado diferente!)' }
+            $linhas += "| $($c.nome) | $([math]::Round($r,1)) | $([math]::Round($n,1)) | $([math]::Round($n / $r, 2))× | $par | $igual$mesmaThread | $comp |"
           }
           $tabela = $linhas -join "`n"
           Write-Host "`nCOMPARACAO`n$tabela`nFIM_COMPARACAO"

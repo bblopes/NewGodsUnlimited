@@ -28,8 +28,10 @@ const PHEROMONE_RANGE_SQUARED: f32 = PHEROMONE_RANGE * PHEROMONE_RANGE;
 /// Linhas da malha por faixa no espalhamento paralelo do PF. Uma tabela de
 /// alcance 500 cobre ~11 linhas, então cada fonte toca no máximo 3 faixas.
 const PF_BAND_ROWS: usize = 6;
-/// Abaixo disto o PF é pequeno demais para valer acordar as threads.
-const PF_PARALLEL_MIN_SOURCES: usize = 64;
+/// Amostras a espalhar abaixo das quais o PF fica em uma thread: acordar as
+/// outras custa mais que o trabalho (o cenário realista, com ~150 fontes
+/// ocupadas, ficava mais lento em paralelo).
+const PF_PARALLEL_MIN_SAMPLES: usize = 40_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PheromoneDisplay {
@@ -284,11 +286,12 @@ impl PheromoneField {
         // As tabelas são preenchidas sob demanda: isso fica sequencial, e na
         // sessão quase sempre já estão prontas.
         let mut occupied: Vec<(usize, f32)> = Vec::new();
+        let mut samples = 0;
         for (source, amount) in food_sources.into_iter().enumerate() {
             if amount <= 0.0 {
                 continue;
             }
-            self.food_kernels.kernel(source, map, &self.clearance);
+            samples += self.food_kernels.kernel(source, map, &self.clearance).len();
             occupied.push((source, amount));
         }
         // O espalhamento é dividido em faixas de linhas da malha. Cada faixa
@@ -302,7 +305,7 @@ impl PheromoneField {
         for_each_chunk_mut(
             &mut self.food,
             FIELD_WIDTH * PF_BAND_ROWS,
-            occupied.len() >= PF_PARALLEL_MIN_SOURCES,
+            samples >= PF_PARALLEL_MIN_SAMPLES,
             |band_start, band| {
                 let band_end = band_start + band.len();
                 for &(source, amount) in occupied {
@@ -675,7 +678,7 @@ mod tests {
     fn parallel_food_field_matches_the_sequential_one() {
         let mut world = World::new(4_247, 4);
         world.food.clear();
-        // Bem mais do que PF_PARALLEL_MIN_SOURCES células ocupadas, inclusive
+        // Bem mais do que PF_PARALLEL_MIN_SAMPLES amostras, inclusive
         // junto às paredes, para o caminho em faixas ser usado de verdade.
         for index in 0..3_000 {
             let fx = (index as f32 * 0.618_034).fract();

@@ -9,6 +9,7 @@ grande mudança dela:
 | `V1 - Interface original/` | V1.x | o programa com a interface original (Macroquad) |
 | `V2 - Revamp da interface/` | V2.x | **revamp da interface de usuário**: interface nova (Tauri) sobre o mesmo motor |
 | `V3 - Otimização/` | V3.x | **otimização**: motor mais rápido, com o mesmo resultado de simulação |
+| `V4 - Paralelismo/` | V4.x | **paralelismo**: partes pesadas do tick divididas entre os núcleos, com o mesmo resultado |
 
 ```text
 2 - Versões de teste/
@@ -37,6 +38,7 @@ e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão p
 
 | Arquivo | O que validar | Data |
 | --- | --- | --- |
+| `V4 - Paralelismo/V4.0.0/` | PF (feromônio do alimento) em paralelo por faixas e uma passada a menos no fitoplâncton; comparar 1 thread × todos os núcleos | 22/11/2026 |
 | `V3 - Otimização/V3.0.4/` | Sensores não lidos deixam de ser calculados; rede neural mostra sensores não lidos e ligações inertes | 21/11/2026 |
 | `V3 - Otimização/V3.0.3/` | Medidor de ticks/s corrigido (mostra a velocidade real) e paralelismo opcional (padrão 1 thread) | 21/11/2026 |
 | `V3 - Otimização/V3.0.2/` | Índices de vizinhos leves e fitoplâncton mais barato (sessão 2× mais rápida) | 21/11/2026 |
