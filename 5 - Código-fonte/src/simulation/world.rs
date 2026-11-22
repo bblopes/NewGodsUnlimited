@@ -451,6 +451,21 @@ struct PhagocytosisOutcome {
     capture_candidates: Vec<(usize, usize)>,
 }
 
+/// Uma fagocitose em curso neste tick: o predador está puxando a presa de
+/// verdade (motor ativo, presa ao alcance, vantagem de raio de pelo menos
+/// 1,10×). Só registro para observação: não entra no checkpoint nem muda a
+/// simulação.
+#[derive(Clone, Copy, Debug)]
+pub struct PhagocytosisPull {
+    pub predator_id: u64,
+    pub prey_id: u64,
+    /// Ponto de contato: meio da região onde as duas células se encostam.
+    pub contact: Vec2,
+    /// Deslocamento total aplicado neste tick (predador + presa).
+    pub force: f32,
+    pub size_ratio: f32,
+}
+
 /// Uma única partícula de fitoplâncton. Ela só desaparece ao ser comida
 /// (quando as células existirem) ou quando alcançar sua vida máxima.
 #[derive(Clone, Copy)]
@@ -623,6 +638,8 @@ pub struct World {
     pub deaths_by_phagocytosis_total: u64,
     /// Mortes ao alcançar o limite hereditário de longevidade.
     pub deaths_by_age_total: u64,
+    /// Fagocitoses em curso no último tick (Behavior Spotter).
+    pub phagocytosis_pulls: Vec<PhagocytosisPull>,
     /// Limiar atual para o motor neural poder reproduzir. É exposto para a
     /// demografia desenhar a referência correta de energia.
     pub reproduction_minimum: f32,
@@ -695,6 +712,7 @@ impl World {
             deaths_by_starvation_total: 0,
             deaths_by_phagocytosis_total: 0,
             deaths_by_age_total: 0,
+            phagocytosis_pulls: Vec::new(),
             reproduction_minimum: MAX_ENERGY,
             phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
             energy_capacity: MAX_ENERGY,
@@ -1615,6 +1633,7 @@ impl World {
             deaths_by_starvation_total,
             deaths_by_phagocytosis_total,
             deaths_by_age_total,
+            phagocytosis_pulls: Vec::new(),
             reproduction_minimum: MAX_ENERGY,
             phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
             energy_capacity,
@@ -1894,6 +1913,7 @@ impl World {
             .collect();
 
         let mut outcome = PhagocytosisOutcome::default();
+        self.phagocytosis_pulls.clear();
         for (predator_index, prey_index, activation) in attempts {
             // Há contato/aproximação real: ativar fagocitose sempre cobra um
             // pouco. Isso permite que a seleção elimine ataques inúteis.
@@ -1926,6 +1946,17 @@ impl World {
                 MAX_PHAGOCYTOSIS_PULL_PER_TICK * activation * size_advantage * size_capture_scale;
             let predator_force = direction * pull * 0.20;
             let prey_force = -direction * pull * 0.80;
+            if pull > 0.0 {
+                let predator_position = self.organisms[predator_index].position;
+                self.phagocytosis_pulls.push(PhagocytosisPull {
+                    predator_id: self.organisms[predator_index].id,
+                    prey_id: self.organisms[prey_index].id,
+                    contact: predator_position
+                        + direction * ((distance + predator_radius - prey_radius) * 0.5),
+                    force: pull,
+                    size_ratio: predator_radius / prey_radius,
+                });
+            }
             {
                 let (predator, prey) = if predator_index < prey_index {
                     two_mut(&mut self.organisms, predator_index, prey_index)
@@ -3460,6 +3491,34 @@ mod tests {
         assert!(world.organisms[0].external_force.length() < 0.000_1);
         assert!(world.organisms[0].energy < 60.0);
         assert!(outcome.protected_pairs.is_empty());
+    }
+
+    #[test]
+    fn active_pull_is_listed_with_contact_point_between_the_cells() {
+        let mut world = World::new(21, 2);
+        world.organisms[0].energy = SIZE_GROWTH_ENERGY;
+        world.organisms[1].energy = 60.0;
+        world.organisms[0].position = vec2(1_000.0, 1_000.0);
+        world.organisms[1].position = vec2(1_030.0, 1_000.0);
+        world.organisms[0].motors.phagocytose = 1.0;
+        let predator_radius = world.organisms[0].physical_radius();
+        let prey_radius = world.organisms[1].physical_radius();
+
+        world.apply_phagocytosis();
+
+        assert_eq!(world.phagocytosis_pulls.len(), 1);
+        let pull = world.phagocytosis_pulls[0];
+        assert_eq!(pull.predator_id, world.organisms[0].id);
+        assert_eq!(pull.prey_id, world.organisms[1].id);
+        let expected_x = 1_000.0 + (30.0 + predator_radius - prey_radius) * 0.5;
+        assert!((pull.contact.x - expected_x).abs() < 0.01);
+        assert!(pull.force > 0.0);
+
+        // Sem vantagem de raio, a tentativa não entra na lista.
+        world.organisms[0].motors.phagocytose = 0.0;
+        world.organisms[1].motors.phagocytose = 1.0;
+        world.apply_phagocytosis();
+        assert!(world.phagocytosis_pulls.is_empty());
     }
 
     #[test]

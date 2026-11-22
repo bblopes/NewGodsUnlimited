@@ -1,6 +1,6 @@
 # Proposta: Behavior Spotter (detector de fagocitose)
 
-**Estado: decidido em 22/11/2026. Pronto para implementar (V5.0.1).**
+**Estado: implementado na V5.0.2 (22/11/2026).**
 Base de código lida: `main` @ `6ccbadc` (V4.0.0).
 Plano geral: [V5_FUNCOES_NOVAS.md](../Backlog/V5_FUNCOES_NOVAS.md).
 
