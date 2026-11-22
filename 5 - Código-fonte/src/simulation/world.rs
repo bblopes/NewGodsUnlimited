@@ -1295,7 +1295,6 @@ impl World {
             deaths_by_starvation_total,
             deaths_by_phagocytosis_total,
             deaths_by_age_total,
-            phagocytosis_pulls: Vec::new(),
         ) = match checkpoint_format {
             CheckpointFormat::PreFoodSensorRange
             | CheckpointFormat::PreNeuralNodeActivity
