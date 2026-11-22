@@ -612,11 +612,12 @@ mod tests {
     #[test]
     fn old_binary_sun_reads_as_full_light() {
         let mut old = MapDefinition::empty();
-        old.sunlight[old.index(10, 10)] = 1;
+        let index = old.index(10, 10);
+        old.sunlight[index] = 1;
         let mut bytes = Vec::new();
         old.write_to(&mut bytes).unwrap();
         let read = MapDefinition::read_from(&mut std::io::Cursor::new(bytes)).unwrap();
-        assert_eq!(read.sunlight[read.index(10, 10)], 255);
+        assert_eq!(read.sunlight[index], 255);
     }
 
     #[test]
