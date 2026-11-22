@@ -1,6 +1,7 @@
 // Sem janela de console no executável de produção.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod arquivos;
 mod banco;
 mod engine;
 mod gravador;
@@ -63,6 +64,11 @@ async fn individual_view(
 }
 
 #[tauri::command]
+async fn storage(engine: State<'_, Engine>) -> Result<arquivos::Armazenamento, String> {
+    Ok(engine.storage())
+}
+
+#[tauri::command]
 async fn command(engine: State<'_, Engine>, cmd: UiCommand) -> Result<(), String> {
     engine.send(cmd);
     Ok(())
@@ -108,6 +114,7 @@ fn main() {
             genetics,
             neural_catalog,
             individual_view,
+            storage,
             command
         ])
         .run(tauri::generate_context!())

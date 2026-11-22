@@ -34,6 +34,7 @@ use new_gods_unlimited::simulation::world::{
     MIN_EXCLUSION_DISTANCE,
 };
 
+use crate::arquivos::{self, Armazenamento, CabecalhoDaRun, PresetDeMapa};
 use crate::banco::{genoma_de, Banco};
 use crate::gravador::{
     diferenca_de_mapa, diferenca_de_parametros, resumo_de_parametros, Gravacao, ModoGravacao,
@@ -212,6 +213,15 @@ fn founder_genome(key: &str, shared: &Shared) -> Option<Genome> {
 
 /// A célula lê o sensor de idade em alguma ligação que chega ao motor
 /// Reproduzir: tem a reprodução de última hora.
+/// Pasta-base dos dados: `4 - Dados` (ou a pasta de dados do app).
+fn pasta_dados(shared: &Shared) -> PathBuf {
+    shared
+        .pasta_gravacoes
+        .parent()
+        .map(|pasta| pasta.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 fn has_last_hour_reproduction(genome: &Genome) -> bool {
     genome.decode_connections().iter().any(|connection| {
         connection.source == AGE_SENSOR_SLOT && connection.destination == MOTOR_START + 4
@@ -264,6 +274,12 @@ pub enum UiCommand {
     RecordMark { text: String },
     /// Behavior Spotter: pausar no primeiro tick com fagocitose em curso.
     SpotterPause { on: bool },
+    /// Runs salvas e presets de mapa (pastas em `4 - Dados`).
+    RunSave { name: String },
+    RunLoad { file: String },
+    MapPresetSave { name: String },
+    MapPresetLoad { file: String },
+    MapPresetDelete { file: String },
     /// Lote de entradas de mouse e teclado vindas da interface (modo sistema).
     UiInput { events: Vec<serde_json::Value> },
     /// Cria no banco uma cópia do indivíduo com a reprodução de última hora.
@@ -408,6 +424,11 @@ pub struct Frame {
     pub spotter: Vec<SpotterPull>,
     pub spotter_ended: Vec<SpotterEnded>,
     pub spotter_pause: bool,
+    /// Configurações que o motor trocou sozinho (preset de mapa, run
+    /// carregada). A interface copia quando `env_version` muda.
+    pub env_version: u64,
+    pub env: Option<EnvSettings>,
+    pub init: Option<InitSettings>,
 }
 
 #[derive(Clone, Serialize)]
@@ -434,7 +455,8 @@ pub struct SpotterEnded {
     pub tick: u64,
 }
 
-#[derive(Clone, Copy, Default, Serialize)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Sample {
     pub tick: u64,
     pub population: usize,
@@ -746,6 +768,20 @@ impl Engine {
         self.shared.bank_version.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Runs salvas e presets de mapa. Garante o preset embutido "Oásis original".
+    pub fn storage(&self) -> Armazenamento {
+        let base = pasta_dados(&self.shared);
+        let oasis = arquivos::pasta_mapas(&base).join("Oásis original.ngumapa");
+        if !oasis.exists() {
+            if let Ok(preset) =
+                PresetDeMapa::novo("Oásis original", &MapDefinition::default(), &EnvSettings::default())
+            {
+                let _ = arquivos::salvar_preset(&base, &preset);
+            }
+        }
+        arquivos::listar(&base)
+    }
+
     pub fn neural_catalog(&self) -> NeuralCatalog {
         let mut options = vec![
             NeuralOption {
@@ -987,6 +1023,8 @@ struct WorkerState {
     threads_requested: usize,
     /// Gravação em andamento, se houver.
     gravacao: Option<Gravacao>,
+    /// Sobe quando o motor troca env/init sem a interface pedir.
+    env_version: u64,
     /// Behavior Spotter.
     spotter_pause: bool,
     paused_by_spotter: bool,
@@ -1312,6 +1350,109 @@ impl WorkerState {
             }
             UiCommand::RecordStart { mode } => self.start_recording(mode, shared),
             UiCommand::RecordStop => self.stop_recording(),
+            UiCommand::RunSave { name } => {
+                let telemetria = shared
+                    .telemetry
+                    .lock()
+                    .map(|log| log.1.clone())
+                    .unwrap_or_default();
+                let cabecalho = CabecalhoDaRun {
+                    formato: 1,
+                    nome: name.clone(),
+                    env: self.env.clone(),
+                    init: self.init.clone(),
+                    run_id: self.run_id,
+                    telemetria,
+                };
+                match arquivos::salvar_run(&pasta_dados(shared), &cabecalho, &self.world) {
+                    Ok(arquivo) => self.say(format!("Run salva: {arquivo} (tick {})", self.world.tick), true),
+                    Err(erro) => self.say(format!("Não foi possível salvar a run: {erro}"), false),
+                }
+            }
+            UiCommand::RunLoad { file } => match arquivos::ler_run(&pasta_dados(shared), &file) {
+                Ok((cabecalho, mundo)) => {
+                    self.world = mundo;
+                    self.env = cabecalho.env.sanitized();
+                    self.init = cabecalho.init;
+                    self.run_id = cabecalho.run_id;
+                    self.flow = self.env.flow_field(self.init.seed());
+                    self.world.set_phytoplankton_reproduction_rate(self.env.phyto_rate);
+                    self.world.set_anti_cramming(self.env.anti_cramming());
+                    self.world.reproduction_minimum = self.env.min_repro;
+                    self.applied_map = self.world.map.clone();
+                    self.edited_map = self.applied_map.clone();
+                    self.map_history.clear();
+                    self.selected = None;
+                    self.spotter_started.clear();
+                    self.spotter_ended.clear();
+                    self.publish_flow(shared);
+                    self.publish_map(shared);
+                    self.epoch += 1;
+                    if let Ok(mut log) = shared.telemetry.lock() {
+                        log.0 = self.epoch;
+                        log.1 = cabecalho.telemetria;
+                        if log.1.is_empty() {
+                            log.1.push(capture_sample(&self.world));
+                        }
+                    }
+                    self.last_telemetry_tick = self.world.tick;
+                    if let Ok(mut genetics) = shared.genetics.lock() {
+                        *genetics = None;
+                    }
+                    self.env_version += 1;
+                    if let Some(gravacao) = self.gravacao.as_mut() {
+                        gravacao.eco(
+                            self.world.tick,
+                            "run_carregada",
+                            serde_json::json!({ "resumo": format!("run carregada: {file}"), "arquivo": file }),
+                        );
+                    }
+                    self.say(format!("Run carregada: {file} (tick {})", self.world.tick), true);
+                }
+                Err(erro) => self.say(format!("Não foi possível carregar a run: {erro}"), false),
+            },
+            UiCommand::MapPresetSave { name } => {
+                let resultado = PresetDeMapa::novo(&name, &self.applied_map, &self.env)
+                    .and_then(|preset| arquivos::salvar_preset(&pasta_dados(shared), &preset));
+                match resultado {
+                    Ok(arquivo) => self.say(format!("Preset de mapa salvo: {arquivo}"), true),
+                    Err(erro) => self.say(format!("Não foi possível salvar o mapa: {erro}"), false),
+                }
+            }
+            UiCommand::MapPresetLoad { file } => {
+                let lido = arquivos::ler_preset(&pasta_dados(shared), &file)
+                    .and_then(|preset| preset.mapa().map(|mapa| (preset, mapa)));
+                match lido {
+                    Ok((preset, mapa)) => {
+                        if let Some(gravacao) = self.gravacao.as_mut() {
+                            let tick = self.world.tick;
+                            let diferenca = diferenca_de_mapa(&self.applied_map, &mapa);
+                            gravacao.eco(tick, "preset_de_mapa", diferenca);
+                            gravacao.mapa(tick, &mapa, "preset");
+                        }
+                        self.applied_map = mapa;
+                        self.edited_map = self.applied_map.clone();
+                        self.world.map = self.applied_map.clone();
+                        self.map_history.clear();
+                        self.env.flow_on = preset.flow_on;
+                        self.env.flow_intensity = preset.flow_intensity;
+                        self.env.flow_preset = preset.flow_preset.clone();
+                        self.env = self.env.clone().sanitized();
+                        self.flow = self.env.flow_field(self.init.seed());
+                        self.publish_flow(shared);
+                        self.publish_map(shared);
+                        self.env_version += 1;
+                        self.say(format!("Mapa “{}” carregado e aplicado", preset.nome), true);
+                    }
+                    Err(erro) => self.say(format!("Não foi possível carregar o mapa: {erro}"), false),
+                }
+            }
+            UiCommand::MapPresetDelete { file } => {
+                match arquivos::apagar_preset(&pasta_dados(shared), &file) {
+                    Ok(()) => self.say(format!("Mapa apagado: {file}"), true),
+                    Err(erro) => self.say(format!("Não foi possível apagar: {erro}"), false),
+                }
+            }
             UiCommand::SpotterPause { on } => {
                 self.spotter_pause = on;
                 if on {
@@ -1485,6 +1626,9 @@ impl WorkerState {
             ..Frame::default()
         };
         frame.spotter_pause = self.spotter_pause;
+        frame.env_version = self.env_version;
+        frame.env = Some(self.env.clone());
+        frame.init = Some(self.init.clone());
         frame.spotter_ended = self.spotter_ended.clone();
         frame.spotter = world
             .phagocytosis_pulls
@@ -1609,6 +1753,7 @@ fn worker(
         pool: Arc::new(build_pool(1).expect("pool de threads do motor")),
         threads_requested: 1,
         gravacao: None,
+        env_version: 1,
         spotter_pause: false,
         paused_by_spotter: false,
         spotter_started: HashMap::new(),
