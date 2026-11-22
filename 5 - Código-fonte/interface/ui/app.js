@@ -45,6 +45,7 @@ const TABS = [
   { id: 'sessao', label: 'Sessão', icon: 'session' }, { id: 'biologia', label: 'Biologia', icon: 'bio' }, { id: 'ambiente', label: 'Ambiente', icon: 'env' },
   { id: 'mapa', label: 'Mapa', icon: 'map' }, { id: 'celulas', label: 'Células', icon: 'cells' },
   { id: 'demografia', label: 'Demografia', icon: 'demo' }, { id: 'camadas', label: 'Camadas', icon: 'layers' },
+  { id: 'spotter', label: 'Behavior Spotter', icon: 'target' },
 ];
 // Configurações neurais: geradores fixos + indivíduos salvos no banco (vem do motor).
 // População inicial: indivíduos embutidos (Baseline, PF guia) + os salvos no banco (vem do motor).
@@ -209,7 +210,7 @@ function renderRail() {
 function renderPanel() {
   if (S.mode === 'lab') { $('#sideInner').innerHTML = ''; return; }
   const keep = $('.side-body')?.scrollTop || 0;
-  const fn = { sessao: tabSessao, biologia: tabBiologia, ambiente: tabAmbiente, mapa: tabMapa, celulas: tabCelulas, demografia: tabDemografia, camadas: tabCamadas }[S.tab];
+  const fn = { sessao: tabSessao, biologia: tabBiologia, ambiente: tabAmbiente, mapa: tabMapa, celulas: tabCelulas, demografia: tabDemografia, camadas: tabCamadas, spotter: tabSpotter }[S.tab];
   $('#sideInner').innerHTML = fn();
   const sb = $('.side-body'); if (sb && renderPanel.lastTab === S.tab) sb.scrollTop = keep;
   renderPanel.lastTab = S.tab;
@@ -529,6 +530,66 @@ function tabDemografia() {
   return head('Demografia', `Telemetria da sessão · amostra a cada ${fmt(F?.telemetry_interval ?? 500)} ticks`, `<button class="btn sm" data-act="demoFull">${ic('maxim')}Expandir</button>`) + `<div class="side-body">${body}</div>`;
 }
 
+/* ------------------------------ Behavior Spotter ------------------------------ */
+// Rastreio de uma fagocitose: { predator, prey }. A câmera segue o predador.
+const SPOT = { track: null, idx: -1, lastRender: 0 };
+function tabSpotter() {
+  const list = F?.spotter || [], ended = (F?.spotter_ended || []).slice().reverse();
+  const on = !!F?.spotter_pause;
+  const row = (p, i) => {
+    const tracked = SPOT.track && SPOT.track.predator === p.predator && SPOT.track.prey === p.prey;
+    return `<div class="li ${tracked ? 'on' : ''}"><span class="sw-c" style="background:#e5484d"></span><div class="meta"><b class="mono">#${p.predator} puxando #${p.prey}</b><small>raio ${fmt(p.ratio, 2)}× · força ${fmt(p.force, 2)} · há ${fmt(p.since)} ticks</small></div><button class="btn sm ${tracked ? 'pri' : ''}" data-act="spotGo" data-v="${i}">${ic('target')}Ir até</button></div>`;
+  };
+  const body = `
+    ${section('sp-fag', 'Fagocitose', `
+      <div class="li"><div class="meta"><b>Pausar ao encontrar</b><small>pausa no primeiro tick com uma célula puxando outra; enquanto ligado, fica pausado</small></div><button class="btn sm ${on ? 'pri' : ''}" data-act="spotPause">${on ? 'Ligado' : 'Desligado'}</button></div>
+      <div class="row"><b class="mono">${fmt(list.length)} em curso</b><div class="grow"></div><button class="btn sm" data-act="spotNext" ${list.length ? '' : 'disabled'}>Próxima${ic('right')}</button></div>
+      ${list.length ? `<div class="list">${list.map(row).join('')}</div>` : '<div class="hint">Nenhuma fagocitose acontecendo agora. Ligue "Pausar ao encontrar" e deixe rodar.</div>'}
+      ${SPOT.track ? `<div class="hint">Rastreando #${SPOT.track.predator} → #${SPOT.track.prey}. A câmera segue o predador.</div>` : ''}
+    `)}
+    ${section('sp-fim', 'Terminaram há pouco', ended.length ? `<div class="list">${ended.map(e => `<div class="li"><div class="meta"><b class="mono">#${e.predator} → #${e.prey}</b><small>${e.outcome} · tick ${fmt(e.tick)}</small></div></div>`).join('')}</div>` : '<div class="hint">Ainda nenhuma.</div>')}`;
+  return head('Behavior Spotter', 'Achar comportamentos acontecendo') + `<div class="side-body">${body}</div>`;
+}
+function spotGo(p) {
+  if (!p) return;
+  SPOT.track = { predator: p.predator, prey: p.prey };
+  S.selected = p.predator; S.follow = true; send({ type: 'select', id: p.predator });
+  cam.zoom = Math.max(cam.zoom, 8); cam.cx = p.x; cam.cy = p.y;
+  renderStage(); renderPanel();
+}
+function spotUpdate() {
+  // Fim da puxada rastreada: mostra o desfecho e solta a câmera.
+  if (SPOT.track && F) {
+    const live = (F.spotter || []).some(p => p.predator === SPOT.track.predator && p.prey === SPOT.track.prey);
+    if (!live) {
+      const end = (F.spotter_ended || []).find(e => e.predator === SPOT.track.predator && e.prey === SPOT.track.prey);
+      if (end || !F.paused) {
+        say(`Fagocitose #${SPOT.track.predator} → #${SPOT.track.prey}: ${end ? end.outcome : 'terminou'}`, !!end && end.outcome === 'capturada');
+        SPOT.track = null; S.follow = false; renderStage();
+      }
+    }
+  }
+  // Pausou por causa do detector: aponta para a primeira ocorrência.
+  if (F?.spotter_pause && F.paused && !SPOT.track && F.spotter?.length) { SPOT.idx = 0; spotGo(F.spotter[0]); }
+  const now = performance.now();
+  if (S.tab === 'spotter' && now - SPOT.lastRender > 400) { SPOT.lastRender = now; renderPanel(); }
+}
+function drawSpotter() {
+  if (!F?.spotter?.length) return;
+  const showAll = F.spotter_pause || S.tab === 'spotter';
+  const pulse = 1 + 0.12 * Math.sin(performance.now() / 180);
+  ctx.strokeStyle = '#e5484d'; ctx.lineWidth = 2;
+  for (const p of F.spotter) {
+    const tracked = SPOT.track && SPOT.track.predator === p.predator && SPOT.track.prey === p.prey;
+    if (!showAll && !tracked) continue;
+    const [sx, sy] = toScreen(p.x, p.y);
+    const r = Math.max(12, p.prey_radius * 1.3 * view.s) * pulse;
+    ctx.globalAlpha = tracked ? 1 : 0.85;
+    ctx.beginPath(); ctx.arc(sx, sy, r, 0, 6.283); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function tabCamadas() {
   const chemOpts = ['PG', 'PF', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'Todos'];
   const body = `
@@ -680,6 +741,9 @@ const ACT = {
   closeLayer(v, t, e) { if (t.classList.contains('scrim') && e.target.closest('[data-stop]')) return; S.drawer = null; S.modal = null; renderLayer(); },
   headlessOn() { S.modal = null; renderLayer(); send({ type: 'headless', value: true }); },
   headlessOff() { send({ type: 'headless', value: false }); },
+  spotPause() { send({ type: 'spotter_pause', on: !F?.spotter_pause }); if (F?.spotter_pause) { /* desligando: segue o predador */ } },
+  spotGo(v) { SPOT.idx = +v; spotGo((F?.spotter || [])[+v]); },
+  spotNext() { const l = F?.spotter || []; if (!l.length) return; SPOT.idx = (SPOT.idx + 1) % l.length; spotGo(l[SPOT.idx]); },
   layerOn(v) { S.layers[v] = true; renderStage(); say('Camada ligada: ' + ({ conflicts: 'conflitos de densidade', cones: 'cones dos sensores' }[v] || v)); },
   chemSel(v) { S.layers.chemSel = v; S.layers.chem = true; send({ type: 'chem', display: v }); renderPanel(); renderStage(); },
   tool(v) { S.mapTool = v; S.insert = false; renderPanel(); renderStage(); },
@@ -904,6 +968,7 @@ function draw() {
       cv.style.cursor = 'none';
     }
   }
+  drawSpotter();
   ctx.restore();
   ctx.strokeStyle = '#2a3036'; ctx.lineWidth = 1; ctx.strokeRect(x0 + .5, y0 + .5, ww - 1, hh - 1);
 }
@@ -1004,6 +1069,7 @@ async function pollGenetics(force) {
 }
 function updateLive() {
   if (!F) return;
+  spotUpdate();
   const set = (k, v) => document.querySelectorAll(`[data-live="${k}"]`).forEach(el => { if (el.textContent !== v) el.textContent = v; });
   set('tick', fmt(F.tick)); set('cells', fmt(F.population)); set('tps', fmt(F.tps)); set('food', fmt(F.food_count)); set('cap', fmt(F.capacity_tps) + ' ticks/s'); set('threads', `em uso: ${fmt(F.threads ?? 1)} de ${fmt(F.max_threads ?? 1)}`);
   set('fps', fps + ' FPS'); set('pubhz', `pub. ${fmt(F.publish_hz)} Hz`); set('pub', `${fmt(F.publish_hz)} Hz`);

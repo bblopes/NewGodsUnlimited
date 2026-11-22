@@ -262,6 +262,8 @@ pub enum UiCommand {
     RecordStop,
     /// Marca o momento atual da gravação ("aqui deu ruim").
     RecordMark { text: String },
+    /// Behavior Spotter: pausar no primeiro tick com fagocitose em curso.
+    SpotterPause { on: bool },
     /// Lote de entradas de mouse e teclado vindas da interface (modo sistema).
     UiInput { events: Vec<serde_json::Value> },
     /// Cria no banco uma cópia do indivíduo com a reprodução de última hora.
@@ -402,6 +404,34 @@ pub struct Frame {
     pub rec_eco: usize,
     pub rec_sis: usize,
     pub rec_marks: usize,
+    /// Behavior Spotter: fagocitoses em curso, recém-terminadas e a opção.
+    pub spotter: Vec<SpotterPull>,
+    pub spotter_ended: Vec<SpotterEnded>,
+    pub spotter_pause: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct SpotterPull {
+    pub predator: u64,
+    pub prey: u64,
+    pub x: f32,
+    pub y: f32,
+    pub prey_radius: f32,
+    pub ratio: f32,
+    pub force: f32,
+    /// Ticks desde que esta puxada começou.
+    pub since: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub struct SpotterEnded {
+    pub predator: u64,
+    pub prey: u64,
+    pub x: f32,
+    pub y: f32,
+    /// "capturada" ou "escapou".
+    pub outcome: String,
+    pub tick: u64,
 }
 
 #[derive(Clone, Copy, Default, Serialize)]
@@ -957,6 +987,13 @@ struct WorkerState {
     threads_requested: usize,
     /// Gravação em andamento, se houver.
     gravacao: Option<Gravacao>,
+    /// Behavior Spotter.
+    spotter_pause: bool,
+    paused_by_spotter: bool,
+    /// Início (tick) de cada fagocitose em curso, por (predador, presa).
+    spotter_started: HashMap<(u64, u64), u64>,
+    /// Fagocitoses que acabaram há pouco, com o desfecho.
+    spotter_ended: Vec<SpotterEnded>,
 }
 
 impl WorkerState {
@@ -1012,6 +1049,7 @@ impl WorkerState {
         match command {
             UiCommand::Pause { value } => {
                 self.paused = value;
+                self.paused_by_spotter = false;
                 set_windows_keep_awake(self.keep_awake && !self.paused);
             }
             UiCommand::Speed { value } => self.speed = value.min(SPEED_MULTIPLIERS.len() - 1),
@@ -1056,6 +1094,8 @@ impl WorkerState {
                     }
                 };
                 self.world = make_world(&self.init, &self.env, &self.applied_map, &founder);
+                self.spotter_started.clear();
+                self.spotter_ended.clear();
                 self.flow = self.env.flow_field(self.init.seed());
                 self.run_id = self.init.seed() ^ shared.started.elapsed().as_nanos() as u64;
                 self.selected = None;
@@ -1272,6 +1312,22 @@ impl WorkerState {
             }
             UiCommand::RecordStart { mode } => self.start_recording(mode, shared),
             UiCommand::RecordStop => self.stop_recording(),
+            UiCommand::SpotterPause { on } => {
+                self.spotter_pause = on;
+                if on {
+                    if self.paused {
+                        // Não despausa: só aponta para o que já existe.
+                        self.paused_by_spotter = false;
+                    } else if !self.world.phagocytosis_pulls.is_empty() {
+                        self.paused = true;
+                        self.paused_by_spotter = true;
+                    }
+                } else if self.paused_by_spotter {
+                    self.paused = false;
+                    self.paused_by_spotter = false;
+                    set_windows_keep_awake(self.keep_awake);
+                }
+            }
             UiCommand::RecordMark { text } => {
                 let tick = self.world.tick;
                 match self.gravacao.as_mut() {
@@ -1359,6 +1415,46 @@ impl WorkerState {
         self.map_history.push(self.edited_map.clone());
     }
 
+    /// Atualiza início e desfecho das fagocitoses em curso (uma vez por lote).
+    fn update_spotter(&mut self) {
+        let tick = self.world.tick;
+        let current: HashSet<(u64, u64)> = self
+            .world
+            .phagocytosis_pulls
+            .iter()
+            .map(|pull| (pull.predator_id, pull.prey_id))
+            .collect();
+        for pair in &current {
+            self.spotter_started.entry(*pair).or_insert(tick);
+        }
+        let finished: Vec<(u64, u64)> = self
+            .spotter_started
+            .keys()
+            .filter(|pair| !current.contains(pair))
+            .copied()
+            .collect();
+        for (predator, prey) in finished {
+            self.spotter_started.remove(&(predator, prey));
+            let prey_alive = self.world.organisms.iter().find(|organism| organism.id == prey);
+            let (x, y) = prey_alive
+                .or_else(|| self.world.organisms.iter().find(|organism| organism.id == predator))
+                .map(|organism| (organism.position.x, organism.position.y))
+                .unwrap_or((0.0, 0.0));
+            self.spotter_ended.push(SpotterEnded {
+                predator,
+                prey,
+                x,
+                y,
+                outcome: if prey_alive.is_some() { "escapou" } else { "capturada" }.to_owned(),
+                tick,
+            });
+        }
+        if self.spotter_ended.len() > 12 {
+            let excess = self.spotter_ended.len() - 12;
+            self.spotter_ended.drain(..excess);
+        }
+    }
+
     fn build_frame(&self, publish_hz: f32, light: bool) -> Frame {
         let world = &self.world;
         let mut frame = Frame {
@@ -1388,6 +1484,31 @@ impl WorkerState {
             notice: self.notice.clone(),
             ..Frame::default()
         };
+        frame.spotter_pause = self.spotter_pause;
+        frame.spotter_ended = self.spotter_ended.clone();
+        frame.spotter = world
+            .phagocytosis_pulls
+            .iter()
+            .map(|pull| SpotterPull {
+                predator: pull.predator_id,
+                prey: pull.prey_id,
+                x: pull.contact.x,
+                y: pull.contact.y,
+                prey_radius: world
+                    .organisms
+                    .iter()
+                    .find(|organism| organism.id == pull.prey_id)
+                    .map(|organism| organism.physical_radius())
+                    .unwrap_or(CELL_RADIUS),
+                ratio: pull.size_ratio,
+                force: pull.force,
+                since: self
+                    .spotter_started
+                    .get(&(pull.predator_id, pull.prey_id))
+                    .map(|start| world.tick.saturating_sub(*start))
+                    .unwrap_or(0),
+            })
+            .collect();
         if let Some(gravacao) = &self.gravacao {
             frame.rec_mode = gravacao.modo.chave().to_owned();
             frame.rec_seconds = gravacao.segundos() as f32;
@@ -1488,6 +1609,10 @@ fn worker(
         pool: Arc::new(build_pool(1).expect("pool de threads do motor")),
         threads_requested: 1,
         gravacao: None,
+        spotter_pause: false,
+        paused_by_spotter: false,
+        spotter_started: HashMap::new(),
+        spotter_ended: Vec::new(),
     };
     set_windows_keep_awake(true);
     state.reset_telemetry(&shared);
@@ -1557,7 +1682,9 @@ fn worker(
         // O lote inteiro roda dentro do pool do motor: as etapas paralelas do
         // tick usam essas threads sem trocar de thread a cada tick.
         let pool = Arc::clone(&state.pool);
+        let mut ticks_done = 0u32;
         pool.install(|| for _ in 0..batch {
+            ticks_done += 1;
             state.world.tick(
                 &state.flow,
                 state.env.emission,
@@ -1585,7 +1712,18 @@ fn worker(
                 }
                 state.last_telemetry_tick = state.world.tick;
             }
+            // Behavior Spotter: para no tick exato em que há fagocitose.
+            if state.spotter_pause && !state.world.phagocytosis_pulls.is_empty() {
+                state.paused = true;
+                state.paused_by_spotter = true;
+                break;
+            }
         });
+        let batch = ticks_done.max(1);
+        state.update_spotter();
+        if state.paused_by_spotter && state.paused {
+            force_publish = true;
+        }
         let elapsed = started.elapsed().as_secs_f32().max(0.000_001);
         let observed_tps = batch as f32 / elapsed;
         state.estimated_tps = state.estimated_tps * 0.85 + observed_tps * 0.15;
