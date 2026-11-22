@@ -1,6 +1,6 @@
 # Mede o desempenho do núcleo da simulação (benchmark headless).
 #
-# Roda à mão pela aba Actions ou a cada push em branches v3-* e v4-*. Compara, NA
+# Roda à mão pela aba Actions ou a cada push em branches v3-*, v4-* e v5-*. Compara, NA
 # MESMA MÁQUINA, a main (referência) com o código da branch, alternando as
 # execuções. As máquinas do GitHub variam muito entre si; só a comparação
 # lado a lado é confiável. Também confere se o estado final (hash) é igual.
@@ -9,7 +9,7 @@ name: Medir desempenho
 on:
   workflow_dispatch:
   push:
-    branches: ['v3-**', 'v4-**']
+    branches: ['v3-**', 'v4-**', 'v5-**']
     paths: ['5 - Código-fonte/src/**', '5 - Código-fonte/Cargo.*', '.github/workflows/medir-desempenho.yml']
 
 jobs:
