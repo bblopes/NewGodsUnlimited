@@ -28,7 +28,7 @@ use new_gods_unlimited::simulation::genome::{
 };
 use new_gods_unlimited::simulation::pheromone::{PheromoneDisplay, FIELD_HEIGHT, FIELD_WIDTH};
 use new_gods_unlimited::simulation::world::{
-    AntiCrammingConfig, World, CELL_RADIUS,
+    AntiCrammingConfig, SunSettings, World, CELL_RADIUS,
     DEFAULT_MENTAL_ENERGY_COST, DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK, FOOD_ENERGY,
     MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
     MIN_EXCLUSION_DISTANCE,
@@ -89,6 +89,22 @@ pub struct EnvSettings {
     pub ac_force: f32,
     /// Distância mínima entre núcleos, em unidades do mundo.
     pub ac_distance: f32,
+    /// Sol (V5.1): intensidade geral (0–1), luz basal do mapa inteiro (0–0,1)
+    /// e luz mínima para o fitoplâncton se reproduzir (0–1).
+    #[serde(default = "default_sun_intensity")]
+    pub sun_intensity: f32,
+    #[serde(default = "default_sun_basal")]
+    pub sun_basal: f32,
+    #[serde(default)]
+    pub sun_threshold: f32,
+}
+
+fn default_sun_intensity() -> f32 {
+    1.0
+}
+
+fn default_sun_basal() -> f32 {
+    0.01
 }
 
 impl Default for EnvSettings {
@@ -107,6 +123,9 @@ impl Default for EnvSettings {
             ac_on: true,
             ac_force: 1.0,
             ac_distance: MIN_EXCLUSION_DISTANCE,
+            sun_intensity: default_sun_intensity(),
+            sun_basal: default_sun_basal(),
+            sun_threshold: 0.0,
         }
     }
 }
@@ -122,10 +141,21 @@ impl EnvSettings {
         self.phyto_rate = self.phyto_rate.clamp(0.0, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK);
         self.flow_intensity = self.flow_intensity.clamp(0.0, 1.0);
         self.ac_force = self.ac_force.clamp(0.0, 1.0);
+        self.sun_intensity = self.sun_intensity.clamp(0.0, 1.0);
+        self.sun_basal = self.sun_basal.clamp(0.0, 0.1);
+        self.sun_threshold = self.sun_threshold.clamp(0.0, 1.0);
         self.ac_distance = self
             .ac_distance
             .clamp(MIN_EXCLUSION_DISTANCE, MAX_EXCLUSION_DISTANCE);
         self
+    }
+
+    fn sun(&self) -> SunSettings {
+        SunSettings {
+            basal: self.sun_basal,
+            intensity: self.sun_intensity,
+            threshold: self.sun_threshold,
+        }
     }
 
     fn flow_preset(&self) -> FlowPreset {
@@ -255,6 +285,9 @@ pub enum UiCommand {
     Chem { display: Option<String> },
     MapStroke { erase: bool, x: f32, y: f32, radius: u8 },
     MapSun { points: Vec<[f32; 2]> },
+    /// Pincel de luz (V5.1): raio em unidades do mundo, intensidade máxima e
+    /// força (0–1); `erase` tira luz.
+    MapSunPaint { x: f32, y: f32, radius: f32, peak: f32, hardness: f32, erase: bool },
     MapClearSun,
     MapApply,
     MapRevert,
@@ -698,13 +731,11 @@ impl Engine {
             return MapData::default();
         };
         let mut walls = vec![0u8; MAP_GRID_WIDTH * MAP_GRID_HEIGHT];
-        let mut sun = vec![0u8; MAP_GRID_WIDTH * MAP_GRID_HEIGHT];
         for (x, y) in map.1.wall_cells() {
             walls[y * MAP_GRID_WIDTH + x] = 1;
         }
-        for (x, y) in map.1.sunlight_cells() {
-            sun[y * MAP_GRID_WIDTH + x] = 1;
-        }
+        // Luz pintada de 0 a 255 por casa (V5.1).
+        let sun = map.1.sunlight_values().to_vec();
         MapData {
             version: map.0,
             width: MAP_GRID_WIDTH,
@@ -977,6 +1008,7 @@ fn make_world(
         }
     }
     world.set_phytoplankton_reproduction_rate(env.phyto_rate);
+    world.sun = env.sun();
     world.set_anti_cramming(env.anti_cramming());
     world.reproduction_minimum = env.min_repro;
     world
@@ -1054,7 +1086,7 @@ impl WorkerState {
 
     fn map_dirty(&self) -> bool {
         self.edited_map.wall_cells().ne(self.applied_map.wall_cells())
-            || self.edited_map.sunlight_cells().ne(self.applied_map.sunlight_cells())
+            || self.edited_map.sunlight_values() != self.applied_map.sunlight_values()
     }
 
     fn publish_flow(&self, shared: &Shared) {
@@ -1101,6 +1133,7 @@ impl WorkerState {
                 self.env = env.sanitized();
                 self.flow = self.env.flow_field(self.init.seed());
                 self.world.set_phytoplankton_reproduction_rate(self.env.phyto_rate);
+                self.world.sun = self.env.sun();
                 self.world.set_anti_cramming(self.env.anti_cramming());
                 self.world.reproduction_minimum = self.env.min_repro;
                 self.publish_flow(shared);
@@ -1202,6 +1235,11 @@ impl WorkerState {
             } => {
                 self.edited_map
                     .paint_wall_brush(Vec2::new(x, y), !erase, radius);
+                self.publish_map(shared);
+            }
+            UiCommand::MapSunPaint { x, y, radius, peak, hardness, erase } => {
+                self.edited_map
+                    .paint_sunlight(Vec2::new(x, y), radius, peak, hardness, erase);
                 self.publish_map(shared);
             }
             UiCommand::MapSun { points } => {
@@ -1377,6 +1415,8 @@ impl WorkerState {
                     self.run_id = cabecalho.run_id;
                     self.flow = self.env.flow_field(self.init.seed());
                     self.world.set_phytoplankton_reproduction_rate(self.env.phyto_rate);
+                    self.world.sun = self.env.sun();
+                self.world.sun = self.env.sun();
                     self.world.set_anti_cramming(self.env.anti_cramming());
                     self.world.reproduction_minimum = self.env.min_repro;
                     self.applied_map = self.world.map.clone();
@@ -1770,7 +1810,7 @@ fn worker(
     loop {
         let mut force_publish = false;
         while let Ok(Command::Ui(command)) = commands.try_recv() {
-            if let UiCommand::MapStroke { .. } = command {
+            if matches!(command, UiCommand::MapStroke { .. } | UiCommand::MapSunPaint { .. }) {
                 // Uma pincelada contínua vira um único passo de desfazer.
                 if !stroke_open || last_stroke.elapsed() > Duration::from_millis(400) {
                     state.begin_stroke();

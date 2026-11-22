@@ -57,7 +57,7 @@ let CATALOG = { version: 0, bank_path: '', bank_error: null, options: [
 // Topologia da rede: vem do motor (INFO.topology); estes são os valores da V5.0.0.
 let TOPO = { external: 27, internal_start: 27, timer_start: 43, motor_start: 46, slot_count: 57, age_slot: 26 };
 const neuralOption = key => CATALOG.options.find(o => o.key === key) || CATALOG.options[0];
-const ENV_LABELS = { min_repro: 'Mínimo reprodução', limit: 'Limite obrigatório', mental: 'Custo mental', emission: 'Abiogênese', lifetime: 'Vida-base sem sol', phyto_rate: 'Multiplicação sob luz', food_energy: 'Energia por fito', flow_on: 'Corrente ligada', flow_intensity: 'Intensidade da corrente', flow_preset: 'Modelo de corrente', ac_on: 'Anti-cramming', ac_force: 'Força anti-cramming', ac_distance: 'Espaço anti-cramming' };
+const ENV_LABELS = { min_repro: 'Mínimo reprodução', limit: 'Limite obrigatório', mental: 'Custo mental', emission: 'Abiogênese', lifetime: 'Vida-base sem sol', phyto_rate: 'Multiplicação sob luz', food_energy: 'Energia por fito', flow_on: 'Corrente ligada', flow_intensity: 'Intensidade da corrente', flow_preset: 'Modelo de corrente', ac_on: 'Anti-cramming', ac_force: 'Força anti-cramming', ac_distance: 'Espaço anti-cramming', sun_intensity: 'Intensidade do sol', sun_basal: 'Luz basal', sun_threshold: 'Luz mínima para reproduzir' };
 const SLOT_NAMES = ['V<', 'V>', 'V^', 'Vv', 'Cx', 'Cy', 'En', '+1', 'Ct', 'PG', 'PGx', 'PGy', 'P1', 'P1x', 'P1y', 'P2', 'P2x', 'P2y', 'P3', 'P3x', 'P3y', 'Fx', 'Fy', 'PF', 'PFx', 'PFy', 'Id',
   'I0', 'I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9', 'I10', 'I11', 'I12', 'I13', 'I14', 'I15', 'T1', 'T2', 'T3',
   '←', '→', '↑', '↓', 'Rep', 'Fag', 'EG', 'E1', 'E2', 'E3', 'Doar'];
@@ -274,8 +274,9 @@ function tabBiologia() {
   return head('Biologia', 'Células e fitoplâncton · valem ao aplicar', `<span data-pending="bio">${pendingPill(bioPending())}</span>`) + `<div class="side-body">${body}</div>`;
 }
 
+function meanLight() { if (!MAP) return 0; let sum = 0, n = 0; for (let i = 0; i < MAP.sun.length; i++) { if (MAP.walls[i]) continue; sum += lightOf(MAP.sun[i]); n++; } return n ? sum / n : 0; }
 function tabAmbiente() {
-  const dirty = !!F?.map_dirty, sunOn = S.mapTool === 'sun';
+  const dirty = !!F?.map_dirty;
   const body = `
     ${section('a-corr', 'Física do mapa · Corrente', `
       ${toggle('env.flow_on', 'Corrente ligada')}
@@ -284,8 +285,17 @@ function tabAmbiente() {
       <div class="hint">Clássico: recirculante com giros locais. Esquerda: vento contínuo. Oásis: giro em torno do oásis. Vetores: aba Camadas.</div>
     `)}
     ${section('a-sol', 'Física do mapa · Sol', `
-      <div class="row"><button class="btn ${sunOn ? 'pri' : ''}" data-act="tool" data-v="${sunOn ? 'none' : 'sun'}">${ic('sun')}${sunOn ? 'Parar de desenhar' : 'Desenhar região de sol'}</button><button class="btn sm" data-act="mapClearSun">Limpar sol</button><div class="grow"></div>${toggle('sun', 'Ver iluminação', '', true)}</div>
-      <div class="hint">Desenhe o contorno da região arrastando na arena; ao soltar, ela substitui a área ensolarada. Nada entra no mundo antes de aplicar. A luz contínua e o pincel com borda suave chegam na V5.1.</div>
+      ${slider('env.sun_intensity', 'Intensidade do sol', 0, 100, 1, '%', '<span>escala toda a luz pintada</span>', 100, 0)}
+      ${slider('env.sun_basal', 'Luz basal', 0, 10, 0.1, '%', '<span>luz no mapa inteiro, até na sombra</span>', 100, 1)}
+      ${slider('env.sun_threshold', 'Luz mínima para reproduzir', 0, 100, 1, '%', '<span>abaixo disso o fitoplâncton não se multiplica</span>', 100, 0)}
+      <div class="readouts">${ro('Luz média do mapa', fmt(meanLight() * 100, 1) + '%')}${ro('Mais escuro', fmt(lightOf(0) * 100, 1) + '%')}</div>
+      <div class="field-top" style="margin-top:8px"><label>Pincel de luz</label></div>
+      <div class="seg">${[['sun', 'Pintar luz', 'sun'], ['shade', 'Sombra', 'eraser']].map(([id, l, i]) => `<button class="${S.mapTool === id ? 'on' : ''}" data-act="tool" data-v="${S.mapTool === id ? 'none' : id}" style="display:flex;align-items:center;justify-content:center;gap:5px">${ic(i)}${l}</button>`).join('')}</div>
+      <div class="field"><div class="field-top"><label>Raio</label><span class="unit mono" style="margin-left:auto">${fmt(SUNB.radius)} u</span></div><input type="range" data-g="sunRadius" min="80" max="3000" step="20" value="${SUNB.radius}"></div>
+      <div class="field"><div class="field-top"><label>Intensidade máxima</label><span class="unit mono" style="margin-left:auto">${fmt(SUNB.peak * 100)}%</span></div><input type="range" data-g="sunPeak" min="0" max="100" step="1" value="${Math.round(SUNB.peak * 100)}"></div>
+      <div class="field"><div class="field-top"><label>Força</label><span class="unit mono" style="margin-left:auto">${fmt(SUNB.hardness * 100)}%</span></div><input type="range" data-g="sunHard" min="0" max="100" step="1" value="${Math.round(SUNB.hardness * 100)}"></div>
+      <div class="hint">Força 100%: pinta a intensidade máxima até a borda do pincel. Força 0%: só o pico no centro, caindo a zero na borda. Pode pintar quantas regiões quiser; passar de novo não estoura a intensidade.</div>
+      <div class="row"><button class="btn sm" data-act="mapUndo">${ic('undo')}Desfazer</button><button class="btn sm" data-act="mapClearSun">Limpar sol</button><div class="grow"></div>${toggle('sun', 'Ver intensidade', '', true)}</div>
       <div class="row"><button class="btn ${dirty ? 'warn' : ''}" style="flex:1" data-act="mapApply" ${dirty ? '' : 'disabled'}>Aplicar mapa${dirty ? ' *' : ''}</button><button class="btn ghost" data-act="mapRevert" ${dirty ? '' : 'disabled'}>Descartar</button></div>
     `)}
     ${section('a-dens', 'Interações', `
@@ -555,7 +565,15 @@ function tabDemografia() {
 }
 
 // Edição do mapa ativa: paredes na aba Mapa, sol na aba Física.
-function editingMap() { return S.mapTool !== 'none' && ((S.tab === 'mapa' && S.mapTool !== 'sun') || (S.tab === 'ambiente' && S.mapTool === 'sun')); }
+const SUN_TOOLS = ['sun', 'shade'];
+function editingMap() { return S.mapTool !== 'none' && ((S.tab === 'mapa' && !SUN_TOOLS.includes(S.mapTool)) || (S.tab === 'ambiente' && SUN_TOOLS.includes(S.mapTool))); }
+// Pincel de luz: raio (unidades do mundo), intensidade máxima e força da borda.
+const SUNB = { radius: 600, peak: 0.6, hardness: 0.4 };
+// Luz efetiva de uma casa da malha, com a luz basal e a intensidade aplicadas.
+function lightOf(v) { const e = S.envApplied, b = e.sun_basal ?? 0.01, I = e.sun_intensity ?? 1; return b + (1 - b) * I * (v / 255); }
+function lightAt(wx, wy) { if (!MAP) return 0; const x = Math.floor(wx / MAP.world_width * MAP.width), y = Math.floor(wy / MAP.world_height * MAP.height); if (x < 0 || y < 0 || x >= MAP.width || y >= MAP.height) return 0; return lightOf(MAP.sun[y * MAP.width + x]); }
+const HEAT = [[18, 24, 70], [40, 80, 190], [80, 170, 210], [240, 200, 70], [255, 250, 225]];
+function heatColor(t) { t = clamp(t, 0, 1) * (HEAT.length - 1); const i = Math.min(HEAT.length - 2, Math.floor(t)), f = t - i, a = HEAT[i], b = HEAT[i + 1]; return [0, 1, 2].map(k => Math.round(a[k] + (b[k] - a[k]) * f)); }
 
 /* ------------------------------ Tema dia / noite ------------------------------ */
 // O escuro de sempre é o modo noturno; o claro é o modo dia. Tudo que for
@@ -636,7 +654,7 @@ function tabCamadas() {
   const body = `
     ${section('l-world', 'Mundo', `
       ${toggle('flow', 'Vetores da corrente', 'Direção do fluxo; tamanho visual fixo', true)}
-      ${toggle('sun', 'Iluminação', 'Regiões ensolaradas do mapa', true)}
+      ${toggle('sun', 'Intensidade da luz', 'Escala de cores da luz efetiva, com o valor sob o mouse', true)}
       ${toggle('cones', 'Cones dos sensores', 'Alcance visual de cada célula', true)}
       ${toggle('conflicts', 'Conflitos de densidade', 'Células abaixo do espaço mínimo', true)}
     `)}
@@ -721,7 +739,7 @@ function renderStage() {
   let b = '';
   const neural = neuralOption(S.init.neural);
   if (S.insert) b = `<div class="banner">${ic('plus')}<span>Inserir célula <b>${esc(neural.name)}</b> · clique no mapa</span><span class="kbd">Esc</span><button class="btn sm ghost" data-act="insert">Cancelar</button></div>`;
-  else if (editingMap()) b = `<div class="banner wa">${ic(S.mapTool)}<span>Editando mapa · ${{ wall: 'Parede', eraser: 'Borracha', sun: 'Região ensolarada (contorno)' }[S.mapTool]}${S.mapTool !== 'sun' ? ' · raio ' + S.brush : ''}</span>${F?.map_dirty ? '<button class="btn sm warn" data-act="mapApply">Aplicar mapa</button>' : ''}<button class="btn sm ghost" data-act="tool" data-v="none">Sair</button></div>`;
+  else if (editingMap()) b = `<div class="banner wa">${ic(S.mapTool === 'shade' ? 'sun' : S.mapTool)}<span>Editando mapa · ${{ wall: 'Parede', eraser: 'Borracha', sun: 'Pincel de luz', shade: 'Sombra' }[S.mapTool]}${SUN_TOOLS.includes(S.mapTool) ? ` · raio ${fmt(SUNB.radius)} u · pico ${fmt(SUNB.peak * 100)}% · força ${fmt(SUNB.hardness * 100)}%` : ' · raio ' + S.brush}</span>${F?.map_dirty ? '<button class="btn sm warn" data-act="mapApply">Aplicar mapa</button>' : ''}<button class="btn sm ghost" data-act="tool" data-v="none">Sair</button></div>`;
   $('#stageBanner').innerHTML = b;
   renderChips();
   $('#camCtl').innerHTML = `<button class="btn sm ${S.follow ? 'pri' : ''}" data-act="follow" title="Seguir célula selecionada">${ic('target')}Seguir</button><button class="btn sm" data-act="fit">${ic('fit')}Encaixar</button><span class="pill mono" style="height:26px;background:var(--ov)">${Math.round(cam.zoom * 100)}%</span>`;
@@ -761,7 +779,7 @@ const ACT = {
   apply() {
     const ch = envPending(); if (!ch.length) return;
     ch.forEach(k => S.events.push({ tick: F?.tick ?? 0, label: `${ENV_LABELS[k]}: ${S.envApplied[k]} → ${S.env[k]}` }));
-    S.envApplied = { ...S.env }; send({ type: 'apply', env: S.env }); renderAll();
+    S.envApplied = { ...S.env }; send({ type: 'apply', env: S.env }); if (MAP) buildMap(MAP); renderAll();
   },
   revert() { S.env = { ...S.envApplied }; S.init = { ...S.initApplied }; renderAll(); say('Campos revertidos ao último valor aplicado'); },
   askRestart() { S.modal = 'restart'; S.drawer = null; renderLayer(); },
@@ -864,6 +882,9 @@ document.addEventListener('input', e => {
     if (k === 'flow' && t.checked) FLOW.key = '';
     renderStage(); return;
   }
+  if (t.dataset.g === 'sunRadius') { SUNB.radius = +t.value; t.closest('.field').querySelector('.unit').textContent = fmt(SUNB.radius) + ' u'; return; }
+  if (t.dataset.g === 'sunPeak') { SUNB.peak = +t.value / 100; t.closest('.field').querySelector('.unit').textContent = t.value + '%'; return; }
+  if (t.dataset.g === 'sunHard') { SUNB.hardness = +t.value / 100; t.closest('.field').querySelector('.unit').textContent = t.value + '%'; return; }
   if (t.dataset.g === 'runName') { S.runName = t.value; return; }
   if (t.dataset.g === 'mapName') { S.mapName = t.value; return; }
   if (t.dataset.g === 'brush') { S.brush = clamp(+t.value || 0, 0, 12); document.querySelectorAll('[data-g="brush"]').forEach(o => { if (o !== t) o.value = t.value; }); renderStage(); return; }
@@ -908,9 +929,21 @@ function buildMap(m) {
   const wi = wc.createImageData(m.width, m.height), si = sc.createImageData(m.width, m.height);
   for (let i = 0; i < m.walls.length; i++) {
     if (m.walls[i]) { wi.data[i * 4] = 78; wi.data[i * 4 + 1] = 88; wi.data[i * 4 + 2] = 100; wi.data[i * 4 + 3] = 255; }
-    if (m.sun[i]) { si.data[i * 4] = 240; si.data[i * 4 + 1] = 200; si.data[i * 4 + 2] = 90; si.data[i * 4 + 3] = 34; }
+    const c = heatColor(lightOf(m.sun[i]));
+    si.data[i * 4] = c[0]; si.data[i * 4 + 1] = c[1]; si.data[i * 4 + 2] = c[2]; si.data[i * 4 + 3] = 150;
   }
   wc.putImageData(wi, 0, 0); sc.putImageData(si, 0, 0);
+}
+// Escala da luz no canto da arena e valor sob o mouse.
+function drawLightLegend(cw, ch) {
+  const w = 160, h = 10, x = 16, y = ch - 40;
+  const g = ctx.createLinearGradient(x, 0, x + w, 0);
+  for (let k = 0; k <= 10; k++) { const c = heatColor(k / 10); g.addColorStop(k / 10, `rgb(${c[0]},${c[1]},${c[2]})`); }
+  ctx.fillStyle = ARENA.bd; ctx.fillRect(x - 6, y - 18, w + 12, h + 34);
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--tx'); ctx.font = '11px Segoe UI, sans-serif';
+  ctx.fillText('luz 0%', x, y + h + 13); ctx.fillText('100%', x + w - 28, y + h + 13);
+  if (mouse.inside) { const [wx, wy] = toWorld(mouse.x, mouse.y); ctx.fillText(`aqui: ${(lightAt(wx, wy) * 100).toFixed(1)}%`, x, y - 5); }
 }
 // O canvas precisa ter o mesmo tamanho que ocupa na tela; senão o desenho é
 // esticado e o clique erra a célula. A área da arena muda sem a janela mudar
@@ -960,7 +993,7 @@ function draw() {
   for (let gx = 0; gx <= W; gx += g) { const [sx] = toScreen(gx, 0); ctx.beginPath(); ctx.moveTo(sx, y0); ctx.lineTo(sx, y0 + hh); ctx.stroke(); }
   for (let gy = 0; gy <= H; gy += g) { const [, sy] = toScreen(0, gy); ctx.beginPath(); ctx.moveTo(x0, sy); ctx.lineTo(x0 + ww, sy); ctx.stroke(); }
   if (S.layers.chem && F.chem) drawChem(x0, y0, ww, hh);
-  if (MAP && (S.layers.sun || (S.tab === 'ambiente' && S.mapTool === 'sun'))) { ctx.imageSmoothingEnabled = true; ctx.drawImage(sunCv, x0, y0, ww, hh); }
+  if (MAP && (S.layers.sun || (S.tab === 'ambiente' && SUN_TOOLS.includes(S.mapTool)))) { ctx.imageSmoothingEnabled = true; ctx.drawImage(sunCv, x0, y0, ww, hh); }
   if (MAP) { ctx.imageSmoothingEnabled = false; ctx.drawImage(wallCv, x0, y0, ww, hh); }
   if (S.layers.flow) drawFlow();
   // fitoplâncton
@@ -1008,9 +1041,11 @@ function draw() {
   }
   // pincel e laço do mapa
   if (editingMap() && mouse.inside && MAP) {
-    if (S.mapTool === 'sun') {
+    if (SUN_TOOLS.includes(S.mapTool)) {
       cv.style.cursor = 'crosshair';
-      if (mouse.lasso.length > 1) { ctx.strokeStyle = '#e3b341'; ctx.fillStyle = 'rgba(227,179,65,.12)'; ctx.lineWidth = 1.5; ctx.beginPath(); mouse.lasso.forEach(([x, y], i) => { const [sx, sy] = toScreen(x, y); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); }); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+      ctx.strokeStyle = S.mapTool === 'shade' ? '#8fa3b8' : '#e3b341'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(mouse.x, mouse.y, Math.max(3, SUNB.radius * view.s), 0, 6.283); ctx.stroke();
+      ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.arc(mouse.x, mouse.y, Math.max(2, SUNB.radius * SUNB.hardness * view.s), 0, 6.283); ctx.stroke(); ctx.setLineDash([]);
     } else {
       const cell = MAP.world_width / MAP.width;
       ctx.strokeStyle = S.mapTool === 'eraser' ? '#e5686b' : '#cfd6dd'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(mouse.x, mouse.y, Math.max(3, (S.brush + 0.5) * cell * view.s), 0, 6.283); ctx.stroke();
@@ -1020,6 +1055,7 @@ function draw() {
   drawSpotter();
   ctx.restore();
   ctx.strokeStyle = ARENA.bd; ctx.lineWidth = 1; ctx.strokeRect(x0 + .5, y0 + .5, ww - 1, hh - 1);
+  if (MAP && (S.layers.sun || (S.tab === 'ambiente' && SUN_TOOLS.includes(S.mapTool)))) drawLightLegend(cw, ch);
 }
 function drawChem(x0, y0, ww, hh) {
   const c = F.chem; chemCv.width = c.width; chemCv.height = c.height;
@@ -1044,6 +1080,7 @@ function drawFlow() {
 let lastStroke = 0;
 function stroke(wx, wy) {
   const now = performance.now(); if (now - lastStroke < 25) return; lastStroke = now;
+  if (SUN_TOOLS.includes(S.mapTool)) { send({ type: 'map_sun_paint', x: wx, y: wy, radius: SUNB.radius, peak: SUNB.peak, hardness: SUNB.hardness, erase: S.mapTool === 'shade' }); return; }
   send({ type: 'map_stroke', erase: S.mapTool === 'eraser', x: wx, y: wy, radius: S.brush });
 }
 cv.addEventListener('mousemove', e => {
@@ -1051,20 +1088,19 @@ cv.addEventListener('mousemove', e => {
   if (!mouse.down) return;
   if (Math.abs(mouse.x - mouse.sx) + Math.abs(mouse.y - mouse.sy) > 4) mouse.moved = true;
   const editing = editingMap() && mouse.btn === 0;
-  if (editing) { const [wx, wy] = toWorld(mouse.x, mouse.y); if (S.mapTool === 'sun') { const lp = mouse.lasso[mouse.lasso.length - 1]; if (!lp || Math.hypot(lp[0] - wx, lp[1] - wy) > 40) mouse.lasso.push([wx, wy]); } else stroke(wx, wy); }
+  if (editing) { const [wx, wy] = toWorld(mouse.x, mouse.y); stroke(wx, wy); }
   else if (mouse.moved) { cam.cx -= e.movementX / view.s; cam.cy -= e.movementY / view.s; S.follow = false; }
 });
 cv.addEventListener('mouseleave', () => { mouse.inside = false; if (mouse.down && mouse.lasso.length) finishLasso(); mouse.down = false; });
 cv.addEventListener('mousedown', e => {
   mouse.down = true; mouse.moved = false; mouse.sx = mouse.x; mouse.sy = mouse.y; mouse.btn = e.button;
   if (e.button === 2 && S.insert) { ACT.insert(); return; }
-  if (editingMap() && e.button === 0) { const [wx, wy] = toWorld(mouse.x, mouse.y); if (S.mapTool === 'sun') mouse.lasso = [[wx, wy]]; else { lastStroke = 0; stroke(wx, wy); } }
+  if (editingMap() && e.button === 0) { const [wx, wy] = toWorld(mouse.x, mouse.y); lastStroke = 0; stroke(wx, wy); }
 });
 function finishLasso() { if (mouse.lasso.length >= 3) send({ type: 'map_sun', points: mouse.lasso }); mouse.lasso = []; }
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('mouseup', e => {
   const click = mouse.down && !mouse.moved; mouse.down = false;
-  if (S.tab === 'ambiente' && S.mapTool === 'sun' && e.button === 0) { finishLasso(); return; }
   if (!click || e.button !== 0) return;
   const [wx, wy] = toWorld(mouse.x, mouse.y);
   if (S.insert) {
@@ -1095,7 +1131,7 @@ async function pollFrame() {
     if (F.bank_version !== lastBankVersion) { lastBankVersion = F.bank_version; refreshCatalog(); }
     if (F.env && F.env_version !== lastEnvVersion) {
       const first = lastEnvVersion === null; lastEnvVersion = F.env_version;
-      if (!first) { S.env = { ...F.env }; S.envApplied = { ...F.env }; if (F.init) { S.init = { ...F.init }; S.initApplied = { ...F.init }; } FLOW.key = ''; renderAll(); }
+      if (!first) { S.env = { ...F.env }; S.envApplied = { ...F.env }; if (F.init) { S.init = { ...F.init }; S.initApplied = { ...F.init }; } FLOW.key = ''; if (MAP) buildMap(MAP); renderAll(); }
     }
     if (F.map_version !== lastMapVersion) { lastMapVersion = F.map_version; MAP = await invoke('map_data'); buildMap(MAP); }
     if (F.paused !== lastPaused || F.speed !== lastSpeed || (F.rec_mode || '') !== lastRec) { lastPaused = F.paused; lastSpeed = F.speed; lastRec = F.rec_mode || ''; renderTop(); }

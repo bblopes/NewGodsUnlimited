@@ -39,6 +39,7 @@ e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão p
 
 | Arquivo | O que validar | Data |
 | --- | --- | --- |
+| `V5 - Funções novas/V5.1.0/` | Sol contínuo: malha de luz, luz basal, intensidade, limiar, escala e pincel de luz | 22/11/2026 |
 | `V5 - Funções novas/V5.0.3/` | Abas Física e Mapa, modo dia, presets de mapa e runs salvas | 22/11/2026 |
 | `V5 - Funções novas/V5.0.2/` | Behavior Spotter: fagocitoses ao vivo, Ir até / Próxima com rastreio, Pausar ao encontrar | 22/11/2026 |
 | `V5 - Funções novas/V5.0.1/` | Gravador de sessão: gravar telemetria e mudanças da simulação, salvas linha a linha no disco | 22/11/2026 |

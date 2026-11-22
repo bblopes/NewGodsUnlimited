@@ -1,6 +1,6 @@
 [package]
 name = "new_gods_unlimited_interface"
-version = "5.0.3"
+version = "5.1.0"
 edition = "2021"
 description = "Interface nova do New Gods Unlimited (Tauri), sobre o mesmo motor de simulação."
 
