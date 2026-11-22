@@ -17,7 +17,7 @@ use crate::{
     simulation::genome::{
         Genome, PRE_FOOD_SENSOR_RANGE_GENOME_BYTES, PRE_NEURAL_NODE_ACTIVITY_GENOME_BYTES,
     },
-    simulation::parallel::{for_each_mut, map_indices},
+    simulation::parallel::{for_each_mut, map_indices, map_mut},
     simulation::pheromone::{ChemicalSensors, PheromoneField, pheromone_energy_cost},
 };
 
@@ -922,9 +922,12 @@ impl World {
         // ── Etapa 6: deslocar, iluminar e reproduzir o alimento ──────────
         observer.begin(TickPhase::FoodMovement);
         // Cada partícula se move sozinha (corrente + paredes): paralelo.
+        // Na mesma passada já se anota se ela venceu o tempo de vida. Nada
+        // muda posição ou idade do alimento até a etapa 12, então a resposta
+        // é a mesma que a limpeza calcularia lá, sem outra passada paralela.
         let map = &self.map;
         let clearance = self.pheromones.wall_clearance();
-        for_each_mut(&mut self.food, 2_048, 1_024, |particle| {
+        let mut food_expired: Vec<bool> = map_mut(&mut self.food, 2_048, 1_024, |particle| {
             let previous_position = particle.position;
             particle.position +=
                 flow.sample_with_map(particle.position, Some(map)) * FOOD_FLOW_COUPLING;
@@ -945,8 +948,17 @@ impl World {
             // A luz prolonga a vida, mas não suspende o envelhecimento: todo
             // fitoplâncton eventualmente sai do ciclo, até sob sol pleno.
             particle.age_ticks = particle.age_ticks.saturating_add(1);
+            phytoplankton_expired(particle, map, lifetime_ticks)
         });
         self.reproduce_sunlit_phytoplankton();
+        // Os nascidos agora entram no fim da lista; anotamos os deles também.
+        let map = &self.map;
+        let born_from = food_expired.len();
+        food_expired.extend(
+            self.food[born_from..]
+                .iter()
+                .map(|particle| phytoplankton_expired(particle, map, lifetime_ticks)),
+        );
         observer.end(TickPhase::FoodMovement);
 
         // ── Etapa 7: deslocar as células ─────────────────────────────────
@@ -1047,18 +1059,13 @@ impl World {
 
         // ── Etapa 12: remover alimento consumido ou vencido ──────────────
         observer.begin(TickPhase::FoodCleanup);
-        let map = &self.map;
-        let food = &self.food;
-        let keep: Vec<bool> = map_indices(food.len(), 4_096, 2_048, |index| {
-                let particle = &food[index];
-                let winner = &winners[index];
-                let sunlight = map.sunlight_intensity(particle.position);
-                let lifespan_multiplier =
-                    1.0 + (SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER - 1.0) * sunlight;
-                let lifetime = (lifetime_ticks as f32 * lifespan_multiplier).ceil() as u32;
-                winner.is_none() && particle.age_ticks < lifetime
-            });
-        let mut keep = keep.into_iter();
+        // A validade já foi anotada na etapa 6; aqui só se junta com quem
+        // foi comido. É uma passada simples, barata demais para dividir.
+        debug_assert_eq!(food_expired.len(), self.food.len());
+        let mut keep = winners
+            .iter()
+            .zip(food_expired.iter())
+            .map(|(winner, expired)| winner.is_none() && !expired);
         self.food.retain(|_| keep.next().unwrap_or(false));
         observer.end(TickPhase::FoodCleanup);
 
@@ -2804,6 +2811,19 @@ fn sensor_grid_cell(position: Vec2) -> (i32, i32) {
         (position.x / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).floor() as i32,
         (position.y / MAX_EFFECTIVE_FOOD_SENSOR_RANGE).floor() as i32,
     )
+}
+
+/// O fitoplâncton já viveu tudo o que a luz do lugar permite? A luz alonga
+/// a vida (até `SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER`), mas não a suspende.
+fn phytoplankton_expired(
+    particle: &Phytoplankton,
+    map: &MapDefinition,
+    lifetime_ticks: u32,
+) -> bool {
+    let sunlight = map.sunlight_intensity(particle.position);
+    let lifespan_multiplier = 1.0 + (SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER - 1.0) * sunlight;
+    let lifetime = (lifetime_ticks as f32 * lifespan_multiplier).ceil() as u32;
+    particle.age_ticks >= lifetime
 }
 
 fn phytoplankton_density_cell(position: Vec2) -> (i32, i32) {
