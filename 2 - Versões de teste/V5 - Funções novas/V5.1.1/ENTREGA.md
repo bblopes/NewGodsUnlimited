@@ -25,7 +25,18 @@ Vários embutidos: labirintos, vários focos, luz basal. Presets de corrente ain
 - A gravação de sessão registra a troca de sol ou de construção.
 
 ## Medição
-A preencher com a comparação main × branch do CI.
+Mesma máquina do GitHub, main (V5.1.0) × V5.1.1:
+
+| Caso | Ganho | Estado igual | Comportamento igual |
+|---|---:|---|---|
+| Realista (100 células) | 0,99× | sim | sim |
+| Estresse (300 células) | 0,89× | sim | sim |
+| Sessão (100 células) | 1,01× | sim | sim |
+| Sessão (200 células) | 0,97× | sim | sim |
+
+**Resultado honesto:** a simulação não mudou (estado idêntico). Esta entrega
+só mexe em arquivos e interface, então as diferenças de velocidade são
+variação da máquina. 66 testes passam.
 
 ## Como testar
 1. Física › Presets de sol › Carregar "Arquipélago" e ligar "Ver intensidade".
