@@ -34,7 +34,19 @@
 
 ## Medição
 
-A preencher com a comparação main × branch do CI.
+Mesma máquina do GitHub, main (V5.0.1) × V5.0.2:
+
+| Caso | main (ticks/s) | V5.0.2 (ticks/s) | Ganho | Estado igual | Comportamento igual |
+|---|---:|---:|---:|---|---|
+| Realista (100 células) | 12.123 | 12.408 | 1,02× | sim | sim |
+| Estresse (300 células) | 1.634 | 1.612 | 0,99× | sim | sim |
+| Sessão (100 células) | 3.226 | 3.388 | 1,05× | sim | sim |
+| Sessão (200 células) | 3.473 | 3.328 | 0,96× | sim | sim |
+
+**Resultado honesto:** a simulação ficou exatamente igual (mesmo estado
+salvo) e a velocidade dentro do ruído. Guardar as puxadas de cada tick não
+custa nada perceptível. 63 testes passam, inclusive um novo que confere a
+lista de puxadas e o ponto de contato.
 
 ## Como testar
 
