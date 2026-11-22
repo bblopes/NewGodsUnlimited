@@ -211,6 +211,7 @@ simulação.
 | Entrega | Sessão | Estresse | Realista | Todos os núcleos × 1 thread (sessão) | Estado igual |
 |---|---:|---:|---:|---:|---|
 | V4.0.0 × V3.0.4 — PF em faixas paralelas e validade do fitoplâncton no movimento | 1,09–1,10× | 1,00× | 0,97× | 0,99–1,02× | sim |
+| V4.0.1 × V4.0.0 — grupo de threads que fica acordado entre as etapas | 1,15–1,20× | 1,03× | 1,30× | 1,15–1,16× | sim |
 
 O PF agora pode rodar em faixas paralelas da malha (só com 40 mil amostras
 ou mais) e a limpeza do fitoplâncton deixou de ter passada própria. O ganho
@@ -221,3 +222,13 @@ Correção do workflow nesta entrega: com a `main` na V3.0.4, a comparação de
 estado passou a ser normal × normal. A forma anterior (branch com
 `--sensores-completos` × `main`) acusava diferença sempre que havia células
 vivas.
+
+**V4.0.1:** as etapas paralelas trocaram as filas do `rayon` por um grupo
+próprio de threads que gira até 300 µs entre uma etapa e outra. Sincronizar
+uma etapa custa poucos microssegundos. Com isso, todos os núcleos passaram a
+render em todos os cenários (1,09–1,16× sobre 1 thread, nos 4 vCPU do
+GitHub). O teto agora é a parte sequencial do tick.
+
+**Encerramento da V4 (22/11/2026):** fechada na V4.0.1. As regras mais
+leves para o fitoplâncton foram descartadas. O padrão da interface segue em
+1 thread; "Auto" usa todos os núcleos com o mesmo resultado.
