@@ -186,9 +186,9 @@ sexuada fica para um estudo futuro.
 - Rede neural ao vivo: ligação inerte pode existir; passar o mouse em
   qualquer nó mostra o nome dele, com "inativo" quando estiver inativo.
 
-**Falta decidir:** B1 (o mínimo de energia continua valendo na reprodução de
-última hora?), B2 (janela de ~11%?), B3 (fundadores nascem com uma rodada de
-mutação?), B4 (indivíduos do banco migrados?).
+**Entregue na V5.0.0.** Decisões: mínimo de energia continua valendo; janela
+definida pelos pesos do sensor de idade; fundadores com uma rodada de mutação;
+sem série própria na Demografia; banco migrado com cópia de segurança.
 
 ## 6. Interface: abas Física e Mapa, presets de mapa, modo noturno 🟡
 
@@ -223,8 +223,7 @@ claro**. Tudo o que for desenvolvido daqui em diante tem versão dia e noite.
 
 ## 8. Título da versão maior
 
-Cada versão maior tem um título, que vira o nome da pasta. Sugestões:
-**"V5 - Luz e matéria"**, "V5 - Ecologia" ou "V5 - Ecossistema vivo". Qual?
+**Decidido (22/11/2026): "V5 - Funções novas"**, genérico. Cada entrega tem o seu título próprio.
 
 ---
 
@@ -235,8 +234,8 @@ apoiar a próxima. Cada linha é uma entrega com `.exe` próprio.
 
 | Versão | Conteúdo | Por que nessa ordem | Status |
 |---|---|---|---|
-| V5.0.0 | Sensor de idade (57 slots, migração), Baseline embutido, fim das configurações neurais, hover com nome nos nós da rede, nascimentos de última hora na Demografia | pedido do Bruno: o mecanismo de sobrevivência primeiro. Especificação: `PROPOSTA_BASELINE_E_SENSOR_DE_IDADE.md` | ⏭️ próxima (aguardando aprovação da especificação) |
-| V5.0.1 | Behavior Spotter: lista ao vivo da fagocitose, Ir até / Próxima com rastreio, opção Pausar ao encontrar, círculo vermelho no ponto de contato | decidido; independente e pequeno | pendente |
+| V5.0.0 | Sensor de idade (57 slots, migração), Baseline embutido, fim das configurações neurais, hover com nome nos nós da rede, nascimentos de última hora na Demografia | pedido do Bruno: o mecanismo de sobrevivência primeiro. Especificação: `PROPOSTA_BASELINE_E_SENSOR_DE_IDADE.md` | ✅ entregue (22/11/2026) |
+| V5.0.1 | Behavior Spotter: lista ao vivo da fagocitose, Ir até / Próxima com rastreio, opção Pausar ao encontrar, círculo vermelho no ponto de contato | decidido; independente e pequeno | ⏭️ próxima |
 | V5.0.2 | Abas novas (Física com Corrente e Interações; Mapa com Construção) + tema claro (o atual vira noturno) | prepara o lugar do sol e o tema de tudo que vem depois | pendente |
 | V5.0.3 | Presets de mapa de volta (paredes + corrente + sol atual), importar e exportar | você precisa para desenhar mapas melhores | pendente |
 | V5.1.0 | Malha de luz contínua: luz basal, intensidade, limiar de reprodução, vida interpolada, escala de intensidade, conversão dos mapas antigos | base de toda a parte de sol | pendente |
