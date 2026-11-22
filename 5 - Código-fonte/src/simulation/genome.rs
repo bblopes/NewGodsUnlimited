@@ -5,8 +5,8 @@ use macroquad::prelude::*;
 use crate::{
     config::{DEFAULT_FOOD_SENSOR_RANGE, MAX_FOOD_SENSOR_RANGE, MIN_FOOD_SENSOR_RANGE},
     simulation::brain::{
-        DecodedConnection, INTERNAL_COUNT, INTERNAL_START, MOTOR_SLOT_COUNT, MOTOR_START,
-        NEURAL_NODE_COUNT, SLOT_COUNT,
+        DecodedConnection, AGE_SENSOR_SLOT, INTERNAL_COUNT, INTERNAL_START, MOTOR_SLOT_COUNT,
+        MOTOR_START, NEURAL_NODE_COUNT, SLOT_COUNT,
     },
 };
 
@@ -25,6 +25,34 @@ pub const MUTATION_DENOMINATOR: u32 = 1_024;
 /// Último slot válido antes de PF abrir três entradas externas na V19.
 const PRE_FOOD_PHEROMONE_SLOT_COUNT: usize = 53;
 const PRE_FOOD_PHEROMONE_INTERNAL_START: usize = 23;
+/// Topologia V19 (até a V4): 56 slots, internos a partir de 26.
+const PRE_AGE_SENSOR_SLOT_COUNT: usize = 56;
+/// Slot de PFx e PFy, gradientes do feromônio do fitoplâncton.
+const PF_X_SLOT: usize = 24;
+const PF_Y_SLOT: usize = 25;
+/// Slot da constante +1.
+const CONSTANT_SLOT: usize = 7;
+/// Motor Reproduzir (quinto motor).
+const REPRODUCE_MOTOR_SLOT: usize = MOTOR_START + 4;
+/// Reprodução de última hora: oito ligações Id → Reproduzir (peso +1) e
+/// viés da constante (−5,75). A entrada do motor é `8 × Id − 5,75`, que só
+/// passa de 1,386 (ativação 0,60) com Id ≥ 0,89.
+const LAST_HOUR_REPRODUCTION_PATHS: [(usize, usize, i8); 14] = [
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (AGE_SENSOR_SLOT, REPRODUCE_MOTOR_SLOT, 8),
+    (CONSTANT_SLOT, REPRODUCE_MOTOR_SLOT, -8),
+    (CONSTANT_SLOT, REPRODUCE_MOTOR_SLOT, -8),
+    (CONSTANT_SLOT, REPRODUCE_MOTOR_SLOT, -8),
+    (CONSTANT_SLOT, REPRODUCE_MOTOR_SLOT, -8),
+    (CONSTANT_SLOT, REPRODUCE_MOTOR_SLOT, -8),
+    (CONSTANT_SLOT, REPRODUCE_MOTOR_SLOT, -6),
+];
 const NEURAL_GENOME_BITS: usize = PRE_FOOD_SENSOR_RANGE_GENOME_BYTES * 8;
 const FOOD_SENSOR_ALLELE_BITS: usize = 5;
 const NEURAL_NODE_ACTIVITY_BITS: usize = NEURAL_NODE_COUNT;
@@ -127,8 +155,8 @@ impl Genome {
     /// gradientes estiverem ativos, ele escolhe X ou Y em vez de nadar na
     /// diagonal. Empates exatos ficam parados, uma decisão estável e visível.
     pub fn food_gradient_ideal() -> Self {
-        const PF_X: usize = 24;
-        const PF_Y: usize = 25;
+        const PF_X: usize = PF_X_SLOT;
+        const PF_Y: usize = PF_Y_SLOT;
         let mut genome = Self::empty_with_default_sensor();
         let x_positive = INTERNAL_START;
         let x_negative = INTERNAL_START + 1;
@@ -170,6 +198,89 @@ impl Genome {
             genome.set_neural_slot_active(slot, true);
         }
         genome.enable_directional_motor_group();
+        genome
+    }
+
+    /// Indivíduo de partida da V5. É o PF guia sem os internos: PFx e PFy
+    /// ligados direto aos motores de nado (três fibras de peso máximo por
+    /// direção) e a reprodução de última hora pelo sensor de idade. Todos os
+    /// internos ficam desligados e todos os motores ligados. Sem a inibição
+    /// cruzada do PF guia, ele nada na diagonal quando há gradiente nos dois
+    /// eixos. Filhos mutam normalmente: nada aqui é fixo na linhagem.
+    pub fn baseline() -> Self {
+        let mut genome = Self::empty_with_default_sensor();
+        for index in 0..NEURAL_NODE_ACTIVITY_BITS {
+            genome.set_bit(NEURAL_NODE_ACTIVITY_OFFSET + index, false);
+        }
+        genome.enable_all_motor_nodes();
+        let mut paths: Vec<(usize, usize, i8)> = Vec::with_capacity(26);
+        for _ in 0..3 {
+            paths.push((PF_X_SLOT, MOTOR_START + 1, 8)); // direita
+            paths.push((PF_X_SLOT, MOTOR_START, -8)); // esquerda
+            paths.push((PF_Y_SLOT, MOTOR_START + 2, 8)); // acima
+            paths.push((PF_Y_SLOT, MOTOR_START + 3, -8)); // abaixo
+        }
+        paths.extend_from_slice(&LAST_HOUR_REPRODUCTION_PATHS);
+        for (record, (source, destination, weight)) in paths.into_iter().enumerate() {
+            genome.write_record(record, source, destination, weight, true);
+        }
+        genome
+    }
+
+    /// Acrescenta a reprodução de última hora a um genoma existente, sem
+    /// mexer nas ligações que já funcionam. Usa registros sem efeito (inativos,
+    /// ilegais ou que tocam um nó desligado) e liga o motor Reproduzir.
+    /// Devolve `None` se não houver 14 registros livres.
+    pub fn with_last_hour_reproduction(&self) -> Option<Self> {
+        let mut genome = self.clone();
+        genome.set_neural_slot_active(REPRODUCE_MOTOR_SLOT, true);
+        let free: Vec<usize> = (0..CONNECTION_RECORDS)
+            .filter(|&record| {
+                let (source, destination, _, active) = genome.read_record(record);
+                !(active
+                    && is_legal_connection(source, destination)
+                    && genome.connection_uses_active_nodes(source, destination))
+            })
+            .collect();
+        if free.len() < LAST_HOUR_REPRODUCTION_PATHS.len() {
+            return None;
+        }
+        for (record, (source, destination, weight)) in
+            free.into_iter().zip(LAST_HOUR_REPRODUCTION_PATHS)
+        {
+            genome.write_record(record, source, destination, weight, true);
+        }
+        Some(genome)
+    }
+
+    /// Abre o slot 26 do sensor de idade num genoma da topologia V19
+    /// (56 slots): origens e destinos a partir de 26 andam +1. Registros que
+    /// já apontavam para fora da topologia antiga ficam desligados e com os
+    /// índices intactos, como na migração do PF. A fiação efetiva não muda e
+    /// nenhuma ligação antiga passa a ler o sensor de idade.
+    pub fn with_age_sensor_slot(&self) -> Self {
+        let mut genome = self.clone();
+        for record_index in 0..CONNECTION_RECORDS {
+            let (source, destination, weight, active) = genome.read_record(record_index);
+            if source < PRE_AGE_SENSOR_SLOT_COUNT && destination < PRE_AGE_SENSOR_SLOT_COUNT {
+                let remap = |slot: usize| {
+                    if slot >= AGE_SENSOR_SLOT {
+                        slot + 1
+                    } else {
+                        slot
+                    }
+                };
+                genome.write_record(
+                    record_index,
+                    remap(source),
+                    remap(destination),
+                    weight,
+                    active,
+                );
+            } else {
+                genome.write_record(record_index, source, destination, weight, false);
+            }
+        }
         genome
     }
 
@@ -831,11 +942,111 @@ mod tests {
         let mut old = Genome::random(&mut state);
         // V18: I0 era 23 e o motor esquerdo era 42.
         old.write_record(0, 23, 42, 8, true);
-        let migrated = Genome::from_pre_food_pheromone_bytes(*old.bytes());
+        // A leitura de uma run V18 passa pelas duas migrações: PF (+3) e
+        // sensor de idade (+1).
+        let migrated = Genome::from_pre_food_pheromone_bytes(*old.bytes()).with_age_sensor_slot();
         assert!(migrated.decode_connections().iter().any(|connection| {
             connection.source == INTERNAL_START
                 && connection.destination == MOTOR_START
                 && connection.weight == 1.0
         }));
+    }
+
+    fn baseline_brain() -> crate::simulation::brain::Brain {
+        let genome = Genome::baseline();
+        let mut brain = crate::simulation::brain::Brain::default();
+        brain.configure_network(genome.decode_connections(), genome.neural_node_activity());
+        brain
+    }
+
+    fn sensors_with(age: f32, pf_x: f32, pf_y: f32) -> crate::simulation::brain::SensorInput {
+        crate::simulation::brain::SensorInput {
+            age,
+            food_pheromone_gradient_x: pf_x,
+            food_pheromone_gradient_y: pf_y,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn baseline_has_no_active_internal_and_every_motor_active() {
+        let genome = Genome::baseline();
+        for slot in INTERNAL_START..MOTOR_START {
+            assert!(!genome.neural_slot_is_active(slot), "interno {slot} ativo");
+        }
+        for slot in MOTOR_START..SLOT_COUNT {
+            assert!(genome.neural_slot_is_active(slot), "motor {slot} inativo");
+        }
+        assert_eq!(genome.decode_connections().len(), 26);
+        assert!(genome
+            .decode_connections()
+            .iter()
+            .all(|connection| connection.source < INTERNAL_START));
+    }
+
+    #[test]
+    fn baseline_wants_to_reproduce_only_near_the_end_of_life() {
+        let mut brain = baseline_brain();
+        for age in [0.0, 0.5, 0.85, 0.88] {
+            let motors = brain.tick(sensors_with(age, 0.0, 0.0));
+            assert!(motors.reproduce < 0.60, "idade {age}: {}", motors.reproduce);
+        }
+        for age in [0.90, 0.95, 1.0] {
+            let motors = brain.tick(sensors_with(age, 0.0, 0.0));
+            assert!(motors.reproduce >= 0.60, "idade {age}: {}", motors.reproduce);
+        }
+    }
+
+    #[test]
+    fn baseline_swims_along_the_food_gradient_including_diagonals() {
+        let mut brain = baseline_brain();
+        let only_x = brain.tick(sensors_with(0.1, 0.8, 0.0));
+        assert!(only_x.right > 0.5);
+        assert_eq!(only_x.left, 0.0);
+        assert_eq!(only_x.up, 0.0);
+        assert_eq!(only_x.down, 0.0);
+        let both = brain.tick(sensors_with(0.1, -0.6, 0.6));
+        assert!(both.left > 0.5 && both.up > 0.5);
+        assert_eq!(both.right, 0.0);
+        assert_eq!(both.down, 0.0);
+    }
+
+    #[test]
+    fn last_hour_reproduction_keeps_existing_wiring() {
+        let original = Genome::food_gradient_ideal();
+        let with_urgency = original.with_last_hour_reproduction().unwrap();
+        let before = original.decode_connections();
+        let after = with_urgency.decode_connections();
+        assert_eq!(after.len(), before.len() + 14);
+        for connection in &before {
+            assert!(after.iter().any(|other| other.source == connection.source
+                && other.destination == connection.destination
+                && other.weight == connection.weight));
+        }
+        assert!(after.iter().any(|c| c.source == AGE_SENSOR_SLOT));
+    }
+
+    #[test]
+    fn age_sensor_migration_preserves_effective_wiring() {
+        // Monta um genoma no layout antigo de 56 slots: internos em 26..45,
+        // motores em 45..56.
+        let mut old = Genome::empty_with_default_sensor();
+        let paths = [(24usize, 26usize, 8i8), (26, 45, -8), (7, 49, 5), (25, 55, 3)];
+        for (record, (source, destination, weight)) in paths.into_iter().enumerate() {
+            old.write_record(record, source, destination, weight, true);
+        }
+        old.write_record(10, 60, 63, 2, true); // inválido no layout antigo
+        let migrated = old.with_age_sensor_slot();
+        let connections = migrated.decode_connections();
+        let expected = [(24usize, 27usize), (27, 46), (7, 50), (25, 56)];
+        assert_eq!(connections.len(), expected.len());
+        for (source, destination) in expected {
+            assert!(connections
+                .iter()
+                .any(|c| c.source == source && c.destination == destination));
+        }
+        assert!(connections.iter().all(|c| c.source != AGE_SENSOR_SLOT));
+        let (_, _, _, active) = migrated.read_record(10);
+        assert!(!active);
     }
 }

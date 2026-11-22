@@ -2,20 +2,23 @@ use macroquad::prelude::*;
 
 use crate::config::MAX_SWIM_SPEED;
 
-/// 26 sensores + 19 internos + 11 motores. Além de PG, P1–P3, PF informa
-/// intensidade e gradiente químico do fitoplâncton.
-pub const SLOT_COUNT: usize = 56;
-pub const EXTERNAL_SLOT_COUNT: usize = 26;
-pub const INTERNAL_START: usize = 26;
+/// 27 sensores + 19 internos + 11 motores. Além de PG, P1–P3, PF informa
+/// intensidade e gradiente químico do fitoplâncton; desde a V5.0.0 o slot 26
+/// é o sensor de idade relativa (`Id`).
+pub const SLOT_COUNT: usize = 57;
+pub const EXTERNAL_SLOT_COUNT: usize = 27;
+/// Idade relativa: idade / idade máxima da própria célula, de 0 a 1.
+pub const AGE_SENSOR_SLOT: usize = 26;
+pub const INTERNAL_START: usize = 27;
 pub const INTERNAL_COUNT: usize = 19;
 pub const TIMER_INTERNAL_START: usize = 16;
-pub const MOTOR_START: usize = 45;
+pub const MOTOR_START: usize = 46;
 pub const MOTOR_SLOT_COUNT: usize = 11;
-/// Só os 19 internos e os 11 motores são neurônios opcionais. Os 26 slots
+/// Só os 19 internos e os 11 motores são neurônios opcionais. Os 27 slots
 /// externos são sensores físicos fixos e continuam disponíveis a toda célula.
 pub const NEURAL_NODE_COUNT: usize = INTERNAL_COUNT + MOTOR_SLOT_COUNT;
 
-/// Entradas dos slots 0–25 do cérebro.
+/// Entradas dos slots 0–26 do cérebro.
 #[derive(Clone, Copy)]
 pub struct SensorInput {
     /// Visão genérica por cone: sinal positivo significa que há uma entidade
@@ -54,6 +57,10 @@ pub struct SensorInput {
     /// próprios e não entra aqui.
     pub force_x: f32,
     pub force_y: f32,
+    /// Idade relativa da célula: 0 ao nascer, perto de 1 no último tick de
+    /// vida. Sem custo, como a energia; é o aviso de que a morte por idade se
+    /// aproxima.
+    pub age: f32,
 }
 
 impl Default for SensorInput {
@@ -85,6 +92,7 @@ impl Default for SensorInput {
             food_pheromone_gradient_y: 0.0,
             force_x: 0.0,
             force_y: 0.0,
+            age: 0.0,
         }
     }
 }
@@ -118,11 +126,12 @@ impl SensorInput {
             self.food_pheromone_intensity,
             self.food_pheromone_gradient_x,
             self.food_pheromone_gradient_y,
+            self.age,
         ]
     }
 }
 
-/// Saídas dos slots 45–55. Cada uma é limitada ao intervalo [0, 1].
+/// Saídas dos slots 46–56. Cada uma é limitada ao intervalo [0, 1].
 #[derive(Clone, Copy, Default)]
 pub struct MotorOutput {
     pub left: f32,

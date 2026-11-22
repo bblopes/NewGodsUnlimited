@@ -30,7 +30,7 @@ use new_gods_unlimited::{
 };
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
-const MAX_RUN_FORMAT_VERSION: u32 = 19;
+const MAX_RUN_FORMAT_VERSION: u32 = 20;
 const MAX_VALIDATED_GENOMES: usize = 20_000;
 
 #[derive(Clone, Copy, Debug)]
@@ -594,7 +594,8 @@ fn read_world_for_run_version(reader: &mut impl Read, version: u32) -> io::Resul
         15 => World::read_checkpoint_pre_food_sensor_range(reader),
         16 => World::read_checkpoint_pre_neural_node_activity(reader),
         17 | 18 => World::read_checkpoint_pre_food_pheromone(reader),
-        19 => World::read_checkpoint(reader),
+        19 => World::read_checkpoint_pre_age_sensor(reader),
+        20 => World::read_checkpoint(reader),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "versão de checkpoint desconhecida",

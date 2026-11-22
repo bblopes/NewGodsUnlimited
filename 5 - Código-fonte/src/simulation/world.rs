@@ -439,6 +439,9 @@ enum CheckpointFormat {
     /// V18: sensores de alimento por cone e topologia de 53 slots, antes da
     /// visão genérica e dos três sensores PF.
     PreFoodPheromone,
+    /// V19 (até a V4): 56 slots, antes do sensor de idade relativa no slot
+    /// 26. Internos e motores são deslocados em +1 ao carregar.
+    PreAgeSensor,
     Current,
 }
 
@@ -1171,6 +1174,7 @@ impl World {
                 organism.sensors.food_pheromone_intensity,
                 organism.sensors.food_pheromone_gradient_x,
                 organism.sensors.food_pheromone_gradient_y,
+                organism.sensors.age,
             ] {
                 write_f32(writer, sensor)?;
             }
@@ -1184,6 +1188,12 @@ impl World {
 
     pub fn read_checkpoint(reader: &mut impl Read) -> io::Result<Self> {
         Self::read_checkpoint_with_format(reader, CheckpointFormat::Current)
+    }
+
+    /// Restaura a V19 (56 slots, até a V4) e abre o slot 26 do sensor de
+    /// idade, deslocando internos e motores em +1 sem mudar a fiação efetiva.
+    pub fn read_checkpoint_pre_age_sensor(reader: &mut impl Read) -> io::Result<Self> {
+        Self::read_checkpoint_with_format(reader, CheckpointFormat::PreAgeSensor)
     }
 
     /// Restaura a V18 e desloca internos/motores para abrir os três slots
@@ -1271,6 +1281,7 @@ impl World {
             CheckpointFormat::PreFoodSensorRange
             | CheckpointFormat::PreNeuralNodeActivity
             | CheckpointFormat::PreFoodPheromone
+            | CheckpointFormat::PreAgeSensor
             | CheckpointFormat::Current => (
                 read_u64(reader)?,
                 read_u64(reader)?,
@@ -1301,6 +1312,7 @@ impl World {
                 | CheckpointFormat::PreFoodSensorRange
                 | CheckpointFormat::PreNeuralNodeActivity
                 | CheckpointFormat::PreFoodPheromone
+                | CheckpointFormat::PreAgeSensor
                 | CheckpointFormat::Current
         ) {
             read_f32(reader)?
@@ -1315,6 +1327,7 @@ impl World {
                 | CheckpointFormat::PreFoodSensorRange
                 | CheckpointFormat::PreNeuralNodeActivity
                 | CheckpointFormat::PreFoodPheromone
+                | CheckpointFormat::PreAgeSensor
                 | CheckpointFormat::Current
         ) {
             MapDefinition::read_from(reader)?
@@ -1348,6 +1361,7 @@ impl World {
                             | CheckpointFormat::PreFoodSensorRange
                             | CheckpointFormat::PreNeuralNodeActivity
                             | CheckpointFormat::PreFoodPheromone
+                            | CheckpointFormat::PreAgeSensor
                             | CheckpointFormat::Current
                     ) {
                         1.0
@@ -1370,6 +1384,7 @@ impl World {
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::PreFoodPheromone
+                        | CheckpointFormat::PreAgeSensor
                         | CheckpointFormat::Current
                 ) {
                     1.0
@@ -1385,6 +1400,7 @@ impl World {
                     | CheckpointFormat::PreFoodSensorRange
                     | CheckpointFormat::PreNeuralNodeActivity
                     | CheckpointFormat::PreFoodPheromone
+                    | CheckpointFormat::PreAgeSensor
                     | CheckpointFormat::Current
             ) {
                 LongevityGene::from_allele(read_u16(reader)?)
@@ -1406,6 +1422,7 @@ impl World {
                     | CheckpointFormat::PreFoodSensorRange
                     | CheckpointFormat::PreNeuralNodeActivity
                     | CheckpointFormat::PreFoodPheromone
+                    | CheckpointFormat::PreAgeSensor
                     | CheckpointFormat::Current
             ) {
                 vec2(read_f32(reader)?, read_f32(reader)?)
@@ -1430,6 +1447,7 @@ impl World {
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::PreFoodPheromone
+                        | CheckpointFormat::PreAgeSensor
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1446,6 +1464,7 @@ impl World {
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::PreFoodPheromone
+                        | CheckpointFormat::PreAgeSensor
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1462,6 +1481,7 @@ impl World {
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::PreFoodPheromone
+                        | CheckpointFormat::PreAgeSensor
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1478,6 +1498,7 @@ impl World {
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::PreFoodPheromone
+                        | CheckpointFormat::PreAgeSensor
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1494,6 +1515,7 @@ impl World {
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::PreFoodPheromone
+                        | CheckpointFormat::PreAgeSensor
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1508,6 +1530,7 @@ impl World {
                         | CheckpointFormat::PreFoodSensorRange
                         | CheckpointFormat::PreNeuralNodeActivity
                         | CheckpointFormat::PreFoodPheromone
+                        | CheckpointFormat::PreAgeSensor
                         | CheckpointFormat::Current
                 ) {
                     read_f32(reader)?
@@ -1520,7 +1543,10 @@ impl World {
                 let mut bits = [0u8; crate::simulation::genome::LEGACY_V1_GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
                 Genome::from_legacy_v1_bytes(bits)
-            } else if checkpoint_format == CheckpointFormat::Current {
+            } else if matches!(
+                checkpoint_format,
+                CheckpointFormat::Current | CheckpointFormat::PreAgeSensor
+            ) {
                 let mut bits = [0u8; crate::simulation::genome::GENOME_BYTES];
                 reader.read_exact(&mut bits)?;
                 Genome::from_bytes(bits)
@@ -1549,6 +1575,13 @@ impl World {
                 } else {
                     Genome::from_pre_food_sensor_range_bytes(bits)
                 }
+            };
+            // Todo formato anterior à V5.0.0 usa a topologia de 56 slots: o
+            // sensor de idade abre o slot 26 e desloca internos e motores.
+            let genome = if checkpoint_format == CheckpointFormat::Current {
+                genome
+            } else {
+                genome.with_age_sensor_slot()
             };
             let mut internal_state = [0.0; crate::simulation::brain::INTERNAL_COUNT];
             for value in &mut internal_state {
@@ -1800,6 +1833,10 @@ impl World {
                 food_pheromone_intensity: chemical[4].intensity,
                 food_pheromone_gradient_x: chemical[4].gradient_x,
                 food_pheromone_gradient_y: chemical[4].gradient_y,
+                // Idade relativa: quanto da própria vida já passou. Barata
+                // como a energia, por isso sempre calculada.
+                age: (organism.age_ticks as f32 / organism.maximum_age_ticks().max(1) as f32)
+                    .clamp(0.0, 1.0),
             };
         }
         observer.end(TickPhase::Sensors);
@@ -2589,7 +2626,10 @@ fn read_sensors(
     reader: &mut impl Read,
     checkpoint_format: CheckpointFormat,
 ) -> io::Result<SensorInput> {
-    if checkpoint_format == CheckpointFormat::Current {
+    if matches!(
+        checkpoint_format,
+        CheckpointFormat::Current | CheckpointFormat::PreAgeSensor
+    ) {
         return Ok(SensorInput {
             vision_left: read_f32(reader)?,
             vision_right: read_f32(reader)?,
@@ -2617,6 +2657,11 @@ fn read_sensors(
             food_pheromone_intensity: read_f32(reader)?,
             food_pheromone_gradient_x: read_f32(reader)?,
             food_pheromone_gradient_y: read_f32(reader)?,
+            age: if checkpoint_format == CheckpointFormat::Current {
+                read_f32(reader)?
+            } else {
+                0.0
+            },
         });
     }
     if matches!(
@@ -2657,6 +2702,7 @@ fn read_sensors(
             food_pheromone_intensity: 0.0,
             food_pheromone_gradient_x: 0.0,
             food_pheromone_gradient_y: 0.0,
+            age: 0.0,
         });
     }
     if checkpoint_format == CheckpointFormat::V2 {

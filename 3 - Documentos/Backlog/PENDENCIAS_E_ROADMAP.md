@@ -3,6 +3,19 @@
 Levantamento de 21/11/2026 de tudo que os documentos marcam como pendente,
 conferido contra o código. Agrupado por tema, na ordem de dependência sugerida.
 
+## V5 — funções novas
+
+O plano da V5, em paralelo com a otimização da V4, está em
+[V5_FUNCOES_NOVAS.md](V5_FUNCOES_NOVAS.md), com o cronograma proposto. Ele
+inclui: Behavior Spotter, sensor de idade e indivíduo Baseline, abas Física e
+Mapa, tema claro, presets de mapa, sol contínuo com pincel, visão pela luz, biomassa,
+genealogia e linhagens, e o pacote genoma. Cada item tem a sua proposta em
+`Propostas/`.
+
+Itens desta lista que entraram na V5: luz contínua, curva luz → visão,
+genealogia real, mutação adaptativa, longevidade no
+genoma, canais químicos fora da fiação, aba Física, presets de mapa.
+
 ## Ordem sugerida
 
 1. ~~Reorganização das pastas e fluxo de versões~~ (feito em 21/11/2026)
@@ -15,7 +28,7 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
    Sugestão de 21/11/2026 a incluir: não calcular sensores que nenhuma
    ligação ativa lê (visão e químicos por célula). Exige decidir o que a
    interface mostra nesses sensores, já que hoje eles são exibidos e salvos.
-4. Publicar visão + PF na versão oficial
+4. ~~Publicar visão + PF na versão oficial~~ (está na V3.0.4, conferido em 22/11/2026)
 5. Livro-caixa de energia e marcos na Demografia
 6. Calibração de custos com campanhas
 7. Luz contínua → temperatura → correntes
@@ -31,15 +44,14 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 
 ## 1. Pronto, fora da versão oficial
 
-- **Visão genérica + quimiorrecepção PF**: está no código (commit `516e938`) e na versão `V1.1.0`, em validação. Falta validar e publicar.
+- ~~**Visão genérica + quimiorrecepção PF**~~: o commit `516e938` está na `main`, que gerou a V3.0.4 oficial. Publicado.
 
 ## 2. Ambiente: luz → temperatura → correntes
 
 - Máscara solar de intensidade contínua (hoje é 0 ou 1), interpolando reprodução e bônus de vida do fitoplâncton.
 - Curva que liga luz ao raio efetivo de visão.
 - PF com persistência, difusão, decaimento e transporte pela corrente.
-- Temperatura derivada da luz, com custo térmico para as células.
-- Temperatura afetando as correntes.
+- Temperatura, custo térmico, correntes e sol vivo: ver "Ideias guardadas".
 
 ## 3. Telemetria e análise
 
@@ -59,7 +71,7 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 ## 5. Genética
 
 - **Canais químicos sobrepostos à fiação** (achado de 21/11/2026): os 9 bits que escolhem P1/P2/P3 ficam dentro do registro de fiação #63 (bits 1207–1215). Decidir se separa numa região própria, o que exigiria migrar genomas e saves.
-- Atualizar `DOCUMENTACAO_ANALISE_GENETICA.md`, que ainda descreve o genoma antigo; o mapa atual está na V2.0.2 (Células › Código genético).
+- ~~Atualizar `DOCUMENTACAO_ANALISE_GENETICA.md`~~ (feito em 22/11/2026).
 - **Mutação adaptativa**: três coeficientes hereditários. Decisão em aberto: faixa 0,25×–3,36× ou teto 4×. Ver [proposta](../Propostas/PROPOSTA_MUTACAO_ADAPTATIVA.md).
 - Decidir se a longevidade entra no `Genome` (hoje não afeta cor, PG nem similaridade).
 
@@ -78,6 +90,20 @@ conferido contra o código. Agrupado por tema, na ordem de dependência sugerida
 - Telemetria de predação (tentativas, energia, mortes por engolfamento, distribuição de raios).
 - Sensores direcionais de outras células, se ainda fizerem sentido com a visão genérica.
 
+## Ideias guardadas (decisão de 22/11/2026: não fazer agora)
+
+- **Temperatura** (tirada da V5 em 22/11/2026, 1h44). Entra num pacote só:
+  - temperatura como **função direta da luz** do momento, sem acúmulo de
+    calor;
+  - **custo térmico** para as células, de preferência com um gene de
+    temperatura preferida por linhagem, para criar nichos;
+  - **temperatura mexendo nas correntes**;
+  - **sol vivo:** focos de luz que se movem, crescem e diminuem com o tempo.
+- **Reprodução sexuada:** estudo futuro, depois da reprodução de última hora
+  da V5.
+- **Behavior Spotter:** outros detectores, salvar o momento e replay (depende
+  do Laboratório dentro do app).
+
 ## Sem plano por enquanto
 
 Genoma de tamanho variável e criação de neurônios, obstáculos, convecção física,
@@ -85,5 +111,11 @@ evolução de potência e alcance dos receptores químicos.
 
 ## Documentos desatualizados
 
-- `Propostas/PROPOSTA_INTERACAO_CELULAR_E_COMBATE.md` diz que osmose e engolfamento são só proposta, mas fagocitose e sensores de força já existem.
-- `Documentação/DOCUMENTACAO_ANALISE_GENETICA.md` descreve o genoma antigo (32 slots, 1.088 bits).
+Corrigidos em 22/11/2026, conferidos contra o código da `main`:
+
+- ~~`Propostas/PROPOSTA_INTERACAO_CELULAR_E_COMBATE.md`~~: ganhou a seção "Como ficou no código", com fagocitose, `Fx`/`Fy` e os números reais.
+- ~~`Documentação/DOCUMENTACAO_ANALISE_GENETICA.md`~~: genoma atual (56 slots, 1.251 bits).
+- ~~`Propostas/PROPOSTA_MUTACAO_ADAPTATIVA.md`~~: tamanho atual do genoma e posição dos reguladores.
+- ~~`BACKLOG.md`, `LUZ_SOLAR_E_FITOPLANCTON.md`, `PG_E_CANAL_DE_ALIMENTO.md`~~: visão + PF constam como publicados.
+
+Regra: sempre que um documento divergir do código, ele é corrigido na mesma sessão em que a divergência for encontrada.

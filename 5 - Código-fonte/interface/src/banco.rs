@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use new_gods_unlimited::simulation::genome::{Genome, GENOME_BYTES};
 
-pub const FORMATO_DO_BANCO: u32 = 1;
+/// 1: topologia de 56 slots (até a V4). 2: 57 slots, com o sensor de idade
+/// no slot 26 (V5.0.0). O formato 1 é migrado ao abrir, com cópia de segurança.
+pub const FORMATO_DO_BANCO: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndividuoSalvo {
@@ -56,7 +58,12 @@ impl Banco {
         if let Some(caminho) = &banco.caminho {
             match fs::read_to_string(caminho) {
                 Ok(texto) => match serde_json::from_str::<DadosDoBanco>(&texto) {
-                    Ok(dados) => banco.dados = dados,
+                    Ok(dados) => {
+                        banco.dados = dados;
+                        if banco.dados.formato < 2 {
+                            banco.migrar_para_sensor_de_idade();
+                        }
+                    }
                     Err(erro) => {
                         // Nunca sobrescreve um banco que não conseguiu ler.
                         let copia = caminho.with_extension("json.ilegivel");
@@ -72,6 +79,36 @@ impl Banco {
             }
         }
         banco
+    }
+
+    /// Abre o slot 26 do sensor de idade em cada genoma salvo. Antes de
+    /// regravar, guarda o arquivo antigo como `banco_de_individuos.v1.json`.
+    /// A fiação efetiva de cada indivíduo continua exatamente a mesma.
+    fn migrar_para_sensor_de_idade(&mut self) {
+        let Some(caminho) = self.caminho.clone() else {
+            return;
+        };
+        for individuo in &mut self.dados.individuos {
+            if individuo.bytes_do_genoma != GENOME_BYTES {
+                continue;
+            }
+            if let Some(genoma) = genoma_de(individuo) {
+                let migrado = genoma.with_age_sensor_slot();
+                individuo.genoma = hex_do_genoma(&migrado);
+                individuo.cor = migrado.genetic_hex();
+            }
+        }
+        self.dados.formato = FORMATO_DO_BANCO;
+        let copia = caminho.with_extension("v1.json");
+        if let Err(erro) = fs::copy(&caminho, &copia) {
+            self.erro = Some(format!(
+                "banco migrado só nesta sessão: não foi possível guardar a cópia antiga ({erro})"
+            ));
+            return;
+        }
+        if let Err(erro) = self.gravar() {
+            self.erro = Some(format!("banco migrado só nesta sessão: {erro}"));
+        }
     }
 
     pub fn caminho_texto(&self) -> String {
@@ -119,7 +156,7 @@ impl Banco {
             geracao,
             cor: genome.genetic_hex(),
             bytes_do_genoma: GENOME_BYTES,
-            genoma: genome.bytes().iter().map(|byte| format!("{byte:02x}")).collect(),
+            genoma: hex_do_genoma(genome),
         };
         self.dados.formato = FORMATO_DO_BANCO;
         self.dados.individuos.push(individuo.clone());
@@ -153,6 +190,10 @@ impl Banco {
     pub fn buscar(&self, id: &str) -> Option<&IndividuoSalvo> {
         self.dados.individuos.iter().find(|individuo| individuo.id == id)
     }
+}
+
+fn hex_do_genoma(genome: &Genome) -> String {
+    genome.bytes().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Reconstrói o genoma salvo. Devolve `None` se o formato não for o atual

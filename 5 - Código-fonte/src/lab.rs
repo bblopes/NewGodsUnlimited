@@ -931,15 +931,21 @@ fn read_session_preset_settings(
     }
     let mut validated_genomes = Vec::with_capacity(genome_count);
     for _ in 0..genome_count {
-        if preset_version >= 2 {
+        let genome = if preset_version >= 2 {
             let mut bits = [0; GENOME_BYTES];
             reader.read_exact(&mut bits)?;
-            validated_genomes.push(Genome::from_bytes(bits));
+            Genome::from_bytes(bits)
         } else {
             let mut bits = [0; PRE_FOOD_SENSOR_RANGE_GENOME_BYTES];
             reader.read_exact(&mut bits)?;
-            validated_genomes.push(Genome::from_pre_food_sensor_range_bytes(bits));
-        }
+            Genome::from_pre_food_sensor_range_bytes(bits)
+        };
+        // Presets até a versão 3 usam a topologia de 56 slots.
+        validated_genomes.push(if preset_version < 4 {
+            genome.with_age_sensor_slot()
+        } else {
+            genome
+        });
     }
     Ok(SessionPresetSettings {
         seed,

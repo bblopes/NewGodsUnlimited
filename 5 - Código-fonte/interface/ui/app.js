@@ -46,18 +46,20 @@ const TABS = [
   { id: 'demografia', label: 'Demografia', icon: 'demo' }, { id: 'camadas', label: 'Camadas', icon: 'layers' },
 ];
 // Configurações neurais: geradores fixos + indivíduos salvos no banco (vem do motor).
+// População inicial: indivíduos embutidos (Baseline, PF guia) + os salvos no banco (vem do motor).
 let CATALOG = { version: 0, bank_path: '', bank_error: null, options: [
-  { key: 'classica', name: 'Clássica', description: 'Genomas iniciais totalmente aleatórios.', saved: false, compatible: true },
-  { key: 'motor', name: 'Motor', description: '4 caminhos diretos visão → motor; resto aleatório.', saved: false, compatible: true },
-  { key: 'pfguia', name: 'PF guia', description: 'Fundador experimental: segue PFx ou PFy dominante, sem diagonal.', saved: false, compatible: true },
+  { key: 'baseline', name: 'Baseline', description: 'Segue PFx/PFy direto nos motores, sem internos, e se divide no fim da vida.', saved: false, compatible: true },
+  { key: 'pfguia', name: 'PF guia', description: 'Escolhe um eixo de cada vez pelo PF (com internos) e se divide no fim da vida.', saved: false, compatible: true },
 ] };
+// Topologia da rede: vem do motor (INFO.topology); estes são os valores da V5.0.0.
+let TOPO = { external: 27, internal_start: 27, timer_start: 43, motor_start: 46, slot_count: 57, age_slot: 26 };
 const neuralOption = key => CATALOG.options.find(o => o.key === key) || CATALOG.options[0];
 const ENV_LABELS = { min_repro: 'Mínimo reprodução', limit: 'Limite obrigatório', mental: 'Custo mental', emission: 'Abiogênese', lifetime: 'Vida-base sem sol', phyto_rate: 'Multiplicação sob luz', food_energy: 'Energia por fito', flow_on: 'Corrente ligada', flow_intensity: 'Intensidade da corrente', flow_preset: 'Modelo de corrente', ac_on: 'Anti-cramming', ac_force: 'Força anti-cramming', ac_distance: 'Espaço anti-cramming' };
-const SLOT_NAMES = ['V<', 'V>', 'V^', 'Vv', 'Cx', 'Cy', 'En', '+1', 'Ct', 'PG', 'PGx', 'PGy', 'P1', 'P1x', 'P1y', 'P2', 'P2x', 'P2y', 'P3', 'P3x', 'P3y', 'Fx', 'Fy', 'PF', 'PFx', 'PFy',
+const SLOT_NAMES = ['V<', 'V>', 'V^', 'Vv', 'Cx', 'Cy', 'En', '+1', 'Ct', 'PG', 'PGx', 'PGy', 'P1', 'P1x', 'P1y', 'P2', 'P2x', 'P2y', 'P3', 'P3x', 'P3y', 'Fx', 'Fy', 'PF', 'PFx', 'PFy', 'Id',
   'I0', 'I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I8', 'I9', 'I10', 'I11', 'I12', 'I13', 'I14', 'I15', 'T1', 'T2', 'T3',
   '←', '→', '↑', '↓', 'Rep', 'Fag', 'EG', 'E1', 'E2', 'E3', 'Doar'];
-const SLOT_DESC = ['Visão · entidade à esquerda', 'Visão · entidade à direita', 'Visão · entidade acima', 'Visão · entidade abaixo', 'Corrente no eixo X', 'Corrente no eixo Y', 'Energia relativa', 'Sinal constante', 'Contato com outra célula', 'Intensidade de PG (assinatura genética)', 'Gradiente X de PG', 'Gradiente Y de PG', 'Intensidade de P1', 'Gradiente X de P1', 'Gradiente Y de P1', 'Intensidade de P2', 'Gradiente X de P2', 'Gradiente Y de P2', 'Intensidade de P3', 'Gradiente X de P3', 'Gradiente Y de P3', 'Força externa X', 'Força externa Y', 'Intensidade de PF (fitoplâncton)', 'Gradiente X de PF', 'Gradiente Y de PF'];
-const slotDesc = i => i < 26 ? SLOT_DESC[i] : i < 42 ? `Neurônio interno ${SLOT_NAMES[i]}` : i < 45 ? `Temporizador ${SLOT_NAMES[i]}` : ['Motor · nadar à esquerda', 'Motor · nadar à direita', 'Motor · nadar acima', 'Motor · nadar abaixo', 'Motor · reproduzir', 'Motor · fagocitar', 'Motor · reforçar PG', 'Motor · emitir P1', 'Motor · emitir P2', 'Motor · emitir P3', 'Motor · doar energia'][i - 45];
+const SLOT_DESC = ['Visão · entidade à esquerda', 'Visão · entidade à direita', 'Visão · entidade acima', 'Visão · entidade abaixo', 'Corrente no eixo X', 'Corrente no eixo Y', 'Energia relativa', 'Sinal constante', 'Contato com outra célula', 'Intensidade de PG (assinatura genética)', 'Gradiente X de PG', 'Gradiente Y de PG', 'Intensidade de P1', 'Gradiente X de P1', 'Gradiente Y de P1', 'Intensidade de P2', 'Gradiente X de P2', 'Gradiente Y de P2', 'Intensidade de P3', 'Gradiente X de P3', 'Gradiente Y de P3', 'Força externa X', 'Força externa Y', 'Intensidade de PF (fitoplâncton)', 'Gradiente X de PF', 'Gradiente Y de PF', 'Idade relativa: fração da própria vida já vivida (0 ao nascer, 1 ao morrer)'];
+const slotDesc = i => i < TOPO.external ? SLOT_DESC[i] : i < TOPO.timer_start ? `Neurônio interno ${SLOT_NAMES[i]}` : i < TOPO.motor_start ? `Temporizador ${SLOT_NAMES[i]}` : ['Motor · nadar à esquerda', 'Motor · nadar à direita', 'Motor · nadar acima', 'Motor · nadar abaixo', 'Motor · reproduzir', 'Motor · fagocitar', 'Motor · reforçar PG', 'Motor · emitir P1', 'Motor · emitir P2', 'Motor · emitir P3', 'Motor · doar energia'][i - TOPO.motor_start];
 
 let INFO = null;
 const S = {
@@ -184,7 +186,9 @@ function tabSessao() {
       <div class="field ${isDirty('init.seed') ? 'dirty' : ''}" data-row="init.seed"><div class="field-top"><label>Seed</label></div>
         <div class="row"><input class="txt mono" type="text" data-f="init.seed" value="${esc(S.init.seed)}"><button class="btn sm" data-act="newSeed">${ic('shuffle')}Nova</button></div></div>
       ${slider('init.cells', 'Células iniciais', 1, 400, 1)}
-      <div class="field"><div class="field-top"><label>Configuração neural</label><span class="unit" style="margin-left:auto">${ic('eye')} abre o indivíduo</span></div>
+      <div class="field"><div class="field-top"><label>População inicial</label><span class="unit" style="margin-left:auto">${ic('eye')} abre o indivíduo</span></div>
+        <div class="hint">As células iniciais são cópias deste indivíduo, cada uma com uma rodada de mutação.</div>
+        <div class="field-top" style="margin-top:6px"><label>Embutidos</label></div>
         <div class="choices">${CATALOG.options.filter(o => !o.saved).map(option).join('')}</div>
         <div class="field-top" style="margin-top:6px"><label>Indivíduos salvos</label><span class="unit" style="margin-left:auto">${saved.length}</span></div>
         ${saved.length ? `<div class="choices">${saved.map(option).join('')}</div>` : `<div class="hint">Abra uma célula em <b>Células › Indivíduo</b> e clique em <b>${ic('save')} Salvar</b> para ela aparecer aqui.</div>`}
@@ -193,7 +197,7 @@ function tabSessao() {
       <button class="btn ${ip ? 'warn' : ''} block" data-act="askRestart">${ic('restart')}Reiniciar com estas condições</button>
     `, `<span class="tag ${ip ? 'wa' : ''}">ao reiniciar</span>`)}
     ${section('s-insert', 'Inserir célula', `
-      <div class="hint">Cria uma célula no ponto clicado sem reiniciar a run, com a configuração neural escolhida acima: <b>${esc(neural.name)}</b>.</div>
+      <div class="hint">Cria uma célula no ponto clicado sem reiniciar a run: uma cópia exata do indivíduo escolhido acima, <b>${esc(neural.name)}</b>.</div>
       <button class="btn ${S.insert ? 'pri' : ''} block" data-act="insert">${ic(S.insert ? 'x' : 'plus')}${S.insert ? 'Cancelar inserção' : 'Inserir célula no mapa'}</button>
     `)}
     ${section('s-persist', 'Salvar e presets', `
@@ -288,19 +292,20 @@ function tabCelulas() {
   return head('Células', `${fmt(F?.population)} vivas`) + top + `<div class="side-body" style="padding-top:0">${body}</div>`;
 }
 
-// Rede neural: 26 sensores, 19 internos, 11 motores; fios e nós coloridos pelo sinal real.
+// Rede neural: 27 sensores, 19 internos, 11 motores; fios e nós coloridos pelo sinal real.
 function nnLayout() {
-  const rowH = 13, w = 300, hgt = 26 * rowH + 26, pos = [];
+  const rowH = 13, w = 300, hgt = TOPO.external * rowH + 26, pos = [];
   const col = (from, to, x) => { const n = to - from, off = 18 + (hgt - 18 - n * rowH) / 2; for (let i = 0; i < n; i++) pos[from + i] = [x, off + i * rowH + rowH / 2]; };
-  col(0, 26, 34); col(26, 45, 150); col(45, 56, 266);
+  col(0, TOPO.external, 34); col(TOPO.internal_start, TOPO.motor_start, 150); col(TOPO.motor_start, TOPO.slot_count, 266);
   return { w, hgt, pos };
 }
-// P1/P2/P3 (sensores 12–20) e E1/E2/E3 (motores 52–54) trabalham com a substância escolhida pelo genoma.
+// P1/P2/P3 (sensores 12–20) e E1/E2/E3 (8º a 10º motores) trabalham com a substância escolhida pelo genoma.
+const emitSlots = () => [TOPO.motor_start + 7, TOPO.motor_start + 8, TOPO.motor_start + 9];
 function chemOf(i, channels) {
   if (!channels) return null;
   if (i >= 12 && i <= 20) return channels[Math.floor((i - 12) / 3)];
-  if (i >= 52 && i <= 54) return channels[i - 52];
-  return null;
+  const k = emitSlots().indexOf(i);
+  return k >= 0 ? channels[k] : null;
 }
 const slotTitle = (i, channels) => { const c = chemOf(i, channels); return c == null ? SLOT_NAMES[i] : `${SLOT_NAMES[i]} (C${c})`; };
 const sigColor = v => v > 0.05 ? 'var(--ok)' : v < -0.05 ? 'var(--dg)' : 'var(--mu)';
@@ -308,14 +313,14 @@ function neuralNet(d) {
   const { w, hgt, pos } = nnLayout();
   // Sensores lidos por alguma ligação efetiva. Os demais não influenciam o
   // cérebro e, desde a V3.0.4, nem são calculados pelo motor.
-  const readSensors = new Set(d.wires.map(([a]) => a | 0).filter(a => a < 26));
+  const readSensors = new Set(d.wires.map(([a]) => a | 0).filter(a => a < TOPO.external));
   // Ligações que existem no genoma (registro ligado e válido) mas não
   // funcionam porque um dos nós está desligado.
   const inert = (d.genome_map?.records || []).filter(r => r.active && r.legal && !r.effective);
   const inertWires = inert.map(r => {
     const pa = pos[r.source], pb = pos[r.destination]; if (!pa || !pb) return '';
     const [x1, y1] = pa, [x2, y2] = pb;
-    return `<path d="M${x1} ${y1} C${(x1 + x2) / 2} ${y1} ${(x1 + x2) / 2} ${y2} ${x2} ${y2}" stroke="var(--mu2)" stroke-opacity=".45" stroke-width="0.8" stroke-dasharray="3 3" fill="none"><title>Registro #${r.index}: ${SLOT_NAMES[r.source]} → ${SLOT_NAMES[r.destination]} · existe no genoma, mas não funciona (nó desligado)</title></path>`;
+    return `<path d="M${x1} ${y1} C${(x1 + x2) / 2} ${y1} ${(x1 + x2) / 2} ${y2} ${x2} ${y2}" stroke="var(--mu2)" stroke-opacity=".45" stroke-width="0.8" stroke-dasharray="3 3" fill="none" data-tip="${esc(`Registro #${r.index}: ${SLOT_NAMES[r.source]} → ${SLOT_NAMES[r.destination]} · existe no genoma, mas não funciona (nó desligado)`)}"></path>`;
   }).join('');
   const wires = d.wires.map(([a, b, wt, sig], i) => {
     const pa = pos[a | 0], pb = pos[b | 0]; if (!pa || !pb) return '';
@@ -324,13 +329,17 @@ function neuralNet(d) {
   }).join('');
   const nodes = pos.map(([x, y], i) => {
     const inactive = !d.active[i]; const v = d.slots[i] || 0;
-    const kind = i < 26 ? 's' : i < 45 ? 'i' : 'm';
+    const kind = i < TOPO.external ? 's' : i < TOPO.motor_start ? 'i' : 'm';
     const unread = kind === 's' && !readSensors.has(i);
     const anchor = kind === 's' ? 'end' : kind === 'm' ? 'start' : 'middle'; const tx = kind === 's' ? x - 8 : kind === 'm' ? x + 8 : x;
-    const ch = chemOf(i, d.channels), label = [12, 15, 18, 52, 53, 54].includes(i) && ch != null ? `${SLOT_NAMES[i]}·C${ch}` : SLOT_NAMES[i];
+    const ch = chemOf(i, d.channels), label = [12, 15, 18, ...emitSlots()].includes(i) && ch != null ? `${SLOT_NAMES[i]}·C${ch}` : SLOT_NAMES[i];
     const chemNote = ch != null ? ` · trabalha com a substância C${ch}` : '';
-    if (unread) return `<g style="opacity:.55"><title>${slotTitle(i, d.channels)} · ${slotDesc(i)}${chemNote} · nenhuma ligação lê este sensor: não é calculado</title><circle data-nn="${i}" data-unread="1" cx="${x}" cy="${y}" r="3" fill="none" stroke="var(--mu2)" stroke-width="1" stroke-dasharray="1.5 1.5"/><text x="${tx}" y="${y + 3}" text-anchor="${anchor}" style="fill:var(--mu2)">${label}</text></g>`;
-    return `<g><title>${slotTitle(i, d.channels)} · ${slotDesc(i)}${chemNote}${inactive ? ' · inativo geneticamente' : ''} · ${v.toFixed(2)}</title><circle data-nn="${i}" cx="${x}" cy="${y}" r="${inactive ? 3 : 3 + Math.min(1, Math.abs(v)) * 2}" fill="${inactive ? 'var(--s4)' : sigColor(v)}" stroke="var(--s1)" stroke-width="1"/>${kind !== 'i' ? `<text x="${tx}" y="${y + 3}" text-anchor="${anchor}">${label}</text>` : ''}</g>`;
+    // Tooltip próprio, instantâneo, num círculo invisível maior que o nó:
+    // nome sempre; "inativo" só quando o nó está desligado.
+    const tip = `${slotTitle(i, d.channels)} · ${slotDesc(i)}${chemNote}${inactive && kind !== 's' ? ' · inativo' : ''}${unread ? ' · nenhuma ligação lê este sensor: não é calculado' : ''}`;
+    const hit = `<circle class="nn-hit" cx="${x}" cy="${y}" r="7" fill="transparent" data-tip="${esc(tip)}" data-tipslot="${i}" data-tiplive="${unread || (inactive && kind !== 's') ? 0 : 1}"/>`;
+    if (unread) return `<g style="opacity:.55"><circle data-nn="${i}" data-unread="1" cx="${x}" cy="${y}" r="3" fill="none" stroke="var(--mu2)" stroke-width="1" stroke-dasharray="1.5 1.5"/><text x="${tx}" y="${y + 3}" text-anchor="${anchor}" style="fill:var(--mu2)">${label}</text>${hit}</g>`;
+    return `<g><circle data-nn="${i}" cx="${x}" cy="${y}" r="${inactive ? 3 : 3 + Math.min(1, Math.abs(v)) * 2}" fill="${inactive ? 'var(--s4)' : sigColor(v)}" stroke="var(--s1)" stroke-width="1"/>${kind !== 'i' ? `<text x="${tx}" y="${y + 3}" text-anchor="${anchor}">${label}</text>` : ''}${hit}</g>`;
   }).join('');
   return `<svg class="nn" viewBox="0 0 ${w} ${hgt}" style="max-height:420px;width:100%">
     <text x="34" y="9" text-anchor="middle" style="fill:var(--mu2)">sensores</text><text x="150" y="9" text-anchor="middle" style="fill:var(--mu2)">internos</text><text x="266" y="9" text-anchor="middle" style="fill:var(--mu2)">motores</text>
@@ -379,7 +388,7 @@ function genetics() {
     const sub2 = `<div style="padding:10px 16px 0">${segUI('circView', [['con', 'Conexões'], ['neu', 'Neurônios']], S.circView)}</div>`;
     if (S.circView === 'neu') {
       const top = (key) => { const best = [...G.slots].sort((a, b) => b[key] - a[key])[0]; return best ? `${SLOT_NAMES[best.slot]} · ${fmt(best[key] * 100, 1)}%` : '—'; };
-      const motor = [...G.slots].filter(s => s.slot >= 45).sort((a, b) => b.as_destination - a.as_destination)[0];
+      const motor = [...G.slots].filter(s => s.slot >= TOPO.motor_start).sort((a, b) => b.as_destination - a.as_destination)[0];
       return sub + sub2 + `<div class="sec-b" style="padding-top:12px"><div class="readouts">${ro('Origem mais usada', top('as_source'), 'wide')}${ro('Destino mais recrutado', top('as_destination'), 'wide')}${ro('Motor mais alimentado', motor ? `${SLOT_NAMES[motor.slot]} · ${fmt(motor.as_destination * 100, 1)}%` : '—', 'wide')}</div><div class="hint">Participação por slot</div><div class="list">${G.slots.slice(0, 16).map(s => `<div class="li"><span class="mono" style="width:38px">${SLOT_NAMES[s.slot]}</span><div class="meta"><div class="bar"><i style="width:${s.used * 100}%"></i></div><small>uso ${fmt(s.used * 100)}% · sai ${fmt(s.as_source * 100)}% · entra ${fmt(s.as_destination * 100)}%</small></div></div>`).join('')}</div></div>`;
     }
     return sub + sub2 + `<div class="sec-b" style="padding-top:12px"><div class="hint">Pares origem → destino mais presentes</div><div class="list">${G.connections.map(c => `<div class="li"><div class="meta"><b class="mono">${SLOT_NAMES[c.source]} → ${SLOT_NAMES[c.destination]}</b><small>${fmt(c.frequency * 100, 1)}% dos cérebros · ${c.groups} grupos</small></div><span class="pill ${c.mean_weight < 0 ? 'dg' : 'ok'} mono">peso ${c.mean_weight >= 0 ? '+' : '−'}${fmt(Math.abs(c.mean_weight), 2)}</span></div>`).join('')}</div></div>`;
@@ -499,17 +508,18 @@ function renderLayer() {
 function individualDrawer() {
   const v = VIEW;
   if (!v) return `<div class="drawer" data-stop="1"><div class="drawer-h"><div style="flex:1"><h3>Indivíduo</h3><p>Carregando…</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div></div>`;
-  const d = { slots: new Array(56).fill(0), active: v.active, wires: v.wires.map(([a, b, w]) => [a, b, w, w / 4]), channels: v.genome_map?.channels, genome_map: v.genome_map };
+  const d = { slots: new Array(TOPO.slot_count).fill(0), active: v.active, wires: v.wires.map(([a, b, w]) => [a, b, w, w / 4]), channels: v.genome_map?.channels, genome_map: v.genome_map };
   const when = v.created_at ? new Date(v.created_at * 1000).toLocaleString('pt-BR') : null;
   return `<div class="drawer" data-stop="1"><div class="drawer-h"><span class="cdot" style="background:${esc(v.color)};margin-top:2px"></span><div style="flex:1"><h3>${esc(v.name)}</h3><p>${esc(v.description)}</p></div><button class="btn icon ghost" data-act="closeLayer">${ic('x')}</button></div>
     <div class="drawer-b">
       <div class="readouts">${ro('Origem', esc(v.origin), 'wide')}${v.generation != null ? ro('Geração', fmt(v.generation)) : ''}${ro('Conexões ativas', fmt(v.connections))}${when ? ro('Salvo em', when, 'wide') : ''}${ro('Cor genética', esc(v.color))}</div>
       <div class="hint">Fiação do genoma (os sinais aparecem quando a célula está viva na arena).</div>
       ${neuralNet(d)}
-      <div class="legend"><span><i style="background:var(--ok)"></i>peso positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo geneticamente</span></div>
+      <div class="hint">${v.last_hour_reproduction ? 'Tem a <b>reprodução de última hora</b>: o sensor de idade (Id) liga o motor Reproduzir perto do fim da vida.' : 'Ainda não tem a reprodução de última hora (Id → Reproduzir).'}</div>
+      <div class="legend"><span><i style="background:var(--ok)"></i>peso positivo</span><span><i style="background:var(--dg)"></i>negativo</span><span><i style="background:var(--s4)"></i>nó inativo</span><span><i style="background:none;border-top:1px dashed var(--mu2);border-radius:0;height:0;margin-top:5px"></i>ligação inerte</span><span>passe o mouse num nó para ver o nome</span></div>
       ${genomeDisclosure(v.genome, v.genome_map)}
     </div>
-    <div class="drawer-f">${v.saved ? `<button class="btn danger ghost" data-act="askDelete" style="margin-right:auto">Apagar do banco</button>` : ''}<button class="btn" data-act="closeLayer">Fechar</button><button class="btn pri" data-act="useInd" data-v="${esc(v.key)}">Usar como configuração neural</button></div></div>`;
+    <div class="drawer-f">${v.saved ? `<button class="btn danger ghost" data-act="askDelete" style="margin-right:auto">Apagar do banco</button>` : '<span class="muted" style="margin-right:auto">embutido · não pode ser apagado</span>'}${!v.last_hour_reproduction ? `<button class="btn" data-act="addUrgency" data-v="${esc(v.key)}" title="Cria uma cópia no banco com Id → Reproduzir">Adicionar reprodução de última hora</button>` : ''}<button class="btn" data-act="closeLayer">Fechar</button><button class="btn pri" data-act="useInd" data-v="${esc(v.key)}">Usar como população inicial</button></div></div>`;
 }
 function drawerContent(d) {
   if (d === 'individual') return individualDrawer();
@@ -524,7 +534,7 @@ function modalContent(m) {
   if (m === 'saveInd') {
     const d = F?.detail;
     if (!d) return shell('Salvar indivíduo', '<p>A célula selecionada não está mais viva.</p>', `<button class="btn" data-act="closeLayer">Fechar</button>`);
-    return shell('Salvar indivíduo no banco', `<p>O genoma da célula #${d.id} (geração ${fmt(d.generation)}) fica guardado no banco e aparece em <b>Sessão › Configuração neural</b>, inclusive nas próximas versões.</p>
+    return shell('Salvar indivíduo no banco', `<p>O genoma da célula #${d.id} (geração ${fmt(d.generation)}) fica guardado no banco e aparece em <b>Sessão › População inicial</b>, inclusive nas próximas versões.</p>
       <div class="field"><div class="field-top"><label>Nome</label></div><input class="txt" id="saveName" maxlength="60" value="Célula #${d.id} · gen ${d.generation}"></div>`,
       `<button class="btn ghost" data-act="closeLayer">Cancelar</button><button class="btn pri" data-act="saveInd" data-v="${d.id}">${ic('save')}Salvar</button>`);
   }
@@ -639,15 +649,16 @@ const ACT = {
   askSave() { S.modal = 'saveInd'; S.drawer = null; renderLayer(); setTimeout(() => { const i = $('#saveName'); if (i) { i.focus(); i.select(); } }, 30); },
   saveInd(v) { const name = $('#saveName')?.value || ''; S.modal = null; renderLayer(); send({ type: 'save_individual', id: +v, name }); },
   async viewInd(v) { VIEW = null; S.drawer = 'individual'; S.modal = null; renderLayer(); try { VIEW = await invoke('individual_view', { key: v }); } catch (err) { console.error(err); } if (!VIEW) { S.drawer = null; say('Não foi possível abrir este indivíduo', false); } renderLayer(); },
-  useInd(v) { S.init.neural = v; S.drawer = null; renderLayer(); renderAll(); say('Configuração escolhida; vale ao reiniciar (ou ao inserir célula)'); },
+  useInd(v) { S.init.neural = v; S.drawer = null; renderLayer(); renderAll(); say('Indivíduo escolhido; vale ao reiniciar (ou ao inserir célula)'); },
+  addUrgency(v) { S.drawer = null; renderLayer(); send({ type: 'add_last_hour_reproduction', key: v }); },
   askDelete() { S.modal = 'delInd'; S.drawer = null; renderLayer(); },
   deleteInd(v) { S.modal = null; renderLayer(); send({ type: 'delete_individual', key: v }); say('Indivíduo apagado do banco'); },
 };
 async function refreshCatalog() {
   try {
     CATALOG = await invoke('neural_catalog');
-    if (!CATALOG.options.some(o => o.key === S.init.neural)) S.init.neural = 'classica';
-    if (!CATALOG.options.some(o => o.key === S.initApplied.neural)) S.initApplied.neural = 'classica';
+    if (!CATALOG.options.some(o => o.key === S.init.neural)) S.init.neural = 'baseline';
+    if (!CATALOG.options.some(o => o.key === S.initApplied.neural)) S.initApplied.neural = 'baseline';
     if (S.tab === 'sessao') renderPanel();
   } catch (err) { console.error(err); }
 }
@@ -962,10 +973,27 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
+/* ------------------------------ Tooltip próprio ------------------------------ */
+// O tooltip nativo (<title>) demora e quase não se acerta nos nós pequenos da
+// rede. Este aparece na hora sobre qualquer elemento com data-tip.
+function tipEl() { let t = $('#tip'); if (!t) { t = document.createElement('div'); t.id = 'tip'; t.className = 'tip'; document.body.appendChild(t); } return t; }
+document.addEventListener('mousemove', e => {
+  const el = e.target?.closest?.('[data-tip]');
+  const t = tipEl();
+  if (!el) { t.style.display = 'none'; return; }
+  let text = el.dataset.tip;
+  const slot = el.dataset.tipslot;
+  if (slot != null && el.dataset.tiplive === '1' && el.closest('#nnBox') && F?.detail?.slots) text += ` · ${(+F.detail.slots[+slot] || 0).toFixed(2)}`;
+  t.textContent = text; t.style.display = 'block';
+  const x = Math.min(e.clientX + 14, window.innerWidth - t.offsetWidth - 8), y = Math.min(e.clientY + 14, window.innerHeight - t.offsetHeight - 8);
+  t.style.left = x + 'px'; t.style.top = y + 'px';
+});
+
 /* ------------------------------ Início ------------------------------ */
 async function boot() {
   if (!TAURI) { $('#boot').innerHTML = '<b>New Gods Unlimited</b><span>Esta página precisa rodar dentro do aplicativo.</span>'; return; }
   INFO = await invoke('info');
+  if (INFO.topology) TOPO = INFO.topology;
   S.env = { ...INFO.env }; S.envApplied = { ...INFO.env };
   S.init = { ...INFO.init }; S.initApplied = { ...INFO.init };
   cam.cx = INFO.world_width / 2; cam.cy = INFO.world_height / 2;

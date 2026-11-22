@@ -6,22 +6,41 @@ Responder, no estado atual da simulação, quais estruturas neurais estão se es
 
 ## O que o genoma realmente codifica
 
-Cada célula possui 64 registros de 17 bits:
+> Atualizado em 22/11/2026, conferido em `genome.rs` e `brain.rs` da V3.0.4.
+
+O genoma tem **1.251 bits** úteis (guardados em 157 bytes), em três regiões:
 
 ```text
-[origem: 5 bits] [destino: 5 bits] [peso: 6 bits] [ativo: 1 bit]
+[64 registros de fiação × 19 bits]  origem 6 | destino 6 | peso 6 | ativo 1   1.216 bits
+[alcance da visão]                  alelo hereditário                          5 bits
+[atividade neural]                  1 bit por interno e por motor             30 bits
 ```
 
-Os 32 slots neurais são fixos em toda a população. Portanto, não existe um "neurônio que aparece" em algumas células e falta em outras. O que varia é se cada slot participa de uma conexão ativa, para onde aponta e com qual peso.
+Os 9 últimos bits da região de fiação (1.207–1.215, dentro do registro #63)
+também escolhem os químicos `P1`, `P2` e `P3`. Essa sobreposição está
+registrada como pendência no plano da V5.
+
+O gene de longevidade (16 bits) é herdado, mas fica **fora** desse genoma: não
+entra na cor, no PG, na similaridade nem nos grupos abaixo.
+
+Os 56 slots neurais são fixos em toda a população. Portanto, não existe um
+"neurônio que aparece" em algumas células e falta em outras. O que varia é se
+cada slot participa de uma conexão ativa, para onde aponta, com qual peso, e
+se o bit de atividade daquele interno ou motor está ligado.
 
 | Faixa | Slots | Significado |
 |---|---:|---|
-| Sensores | 0–7 | comida em quatro direções, corrente X/Y, energia e constante |
-| Internos livres | 8–23 | dezesseis internos imediatos |
-| Temporizadores | 24–26 | memória rápida, média e lenta |
-| Motores | 27–31 | esquerda, direita, cima, baixo e reproduzir |
+| Visão | 0–3 | `V<`, `V>`, `V^`, `Vv`: entidade mais próxima em cada cone |
+| Corpo e ambiente | 4–8 | corrente `Cx`/`Cy`, energia `En`, constante `+1`, contato `Ct` |
+| Feromônios | 9–20 | `PG`, `P1`, `P2`, `P3`, cada um com intensidade e gradientes X/Y |
+| Força externa | 21–22 | `Fx`, `Fy` |
+| Alimento químico | 23–25 | `PF`, `PFx`, `PFy` |
+| Internos livres | 26–41 | `I0` a `I15` |
+| Temporizadores | 42–44 | `T1`, `T2`, `T3`: memória rápida, média e lenta |
+| Motores | 45–55 | `L`, `R`, `U`, `D`, reproduzir `Re`, fagocitar `Fa`, emitir `EPG`/`EP1`/`EP2`/`EP3`, doar `Do` |
 
-Registros ativos inválidos são ignorados pelo decodificador, como já ocorre no cérebro da simulação.
+Registros ativos inválidos são ignorados pelo decodificador, como já ocorre no
+cérebro da simulação.
 
 ## Grupos genéticos
 
@@ -29,11 +48,11 @@ Nesta etapa, **grupo genético** não é uma árvore genealógica. É um agrupam
 
 1. As células são processadas por ID, tornando o resultado reprodutível para o mesmo estado.
 2. A primeira célula de um grupo torna-se sua representante.
-3. Uma nova célula entra no grupo cuja representante é mais similar, se a similaridade for pelo menos **98,5%** — no máximo 16 bits diferentes em 1.088.
+3. Uma nova célula entra no grupo cuja representante é mais similar, se a similaridade for pelo menos **98,5%**: no máximo 18 bits diferentes em 1.251.
 4. Se não atingir o limiar, abre um novo grupo.
 5. Os grupos são ordenados por população.
 
-O limiar separa ramos que acumularam mutações, mas mantém filhos próximos da representante no mesmo grupo. É uma heurística visual e estatística; uma linhagem genealógica real exigirá `parent_id` e `root_lineage_id` em cada organismo.
+O limiar separa ramos que acumularam mutações, mas mantém filhos próximos da representante no mesmo grupo. É uma heurística visual e estatística; uma linhagem genealógica real exigirá `parent_id` e `root_lineage_id` em cada organismo (planejado na V5, ver `Backlog/V5_FUNCOES_NOVAS.md`).
 
 ## KPIs disponíveis
 
@@ -45,7 +64,7 @@ O limiar separa ramos que acumularam mutações, mas mantém filhos próximos da
 | Grupos genéticos | quantidade de grupos pelo limiar de 98,5% | fragmentação atual |
 | Grupo dominante | maior grupo / população | concentração evolutiva |
 | Similaridade do grupo dominante | média representante–membro | coesão interna |
-| Concordância do consenso | média do alelo majoritário em cada um dos 1.088 bits | convergência global; não representa uma célula real |
+| Concordância do consenso | média do alelo majoritário em cada um dos 1.251 bits | convergência global; não representa uma célula real |
 
 ### Grupos
 

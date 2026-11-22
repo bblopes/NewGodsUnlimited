@@ -79,7 +79,7 @@ genoma e topologia neural. Este item foi explicitamente adiado nesta subida.
 
 ### Visão de alimento e quimiorrecepção
 
-**Implementado na build experimental de PF (ainda fora da produção):** os quatro
+**Publicado na versão oficial V3.0.4** (conferido no código da `main` em 22/11/2026): os quatro
 sensores passam a ser **visão direcional genérica**. Cada direção produz sinal
 positivo ao detectar qualquer entidade visível, não apenas fitoplâncton. A
 iluminação local limitará o alcance dessa visão numa etapa posterior.
