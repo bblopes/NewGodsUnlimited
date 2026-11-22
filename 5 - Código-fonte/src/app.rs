@@ -58,7 +58,7 @@ const GENETIC_GROUP_SIMILARITY: f32 = 0.985;
 const ENERGY_HISTOGRAM_BUCKETS: usize = 12;
 const SESSION_CONTENT_BOTTOM: f32 = 1_460.0;
 const PRESET_MAGIC: [u8; 8] = *b"ECOPRE01";
-const PRESET_FORMAT_VERSION: u32 = 3;
+const PRESET_FORMAT_VERSION: u32 = 4;
 const MAP_PRESET_MAGIC: [u8; 8] = *b"ECOMAP01";
 const MAP_PRESET_FORMAT_VERSION: u32 = 1;
 const MAX_MAP_PRESETS: usize = 24;
@@ -1315,7 +1315,8 @@ fn mental_cost_from_display(display_value: f32) -> f32 {
 
 const RUN_MAGIC: [u8; 8] = *b"ECSRUN01";
 /// V19 adiciona visão genérica, PF/PFx/PFy e a topologia neural de 56 slots.
-const RUN_FORMAT_VERSION: u32 = 19;
+/// V20 (V5.0.0) adiciona o sensor de idade no slot 26: 57 slots.
+const RUN_FORMAT_VERSION: u32 = 20;
 /// Unidade humana do controle de custo mental. O motor continua guardando o
 /// valor físico pequeno para preservar runs e presets; na interface, 100
 /// unidades equivalem ao custo-padrão de 0,0025 por conexão/tick.
@@ -1530,6 +1531,7 @@ fn read_session_presets_from_reader(mut reader: &mut impl Read) -> io::Result<Ve
             match version {
                 1 => 15,
                 2 => 17,
+                3 => 19,
                 _ => RUN_FORMAT_VERSION,
             },
         )?;
@@ -1785,6 +1787,7 @@ fn load_run_file(path: &Path) -> io::Result<LoadedRun> {
         15 => World::read_checkpoint_pre_food_sensor_range(&mut reader)?,
         16 => World::read_checkpoint_pre_neural_node_activity(&mut reader)?,
         17 | 18 => World::read_checkpoint_pre_food_pheromone(&mut reader)?,
+        19 => World::read_checkpoint_pre_age_sensor(&mut reader)?,
         _ => World::read_checkpoint(&mut reader)?,
     };
     // O limiar vem da configuração de sessão, não precisa alterar o formato
@@ -1898,18 +1901,27 @@ fn read_engine_settings(reader: &mut impl Read, version: u32) -> io::Result<Engi
         reproduction_limit: read_f32_run(reader)?,
         initial_cells: read_u64_run(reader)? as usize,
         initial_neural_configuration,
-        validated_genomes: if version >= 19 {
-            read_validated_genomes(reader)?
-        } else if version >= 17 {
-            read_validated_genomes_pre_food_pheromone(reader)?
-        } else if version >= 16 {
-            read_validated_genomes_pre_neural_node_activity(reader)?
-        } else if version >= 10 {
-            read_validated_genomes_pre_food_sensor_range(reader)?
-        } else if version >= 9 {
-            read_validated_genomes_pre_pheromone(reader)?
-        } else {
-            Vec::new()
+        validated_genomes: {
+            let genomes = if version >= 19 {
+                read_validated_genomes(reader)?
+            } else if version >= 17 {
+                read_validated_genomes_pre_food_pheromone(reader)?
+            } else if version >= 16 {
+                read_validated_genomes_pre_neural_node_activity(reader)?
+            } else if version >= 10 {
+                read_validated_genomes_pre_food_sensor_range(reader)?
+            } else if version >= 9 {
+                read_validated_genomes_pre_pheromone(reader)?
+            } else {
+                Vec::new()
+            };
+            // Antes da V20 a topologia tinha 56 slots: abre o slot 26 do
+            // sensor de idade em cada genoma.
+            if version < 20 {
+                genomes.iter().map(Genome::with_age_sensor_slot).collect()
+            } else {
+                genomes
+            }
         },
     })
 }
@@ -6885,7 +6897,7 @@ fn signal_curve(start: Vec2, end: Vec2, key: usize, color: Color, width: f32) {
 fn slot_label(slot: usize) -> &'static str {
     [
         "V<", "V>", "V^", "Vv", "Cx", "Cy", "En", "+1", "Ct", "PG", "PGx", "PGy", "P1", "P1x",
-        "P1y", "P2", "P2x", "P2y", "P3", "P3x", "P3y", "Fx", "Fy", "PF", "PFx", "PFy", "I0", "I1",
+        "P1y", "P2", "P2x", "P2y", "P3", "P3x", "P3y", "Fx", "Fy", "PF", "PFx", "PFy", "Id", "I0", "I1",
         "I2", "I3", "I4", "I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13", "I14", "I15",
         "T1", "T2", "T3", "L", "R", "U", "D", "Re", "Fa", "EPG", "EP1", "EP2", "EP3", "Do",
     ][slot]
@@ -6919,19 +6931,20 @@ fn neuron_name(slot: usize) -> String {
         23 => "Sensor · intensidade de PF (fitoplâncton)".to_owned(),
         24 => "Sensor · gradiente X de PF".to_owned(),
         25 => "Sensor · gradiente Y de PF".to_owned(),
-        26..=41 => format!("Neurônio interno rápido I{}", slot - INTERNAL_START),
-        42..=44 => format!("Neurônio temporizador T{}", slot - 41),
-        45 => "Motor · nadar à esquerda".to_owned(),
-        46 => "Motor · nadar à direita".to_owned(),
-        47 => "Motor · nadar acima".to_owned(),
-        48 => "Motor · nadar abaixo".to_owned(),
-        49 => "Motor · reproduzir".to_owned(),
-        50 => "Motor · fagocitar".to_owned(),
-        51 => "Motor · reforçar emissão de PG".to_owned(),
-        52 => "Motor · emitir P1".to_owned(),
-        53 => "Motor · emitir P2".to_owned(),
-        54 => "Motor · emitir P3".to_owned(),
-        55 => "Motor · doar energia à célula em contato".to_owned(),
+        26 => "Sensor · idade relativa (fração da vida já vivida)".to_owned(),
+        27..=42 => format!("Neurônio interno rápido I{}", slot - INTERNAL_START),
+        43..=45 => format!("Neurônio temporizador T{}", slot - 42),
+        46 => "Motor · nadar à esquerda".to_owned(),
+        47 => "Motor · nadar à direita".to_owned(),
+        48 => "Motor · nadar acima".to_owned(),
+        49 => "Motor · nadar abaixo".to_owned(),
+        50 => "Motor · reproduzir".to_owned(),
+        51 => "Motor · fagocitar".to_owned(),
+        52 => "Motor · reforçar emissão de PG".to_owned(),
+        53 => "Motor · emitir P1".to_owned(),
+        54 => "Motor · emitir P2".to_owned(),
+        55 => "Motor · emitir P3".to_owned(),
+        56 => "Motor · doar energia à célula em contato".to_owned(),
         _ => "Neurônio desconhecido".to_owned(),
     }
 }

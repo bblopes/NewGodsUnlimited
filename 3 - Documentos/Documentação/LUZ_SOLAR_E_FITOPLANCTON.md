@@ -37,7 +37,7 @@ que então afetará metabolismo das células e, depois, as correntes.
 
 ## Visão de alimento e quimiorrecepção
 
-Estado: **implementado na build experimental de PF**. Os quatro slots antes
+Estado: **publicado na versão oficial V3.0.4**. Os quatro slots antes
 chamados de sensores de alimento agora representam **visão direcional
 genérica**: esquerda, direita, cima e baixo. Eles respondem a qualquer entidade
 visível, não somente fitoplâncton. O alcance genético continua anatômico; a

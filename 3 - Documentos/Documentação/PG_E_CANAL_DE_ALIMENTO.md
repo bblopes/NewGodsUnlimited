@@ -1,5 +1,7 @@
 # PG, visão e o feromônio ambiental de alimento
 
+Estado: **publicado na versão oficial V3.0.4** (conferido em 22/11/2026).
+
 Este documento registra a implementação a partir da versão experimental de
 visão + PF. Ele separa três conceitos que antes apareciam próximos na
 simulação, mas têm papéis biológicos diferentes:
@@ -12,7 +14,7 @@ simulação, mas têm papéis biológicos diferentes:
 ## PG: assinatura genética atual
 
 `Genome::pheromone_signature()` produz um vetor bidimensional normalizado.
-Para cada um dos 1.256 bits do `Genome`, o algoritmo soma ou subtrai uma
+Para cada um dos 1.251 bits úteis do `Genome` (guardados em 157 bytes), o algoritmo soma ou subtrai uma
 contribuição determinística em dois eixos, cada um com um sal diferente. Uma
 mutação pequena altera uma parcela pequena da soma, portanto costuma deslocar
 a assinatura pouco. A mesma família de projeções também alimenta cor e outras
@@ -34,8 +36,8 @@ apontam para maior concentração química, não exclusivamente para parentes.
 Há duas consequências importantes desta definição:
 
 - `LongevityGene` fica fora de `Genome`; logo, longevidade **não** altera PG,
-  cor nem similaridade genética atualmente. Isto continua uma decisão a rever
-  se a regra passar a ser “todo alelo entra na assinatura”.
+  cor nem similaridade genética atualmente. A V5 propõe mover a
+  longevidade para dentro do `Genome` (ver `Backlog/V5_FUNCOES_NOVAS.md`, item 4.2).
 - O campo é uma fotografia instantânea. Em cada tick ele é zerado e
   reconstruído; não há difusão persistente, advecção ou memória química.
   Como a reconstrução ocorre antes do cérebro, a emissão escolhida no tick

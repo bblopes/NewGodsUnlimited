@@ -6,7 +6,27 @@ Não haverá um ataque instantâneo que aplica dano. O motor da célula será **
 
 Uma célula só é engolida quando o núcleo dela entra suficientemente dentro da área da outra **e** existe vantagem real de tamanho. Assim, a física decide a aproximação; a rede decide insistir, fugir ou desistir.
 
-> Estado atual: o **raio dinâmico**, o custo físico maior e o **anti-cramming por raio real** já foram implementados no ecossistema. Osmose, engolfamento e os novos sensores ainda são proposta.
+> **Estado (conferido no código em 22/11/2026): implementado, com números diferentes da proposta.** A osmose entrou no código com o nome **fagocitose** (motor `Fa`), junto com o contato `Ct` e os sensores de força externa `Fx`/`Fy`. O texto abaixo é a proposta original e fica como histórico do raciocínio. O que vale hoje está na seção "Como ficou no código", logo a seguir.
+
+## Como ficou no código
+
+| Tema | Proposta | Implementado (`world.rs`) |
+|---|---|---|
+| Nome do motor | Osmose | Fagocitose (`Fa`, slot 50) |
+| Alcance da tentativa | `raio_A + raio_B + 15%` do menor raio | igual (`PHAGOCYTOSIS_INTERACTION_MARGIN = 0,15`) |
+| Vantagem mínima de raio para puxar e capturar | 1,35× | **1,10×** (`PHAGOCYTOSIS_MIN_RADIUS_RATIO`) |
+| Força de sucção | `força_base × o × vantagem` | `2,0 × o × vantagem (limitada a 0..1) × (raio_predador / 14)³`; o predador anda 20% e a presa 80% da aproximação |
+| Custo | cresce quando a presa foge | `0,04 × o × área × multiplicador` por tick com alvo em alcance. **O encarecimento pela fuga não foi implementado** |
+| Captura | contenção geométrica + `o ≥ 0,60` | só a contenção geométrica (`distância ≤ raio_predador − raio_presa`) com o motor ativo; **não há o limiar de 0,60** |
+| Energia assimilada | 75% da presa | **100%** da energia da presa, limitada ao teto de reprodução do predador; o excedente se perde |
+| Conflito entre predadores | maior razão de tamanho, depois menor id | igual |
+| Sensores de contato | `Ct` e similaridade `Sm` | `Ct`; `Sm` foi substituído por `PG` (ver feromônios) |
+| Sensores de força | `Fx`, `Fy` do tick anterior | implementados (slots 21–22) |
+| Sensores direcionais de células | quatro cones | não implementados; a **visão genérica** (`V<`, `V>`, `V^`, `Vv`) já enxerga células |
+| Topologia | 41 slots | hoje são **56 slots** (26 externos, 19 internos, 11 motores), em registros de 19 bits |
+| Telemetria | tentativas, energia, mortes, raios | só a contagem de mortes por fagocitose; o resto está pendente (ver `PENDENCIAS_E_ROADMAP.md`) |
+
+Na V5, a [proposta de biomassa](PROPOSTA_BIOMASSA.md) sugere transformar em biomassa o excedente que hoje se perde quando o predador já está no teto.
 
 ## Raio físico variável
 
@@ -217,10 +237,10 @@ Como os dois sensores de contato já elevam os slots de 32 para 34, a migração
 ## Implementação em blocos
 
 1. ✅ Tornar o raio dependente da energia e trocar o anti-cramming para `raio_A + raio_B`.
-2. ⏳ Adicionar contato e similaridade genética no contato, migrando o genoma para 34 slots; ainda sem predação.
-3. Adicionar sensores direcionais de células e força externa, ampliando de 34 para 41 slots.
-4. Adicionar o motor Osmose, força de puxar e custo contra a fuga.
-5. Adicionar regra de engolfamento, transferência parcial de energia e telemetria.
+2. ✅ Adicionar contato e similaridade genética no contato, migrando o genoma para 34 slots; ainda sem predação.
+3. ✅ Força externa (`Fx`, `Fy`). Os sensores direcionais de células ficaram de fora: a visão genérica cobre esse papel.
+4. ✅ Motor de fagocitose e força de puxar. O custo contra a fuga não foi implementado.
+5. ✅ Captura por contenção geométrica, com transferência de 100% da energia até o teto. ⏳ A telemetria de predação continua pendente.
 
 Antes de cada bloco, calibraremos parâmetros para preservar o comportamento herbívoro atual quando o motor Osmose não estiver conectado.
 

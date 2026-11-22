@@ -21,21 +21,28 @@ dezenas de genes reguladores com efeito minúsculo e muito ruído.
 
 ## Formato proposto
 
-Hoje o genoma contém 64 registros de 19 bits:
+Hoje (conferido em 22/11/2026) o genoma tem 1.251 bits úteis, guardados em
+157 bytes:
 
 ```text
-[origem: 6][destino: 6][peso: 6][ativo: 1]
+[64 × registro neural de 19 bits: origem 6 | destino 6 | peso 6 | ativo 1]  1.216 bits
+[alcance da visão: 5 bits]
+[atividade dos neurônios internos e motores: 30 bits]
 ```
 
-Proposta: adicionar um cabeçalho de 16 bits antes desses registros.
+Proposta: acrescentar um bloco regulador de 16 bits **no fim** do genoma, como
+as regiões anteriores foram acrescentadas. Colocá-lo antes dos registros
+deslocaria todos os índices e complicaria a migração.
 
 ```text
 [mutação topologia: 4][mutação peso: 4][mutação ativação: 4][reserva: 4]
-[64 × registro neural de 19 bits]
 ```
 
-O genoma passa de 1.216 bits (152 bytes) para 1.232 bits (154 bytes). Os quatro
-bits reservados ficam intactos por enquanto: servem para futuras regras sem
+Sozinha, esta proposta leva o genoma de 1.251 para 1.267 bits. No plano da V5
+ela vem num pacote com a longevidade dentro do genoma e os canais químicos em
+região própria, chegando a 1.292 bits (162 bytes); ver
+[V5_FUNCOES_NOVAS.md](../Backlog/V5_FUNCOES_NOVAS.md). Os quatro bits
+reservados ficam intactos por enquanto: servem para futuras regras sem
 precisar alterar o formato outra vez.
 
 ## Leitura dos coeficientes
@@ -115,28 +122,27 @@ O leitor de sessões já diferencia versões de genoma. A implementação dever�
 3. escrever o novo cabeçalho apenas em novos salvamentos;
 4. manter a reexecução determinística de sessões antigas.
 
-## Estado atual do projeto — lembrete
+## Estado atual do projeto — lembrete (conferido em 22/11/2026)
 
-**Implementado e publicado no executável principal:**
+**Implementado no executável oficial (V3.0.4):**
 
-- mundo 2D, fluxo ambiental e fitoplâncton;
-- cérebro hereditário com 64 registros de conexão e 34 slots neurais;
-- sensores de comida por cones direcionais, corrente, energia, contato e
-  similaridade genética no contato;
+- mundo 2D, corrente ambiental, luz solar binária e fitoplâncton;
+- cérebro hereditário com 64 registros de conexão de 19 bits e **56 slots**
+  (26 externos, 19 internos, 11 motores);
+- visão genérica em quatro cones, corrente, energia, contato, feromônios
+  (PG, P1–P3), força externa e quimiorrecepção de alimento (PF);
+- fagocitose, doação de energia e emissão de feromônios como motores;
 - reprodução por decisão neural entre mínimo e limite, com divisão forçada no
   limite;
-- raio físico sem teto: `14` em energia zero, `28` em 2.000 de energia e
-  crescimento pela raiz quadrada da área após esse ponto;
-- custo corporal baseado na área, comprimido de `1,00×` para no máximo `1,40×`;
-- anti-cramming baseado no raio real;
-- cor genética contínua e similaridade de Hamming;
+- raio físico pela energia, custo corporal pela área e anti-cramming pelo raio
+  real;
+- cor genética, assinatura PG e similaridade de Hamming sobre os 1.251 bits;
 - salvar/restaurar sessões e telemetria do ecossistema.
 
-**Documentado, mas ainda não implementado no ecossistema principal:**
+**Ainda não implementado:**
 
-- osmose, engolfamento e sensores de força;
-- mutação adaptativa descrita neste documento;
-- leitura desses salvamentos pelo laboratório para campanhas derivadas.
+- a mutação adaptativa descrita neste documento (planejada para a V5);
+- leitura dos salvamentos pelo laboratório para campanhas derivadas.
 
 ## Próxima decisão antes de programar
 

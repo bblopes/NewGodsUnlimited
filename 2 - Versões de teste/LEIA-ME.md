@@ -10,6 +10,7 @@ grande mudança dela:
 | `V2 - Revamp da interface/` | V2.x | **revamp da interface de usuário**: interface nova (Tauri) sobre o mesmo motor |
 | `V3 - Otimização/` | V3.x | **otimização**: motor mais rápido, com o mesmo resultado de simulação |
 | `V4 - Paralelismo/` | V4.x | **paralelismo**: partes pesadas do tick divididas entre os núcleos, com o mesmo resultado |
+| `V5 - Funções novas/` | V5.x | **funções novas**: mecânicas novas da simulação e da interface, em paralelo à V4 |
 
 ```text
 2 - Versões de teste/
@@ -38,6 +39,7 @@ e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão p
 
 | Arquivo | O que validar | Data |
 | --- | --- | --- |
+| `V5 - Funções novas/V5.0.0/` | Sensor de idade e indivíduo Baseline (reprodução de última hora); fim das configurações neurais; nome dos nós ao passar o mouse | 22/11/2026 |
 | `V4 - Paralelismo/V4.0.1/` | Threads que ficam acordadas entre as etapas: todos os núcleos passam a render (1,09–1,16× sobre 1 thread); escolher Auto na Sessão | 22/11/2026 |
 | `V4 - Paralelismo/V4.0.0/` | PF (feromônio do alimento) em paralelo por faixas e uma passada a menos no fitoplâncton; comparar 1 thread × todos os núcleos | 22/11/2026 |
 | `V3 - Otimização/V3.0.4/` | Sensores não lidos deixam de ser calculados; rede neural mostra sensores não lidos e ligações inertes | 21/11/2026 |

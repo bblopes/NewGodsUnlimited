@@ -28,6 +28,7 @@ título das Releases do GitHub:
 | V2 | **Revamp da interface** | interface de usuário refeita (Tauri), mesmo motor de simulação |
 | V3 | **Otimização** | motor mais rápido com o mesmo resultado; ver `Relatórios/AVALIACAO_DE_DESEMPENHO.md` |
 | V4 | **Paralelismo** | continuação da otimização: usar os núcleos do processador nas partes pesadas do tick, com o mesmo resultado |
+| V5 | **Funções novas** | mecânicas novas em paralelo à V4: sensor de idade e Baseline, Behavior Spotter, sol contínuo, biomassa, linhagens; cada entrega tem o seu título próprio |
 
 Uma nova versão maior (V3…) ganha o título da mudança grande que ela traz.
 

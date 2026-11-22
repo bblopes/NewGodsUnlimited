@@ -19,13 +19,16 @@ use serde::{Deserialize, Serialize};
 use new_gods_unlimited::config::{WORLD_HEIGHT, WORLD_WIDTH};
 use new_gods_unlimited::environment::flow::{FlowField, FlowPreset};
 use new_gods_unlimited::environment::map::{MapDefinition, MAP_GRID_HEIGHT, MAP_GRID_WIDTH};
-use new_gods_unlimited::simulation::brain::{INTERNAL_START, MOTOR_START, SLOT_COUNT};
+use new_gods_unlimited::simulation::brain::{
+    AGE_SENSOR_SLOT, EXTERNAL_SLOT_COUNT, INTERNAL_START, MOTOR_START, SLOT_COUNT,
+    TIMER_INTERNAL_START,
+};
 use new_gods_unlimited::simulation::genome::{
     Genome, BITS_PER_RECORD, CONNECTION_RECORDS, GENOME_BIT_COUNT, GENOME_BYTES,
 };
 use new_gods_unlimited::simulation::pheromone::{PheromoneDisplay, FIELD_HEIGHT, FIELD_WIDTH};
 use new_gods_unlimited::simulation::world::{
-    AntiCrammingConfig, InitialNeuralConfiguration, World, CELL_RADIUS,
+    AntiCrammingConfig, World, CELL_RADIUS,
     DEFAULT_MENTAL_ENERGY_COST, DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK, FOOD_ENERGY,
     MAX_ENERGY, MAX_EXCLUSION_DISTANCE, MAX_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
     MIN_EXCLUSION_DISTANCE,
@@ -163,7 +166,7 @@ impl Default for InitSettings {
         Self {
             seed: DEFAULT_SEED.to_string(),
             cells: 20,
-            neural: "classica".to_owned(),
+            neural: BASELINE_KEY.to_owned(),
             amadeus: false,
         }
     }
@@ -183,14 +186,33 @@ pub fn flow_preset_from(name: &str) -> FlowPreset {
     }
 }
 
-fn neural_from(name: &str) -> InitialNeuralConfiguration {
-    match name {
-        "motor" => InitialNeuralConfiguration::MotorMinimum,
-        "val1" => InitialNeuralConfiguration::ValidatedV1,
-        "val2" => InitialNeuralConfiguration::ValidatedV2,
-        "pfguia" => InitialNeuralConfiguration::FoodGradient,
-        _ => InitialNeuralConfiguration::Classic,
+/// Indivíduos embutidos: gerados pelo código, sempre presentes no banco e
+/// impossíveis de apagar. O Baseline é o padrão de toda run nova.
+const BASELINE_KEY: &str = "baseline";
+const PF_GUIDE_KEY: &str = "pfguia";
+
+fn builtin_genome(key: &str) -> Option<Genome> {
+    match key {
+        BASELINE_KEY => Some(Genome::baseline()),
+        PF_GUIDE_KEY => {
+            let guide = Genome::food_gradient_ideal();
+            Some(guide.with_last_hour_reproduction().unwrap_or(guide))
+        }
+        _ => None,
     }
+}
+
+/// Genoma de um indivíduo do banco (embutido ou salvo).
+fn founder_genome(key: &str, shared: &Shared) -> Option<Genome> {
+    builtin_genome(key).or_else(|| saved_genome(key, shared))
+}
+
+/// A célula lê o sensor de idade em alguma ligação que chega ao motor
+/// Reproduzir: tem a reprodução de última hora.
+fn has_last_hour_reproduction(genome: &Genome) -> bool {
+    genome.decode_connections().iter().any(|connection| {
+        connection.source == AGE_SENSOR_SLOT && connection.destination == MOTOR_START + 4
+    })
 }
 
 fn chem_display_from(name: &str) -> Option<PheromoneDisplay> {
@@ -232,6 +254,8 @@ pub enum UiCommand {
     /// Threads de cálculo do motor; 0 = todos os núcleos.
     Threads { count: u64 },
     DeleteIndividual { key: String },
+    /// Cria no banco uma cópia do indivíduo com a reprodução de última hora.
+    AddLastHourReproduction { key: String },
 }
 
 enum Command {
@@ -483,6 +507,8 @@ pub struct IndividualView {
     pub genome: String,
     pub genome_map: GenomeMap,
     pub saved: bool,
+    /// Já tem a reprodução de última hora (Id → Reproduzir).
+    pub last_hour_reproduction: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -497,6 +523,18 @@ pub struct EngineInfo {
     pub env: EnvSettings,
     pub init: InitSettings,
     pub version: String,
+    /// Topologia da rede, para a interface não depender de números fixos.
+    pub topology: Topology,
+}
+
+#[derive(Clone, Serialize)]
+pub struct Topology {
+    pub external: usize,
+    pub internal_start: usize,
+    pub timer_start: usize,
+    pub motor_start: usize,
+    pub slot_count: usize,
+    pub age_slot: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -662,27 +700,20 @@ impl Engine {
     pub fn neural_catalog(&self) -> NeuralCatalog {
         let mut options = vec![
             NeuralOption {
-                key: "classica".to_owned(),
-                name: "Clássica".to_owned(),
-                description: "Genomas iniciais totalmente aleatórios.".to_owned(),
-                color: None,
-                saved: false,
-                compatible: true,
-            },
-            NeuralOption {
-                key: "motor".to_owned(),
-                name: "Motor".to_owned(),
-                description: "4 caminhos diretos visão → motor; resto aleatório.".to_owned(),
-                color: None,
-                saved: false,
-                compatible: true,
-            },
-            NeuralOption {
-                key: "pfguia".to_owned(),
-                name: "PF guia".to_owned(),
-                description: "Fundador experimental: segue PFx ou PFy dominante, sem diagonal."
+                key: BASELINE_KEY.to_owned(),
+                name: "Baseline".to_owned(),
+                description: "Segue PFx/PFy direto nos motores, sem internos, e se divide no fim da vida."
                     .to_owned(),
-                color: None,
+                color: Some(Genome::baseline().genetic_hex()),
+                saved: false,
+                compatible: true,
+            },
+            NeuralOption {
+                key: PF_GUIDE_KEY.to_owned(),
+                name: "PF guia".to_owned(),
+                description: "Escolhe um eixo de cada vez pelo PF (com internos) e se divide no fim da vida."
+                    .to_owned(),
+                color: builtin_genome(PF_GUIDE_KEY).map(|genome| genome.genetic_hex()),
                 saved: false,
                 compatible: true,
             },
@@ -717,31 +748,21 @@ impl Engine {
     }
 
     pub fn individual_view(&self, key: &str) -> Option<IndividualView> {
-        let mut random_state = 0x5EED_1234_ABCD_0001u64;
         let (genome, name, description, origin, generation, created_at, saved) = match key {
-            "classica" => (
-                Genome::random(&mut random_state),
-                "Clássica".to_owned(),
-                "Exemplo de fundador: cada célula nasce com um genoma aleatório diferente.".to_owned(),
-                "gerador fixo".to_owned(),
+            BASELINE_KEY => (
+                Genome::baseline(),
+                "Baseline".to_owned(),
+                "Indivíduo embutido da V5: PFx/PFy direto nos motores de nado, internos desligados, todos os motores ligados e reprodução de última hora pelo sensor de idade (Id ≥ 0,89).".to_owned(),
+                "embutido".to_owned(),
                 None,
                 None,
                 false,
             ),
-            "motor" => (
-                Genome::random_with_motor_minimum(&mut random_state),
-                "Motor".to_owned(),
-                "Exemplo de fundador: 4 caminhos visão → motor garantidos, o resto aleatório.".to_owned(),
-                "gerador fixo".to_owned(),
-                None,
-                None,
-                false,
-            ),
-            "pfguia" => (
-                Genome::food_gradient_ideal(),
+            PF_GUIDE_KEY => (
+                builtin_genome(PF_GUIDE_KEY)?,
                 "PF guia".to_owned(),
-                "Fundador fixo: todas as células começam com este mesmo genoma.".to_owned(),
-                "gerador fixo".to_owned(),
+                "Indivíduo embutido: o PF guia original (escolhe X ou Y pelos internos) com a reprodução de última hora.".to_owned(),
+                "embutido".to_owned(),
                 None,
                 None,
                 false,
@@ -789,6 +810,7 @@ impl Engine {
             genome: genome.binary_string(),
             genome_map: genome_map(&genome, None),
             saved,
+            last_hour_reproduction: has_last_hour_reproduction(&genome),
         })
     }
 
@@ -804,6 +826,14 @@ impl Engine {
             env: EnvSettings::default(),
             init: InitSettings::default(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            topology: Topology {
+                external: EXTERNAL_SLOT_COUNT,
+                internal_start: INTERNAL_START,
+                timer_start: INTERNAL_START + TIMER_INTERNAL_START,
+                motor_start: MOTOR_START,
+                slot_count: SLOT_COUNT,
+                age_slot: AGE_SENSOR_SLOT,
+            },
         }
     }
 }
@@ -845,29 +875,22 @@ fn make_world(
     init: &InitSettings,
     env: &EnvSettings,
     map: &MapDefinition,
-    founder: Option<&Genome>,
+    founder: &Genome,
 ) -> World {
     let seed = init.seed();
-    let configuration = neural_from(&init.neural);
-    let mut world = if let Some(genome) = founder {
-        let cells = if init.amadeus { 1 } else { init.cells };
-        let mut world = World::new_with_founder_genomes(
-            seed,
-            cells,
-            map.clone(),
-            std::slice::from_ref(genome),
-        );
-        if init.amadeus {
-            if let Some(organism) = world.organisms.first_mut() {
-                organism.position = Vec2::new(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5);
-            }
+    // Cada fundador nasce com uma rodada de mutação normal, como se fosse
+    // filho do indivíduo escolhido: a run não começa com clones perfeitos.
+    let cells = if init.amadeus { 1 } else { init.cells.max(1) };
+    let mut random_state = seed ^ 0xF0DE_5EED_A11C_E5u64;
+    let founders: Vec<Genome> = (0..cells)
+        .map(|_| Genome::mutated_from(founder, &mut random_state))
+        .collect();
+    let mut world = World::new_with_founder_genomes(seed, cells, map.clone(), &founders);
+    if init.amadeus {
+        if let Some(organism) = world.organisms.first_mut() {
+            organism.position = Vec2::new(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5);
         }
-        world
-    } else if init.amadeus {
-        World::new_amadeus_with_initial_population(seed, map.clone(), configuration, &[])
-    } else {
-        World::new_with_initial_population(seed, init.cells, map.clone(), configuration, &[])
-    };
+    }
     world.set_phytoplankton_reproduction_rate(env.phyto_rate);
     world.set_anti_cramming(env.anti_cramming());
     world.reproduction_minimum = env.min_repro;
@@ -980,17 +1003,15 @@ impl WorkerState {
                 self.init = init;
                 self.env = env.sanitized();
                 self.applied_map = self.edited_map.clone();
-                let founder = if self.init.neural.starts_with("ind:") {
-                    let genome = saved_genome(&self.init.neural, shared);
-                    if genome.is_none() {
-                        self.say("Indivíduo não encontrado no banco; usando a Clássica", false);
-                        self.init.neural = "classica".to_owned();
+                let founder = match founder_genome(&self.init.neural, shared) {
+                    Some(genome) => genome,
+                    None => {
+                        self.say("Indivíduo não encontrado no banco; usando o Baseline", false);
+                        self.init.neural = BASELINE_KEY.to_owned();
+                        Genome::baseline()
                     }
-                    genome
-                } else {
-                    None
                 };
-                self.world = make_world(&self.init, &self.env, &self.applied_map, founder.as_ref());
+                self.world = make_world(&self.init, &self.env, &self.applied_map, &founder);
                 self.flow = self.env.flow_field(self.init.seed());
                 self.run_id = self.init.seed() ^ shared.started.elapsed().as_nanos() as u64;
                 self.selected = None;
@@ -1000,29 +1021,16 @@ impl WorkerState {
                 if let Ok(mut genetics) = shared.genetics.lock() {
                     *genetics = None;
                 }
-                if founder.is_some() || !self.init.neural.starts_with("ind:") {
-                    self.say("Nova run iniciada", true);
-                }
+                self.say("Nova run iniciada", true);
             }
             UiCommand::Insert { x, y, neural } => {
-                let configuration = neural_from(&neural);
-                let saved = if neural.starts_with("ind:") {
-                    saved_genome(&neural, shared)
-                } else {
-                    None
-                };
-                if neural.starts_with("ind:") && saved.is_none() {
+                let Some(genome) = founder_genome(&neural, shared) else {
                     self.say("Indivíduo não encontrado no banco", false);
                     return;
-                }
-                let inserted = match saved {
-                    Some(genome) => self
-                        .world
-                        .insert_organism_with_genome_at(Vec2::new(x, y), genome),
-                    None => self
-                        .world
-                        .insert_organism_at(Vec2::new(x, y), configuration, &[]),
                 };
+                let inserted = self
+                    .world
+                    .insert_organism_with_genome_at(Vec2::new(x, y), genome);
                 if inserted {
                     self.selected = self.world.organisms.last().map(|organism| organism.id);
                     self.say("Célula inserida", true);
@@ -1110,7 +1118,7 @@ impl WorkerState {
                     Ok(_) => {
                         shared.bank_version.fetch_add(1, Ordering::Relaxed);
                         self.say(
-                            format!("“{name}” salvo; já aparece em Sessão › Configuração neural"),
+                            format!("“{name}” salvo; já aparece em Sessão › População inicial"),
                             true,
                         );
                     }
@@ -1140,6 +1148,49 @@ impl WorkerState {
                         );
                     }
                     Err(error) => self.say(format!("Não foi possível trocar as threads: {error}"), false),
+                }
+            }
+            UiCommand::AddLastHourReproduction { key } => {
+                let Some(genome) = founder_genome(&key, shared) else {
+                    self.say("Indivíduo não encontrado no banco", false);
+                    return;
+                };
+                if has_last_hour_reproduction(&genome) {
+                    self.say("Este indivíduo já tem a reprodução de última hora", false);
+                    return;
+                }
+                let Some(with_urgency) = genome.with_last_hour_reproduction() else {
+                    self.say(
+                        "Não há 14 ligações livres no genoma para a reprodução de última hora",
+                        false,
+                    );
+                    return;
+                };
+                let (name, generation) = match shared.banco.lock() {
+                    Ok(banco) => key
+                        .strip_prefix("ind:")
+                        .and_then(|id| banco.buscar(id))
+                        .map(|individuo| (individuo.nome.clone(), individuo.geracao))
+                        .unwrap_or_else(|| (key.clone(), 0)),
+                    Err(_) => (key.clone(), 0),
+                };
+                let new_name: String = format!("{name} + idade").chars().take(60).collect();
+                let origin = format!("cópia de “{name}” com reprodução de última hora");
+                let result = match shared.banco.lock() {
+                    Ok(mut banco) => {
+                        banco.adicionar(new_name.clone(), origin, generation, &with_urgency)
+                    }
+                    Err(_) => Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "banco indisponível",
+                    )),
+                };
+                match result {
+                    Ok(_) => {
+                        shared.bank_version.fetch_add(1, Ordering::Relaxed);
+                        self.say(format!("“{new_name}” criado no banco"), true);
+                    }
+                    Err(erro) => self.say(format!("Não foi possível salvar: {erro}"), false),
                 }
             }
             UiCommand::DeleteIndividual { .. } | UiCommand::WantGenetics => {}
@@ -1242,7 +1293,7 @@ fn worker(
     commands: mpsc::Receiver<Command>,
     shared: Arc<Shared>,
 ) {
-    let world = make_world(&init, &env, &map, None);
+    let world = make_world(&init, &env, &map, &Genome::baseline());
     let flow = env.flow_field(init.seed());
     let mut state = WorkerState {
         run_id: init.seed(),
@@ -1462,7 +1513,7 @@ fn cell_detail(world: &World, id: u64) -> Option<CellDetail> {
 
 const SLOT_LABELS: [&str; SLOT_COUNT] = [
     "V<", "V>", "V^", "Vv", "Cx", "Cy", "En", "+1", "Ct", "PG", "PGx", "PGy", "P1", "P1x", "P1y",
-    "P2", "P2x", "P2y", "P3", "P3x", "P3y", "Fx", "Fy", "PF", "PFx", "PFy", "I0", "I1", "I2", "I3",
+    "P2", "P2x", "P2y", "P3", "P3x", "P3y", "Fx", "Fy", "PF", "PFx", "PFy", "Id", "I0", "I1", "I2", "I3",
     "I4", "I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13", "I14", "I15", "T1", "T2", "T3",
     "←", "→", "↑", "↓", "Rep", "Fag", "EG", "E1", "E2", "E3", "Doar",
 ];
