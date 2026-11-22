@@ -2063,6 +2063,8 @@ fn write_flow_preset(writer: &mut impl Write, preset: FlowPreset) -> io::Result<
             FlowPreset::Oasis => 0,
             FlowPreset::Classic => 1,
             FlowPreset::Left => 2,
+            FlowPreset::Whirlpool => 3,
+            FlowPreset::Circular => 4,
         },
     )
 }
@@ -2117,6 +2119,8 @@ fn read_flow_preset(reader: &mut impl Read) -> io::Result<FlowPreset> {
         0 => Ok(FlowPreset::Classic),
         1 => Ok(FlowPreset::Classic),
         2 => Ok(FlowPreset::Left),
+        3 => Ok(FlowPreset::Whirlpool),
+        4 => Ok(FlowPreset::Circular),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "corrente inválida",
@@ -5305,6 +5309,8 @@ fn draw_flow_preset_modal(session: &mut SessionUi) -> bool {
         let label = match preset {
             FlowPreset::Classic => "Clássico · recirculante com giros locais",
             FlowPreset::Left => "Esquerda · vento contínuo para a esquerda",
+            FlowPreset::Whirlpool => "Redemoinho",
+            FlowPreset::Circular => "Circular",
             // Mantido apenas para compatibilidade de arquivos antigos; não é
             // apresentado nem selecionável na interface atual.
             FlowPreset::Oasis => "Clássico",

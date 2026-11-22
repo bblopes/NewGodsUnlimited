@@ -1015,6 +1015,8 @@ fn flow_preset_from_wire(value: u32) -> io::Result<FlowPreset> {
         0 => Ok(FlowPreset::Oasis),
         1 => Ok(FlowPreset::Classic),
         2 => Ok(FlowPreset::Left),
+        3 => Ok(FlowPreset::Whirlpool),
+        4 => Ok(FlowPreset::Circular),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "corrente inválida",
@@ -1317,6 +1319,8 @@ fn flow_preset_to_wire(preset: FlowPreset) -> u32 {
         FlowPreset::Oasis => 0,
         FlowPreset::Classic => 1,
         FlowPreset::Left => 2,
+        FlowPreset::Whirlpool => 3,
+        FlowPreset::Circular => 4,
     }
 }
 

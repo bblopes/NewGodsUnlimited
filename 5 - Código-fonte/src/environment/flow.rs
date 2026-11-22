@@ -10,6 +10,10 @@ pub enum FlowPreset {
     Oasis,
     Classic,
     Left,
+    /// Redemoinho (V5.1.2): espiral que abre do centro e vira anel na borda.
+    Whirlpool,
+    /// Circular (V5.1.2): anéis concêntricos girando em torno do centro.
+    Circular,
 }
 
 impl FlowPreset {
@@ -18,6 +22,8 @@ impl FlowPreset {
             Self::Oasis => "Oásis",
             Self::Classic => "Clássico",
             Self::Left => "Esquerda",
+            Self::Whirlpool => "Redemoinho",
+            Self::Circular => "Circular",
         }
     }
 }
@@ -69,6 +75,8 @@ impl FlowField {
             FlowPreset::Oasis => self.oasis_flow(position, map),
             FlowPreset::Classic => self.classic_flow(position),
             FlowPreset::Left => vec2(-4.5, 0.0),
+            FlowPreset::Whirlpool => whirlpool_flow(position),
+            FlowPreset::Circular => circular_flow(position),
         };
 
         flow *= self.intensity;
@@ -120,6 +128,48 @@ impl FlowField {
     }
 }
 
+/// Posição em coordenadas da elipse que cabe no mundo: (u, v) vão de −1 a 1
+/// nas bordas do meio de cada lado; `r` é 1 na elipse inscrita.
+fn ellipse_coordinates(position: Vec2) -> (f32, f32, f32) {
+    let a = WORLD_WIDTH * 0.5;
+    let b = WORLD_HEIGHT * 0.5;
+    let u = (position.x - a) / a;
+    let v = (position.y - b) / b;
+    (u, v, (u * u + v * v).sqrt())
+}
+
+/// Direção tangente à elipse que passa pelo ponto, no sentido anti-horário da
+/// tela (no alto vai para a esquerda, à esquerda desce). Vetor unitário.
+fn ellipse_tangent(u: f32, v: f32) -> Vec2 {
+    let a = WORLD_WIDTH * 0.5;
+    let b = WORLD_HEIGHT * 0.5;
+    vec2(a * v, -b * u).normalize_or_zero()
+}
+
+/// Circular: anéis concêntricos, todos no mesmo sentido. Parado no eixo,
+/// acelera até ~30% do raio e mantém a velocidade até os cantos.
+fn circular_flow(position: Vec2) -> Vec2 {
+    let (u, v, r) = ellipse_coordinates(position);
+    ellipse_tangent(u, v) * 4.0 * smoothstep(0.0, 0.3, r)
+}
+
+/// Redemoinho: gira no sentido horário da tela e empurra para fora perto do
+/// centro, desenhando braços em espiral que se abrem. Perto de 85% do raio o
+/// empurro troca de sinal, então a água que chega à borda fica presa num anel
+/// circular em vez de se amontoar nas paredes.
+fn whirlpool_flow(position: Vec2) -> Vec2 {
+    let (u, v, r) = ellipse_coordinates(position);
+    if r == 0.0 {
+        return Vec2::ZERO;
+    }
+    const RIM: f32 = 0.85;
+    let tangent = -ellipse_tangent(u, v) * 3.6 * smoothstep(0.0, 0.25, r);
+    let outward = vec2(u / WORLD_WIDTH, v / WORLD_HEIGHT).normalize_or_zero();
+    // Máximo em r = RIM/2; negativo além da borda, com teto no retorno.
+    let push = (2.4 * r * (RIM - r) / (RIM * RIM * 0.25)).max(-1.6);
+    tangent + outward * push
+}
+
 fn smoothstep(edge_start: f32, edge_end: f32, value: f32) -> f32 {
     let t = ((value - edge_start) / (edge_end - edge_start)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -146,6 +196,36 @@ fn eddy(position: Vec2, center: Vec2, radius: f32, strength: f32) -> Vec2 {
 mod tests {
     use super::*;
     use crate::config::{WORLD_HEIGHT, WORLD_WIDTH};
+
+    #[test]
+    fn whirlpool_opens_out_and_holds_a_rim() {
+        let field = FlowField::new(1).with_preset(FlowPreset::Whirlpool);
+        let center = vec2(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5);
+        // Perto do centro: sai para fora.
+        let near = center + vec2(WORLD_WIDTH * 0.15, 0.0);
+        assert!(field.sample_with_map(near, None).x > 0.0);
+        // Depois da borda: volta para dentro e gira.
+        let out = center + vec2(WORLD_WIDTH * 0.48, 0.0);
+        let flow = field.sample_with_map(out, None);
+        assert!(flow.x < 0.0);
+        assert!(flow.y.abs() > 0.5);
+        assert_eq!(field.sample_with_map(center, None), Vec2::ZERO);
+    }
+
+    #[test]
+    fn circular_is_tangent_everywhere() {
+        let field = FlowField::new(1).with_preset(FlowPreset::Circular);
+        let center = vec2(WORLD_WIDTH * 0.5, WORLD_HEIGHT * 0.5);
+        for offset in [vec2(3_000.0, 0.0), vec2(0.0, 2_000.0), vec2(-4_000.0, 1_000.0)] {
+            let flow = field.sample_with_map(center + offset, None);
+            let normalized = vec2(offset.x / (WORLD_WIDTH * 0.5), offset.y / (WORLD_HEIGHT * 0.5));
+            let radial = vec2(normalized.x / (WORLD_WIDTH * 0.5), normalized.y / (WORLD_HEIGHT * 0.5));
+            assert!(flow.length() > 1.0);
+            assert!(flow.normalize().dot(radial.normalize()).abs() < 1e-3);
+        }
+        // No alto do mapa a corrente vai para a esquerda.
+        assert!(field.sample_with_map(center - vec2(0.0, 2_000.0), None).x < 0.0);
+    }
 
     #[test]
     fn zero_intensity_returns_zero_vector_everywhere() {
