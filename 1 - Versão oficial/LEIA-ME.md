@@ -5,20 +5,26 @@ outras pessoas.
 
 | Arquivo | O que é |
 | --- | --- |
-| `New Gods Unlimited V1.0.0.exe` | o programa; basta dar dois cliques, não precisa instalar nada |
-| `presets_mapa.ecomap` | mapas salvos pelo programa |
-| `presets_sessao.ecopreset` | presets de sessão salvos pelo programa |
-| `runs_salvas/` | criada pelo programa quando você salva uma run |
+| `New Gods Unlimited V3.0.4.exe` | o programa; basta dar dois cliques, não precisa instalar nada |
+| `presets_mapa.ecomap`, `presets_sessao.ecopreset` | presets da interface original (V1); a interface nova guarda os dela na pasta de dados do Windows |
 
-## Versão atual: V1.0.0
+## Versão atual: V3.0.4 — Otimização
 
-Primeira versão numerada. Corresponde à entrega Windows publicada antes da
-reorganização das pastas (21/11/2026):
+Aprovada em 21/11/2026. Reúne as três versões maiores:
 
-- sensor de alimento com teto suave de alcance (600 unidades);
-- vida do fitoplâncton com bônus de 1,5× sob sol, sem imortalidade;
-- inserir célula clicando no mapa;
-- manter o Windows ativo e salvar o estado da sessão.
+- **V2 — Revamp da interface:** interface nova (Tauri), banco permanente de
+  indivíduos, aba Biologia, Demografia com coleta configurável.
+- **V3 — Otimização:** motor cerca de 25× mais rápido na sessão padrão
+  (feromônio de alimento pré-calculado, assinatura genética em cache,
+  distância às paredes, índices de vizinhos leves), sem mudar o resultado da
+  simulação; ticks/s real, fitoplâncton e velocidade na Demografia; rede
+  neural mostrando sensores não lidos e ligações inertes; seletor de threads.
+
+O que mudou em cada entrega está nos `ENTREGA.md` de
+`2 - Versões de teste/V2 - Revamp da interface/` e `V3 - Otimização/`.
+
+A oficial anterior (V1.0.0) está em
+`2 - Versões de teste/_histórico/V1.0.0 - oficial até 21-11-2026/`.
 
 ## Quando sai uma versão nova
 
