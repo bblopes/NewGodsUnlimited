@@ -38,6 +38,7 @@ e a oficial anterior vai para `_histórico/`. Versões reprovadas também vão p
 
 | Arquivo | O que validar | Data |
 | --- | --- | --- |
+| `V4 - Paralelismo/V4.0.1/` | Threads que ficam acordadas entre as etapas: todos os núcleos passam a render (1,09–1,16× sobre 1 thread); escolher Auto na Sessão | 22/11/2026 |
 | `V4 - Paralelismo/V4.0.0/` | PF (feromônio do alimento) em paralelo por faixas e uma passada a menos no fitoplâncton; comparar 1 thread × todos os núcleos | 22/11/2026 |
 | `V3 - Otimização/V3.0.4/` | Sensores não lidos deixam de ser calculados; rede neural mostra sensores não lidos e ligações inertes | 21/11/2026 |
 | `V3 - Otimização/V3.0.3/` | Medidor de ticks/s corrigido (mostra a velocidade real) e paralelismo opcional (padrão 1 thread) | 21/11/2026 |
