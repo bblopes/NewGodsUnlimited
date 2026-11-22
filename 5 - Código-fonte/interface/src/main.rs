@@ -3,6 +3,7 @@
 
 mod banco;
 mod engine;
+mod gravador;
 
 use engine::{
     Engine, EngineInfo, Frame, Genetics, IndividualView, MapData, NeuralCatalog, TelemetryBatch,
@@ -67,17 +68,35 @@ async fn command(engine: State<'_, Engine>, cmd: UiCommand) -> Result<(), String
     Ok(())
 }
 
+/// Onde ficam as gravações do gravador de sessão.
+///
+/// Se o executável estiver dentro da pasta do projeto (ex.:
+/// `ECOSSYSTEM/2 - Versões de teste/V2 …/X.exe`), usa `4 - Dados/Gravações`,
+/// para que tudo fique no HD junto do projeto. Senão, a pasta de dados do app.
+fn pasta_de_gravacoes(dados_do_app: Option<std::path::PathBuf>) -> std::path::PathBuf {
+    if let Ok(executavel) = std::env::current_exe() {
+        for pasta in executavel.ancestors().skip(1).take(5) {
+            let dados = pasta.join("4 - Dados");
+            if dados.is_dir() {
+                return dados.join("Gravações");
+            }
+        }
+    }
+    dados_do_app
+        .map(|pasta| pasta.join("gravacoes"))
+        .unwrap_or_else(|| std::path::PathBuf::from("gravacoes"))
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
             // O banco de indivíduos fica na pasta de dados do aplicativo, fora
             // das pastas de versão, para sobreviver a qualquer versão nova.
-            let caminho = app
-                .path()
-                .app_data_dir()
-                .ok()
+            let dados_do_app = app.path().app_data_dir().ok();
+            let caminho = dados_do_app
+                .as_ref()
                 .map(|pasta| pasta.join("banco_de_individuos.json"));
-            app.manage(Engine::start(caminho));
+            app.manage(Engine::start(caminho, pasta_de_gravacoes(dados_do_app)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
