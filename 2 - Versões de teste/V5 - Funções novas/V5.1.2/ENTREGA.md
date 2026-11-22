@@ -18,7 +18,18 @@ vários anéis girando em torno de um eixo.
 - Ficam salvas em runs e presets de mapa.
 
 ## Medição
-A preencher com a comparação main × branch do CI.
+Mesma máquina do GitHub, main (V5.1.1) × V5.1.2:
+
+| Caso | Ganho | Estado igual | Comportamento igual |
+|---|---:|---|---|
+| Realista (100 células) | 0,97× | sim | sim |
+| Estresse (300 células) | 0,99× | sim | sim |
+| Sessão (100 células) | 0,97× | sim | sim |
+| Sessão (200 células) | 1,00× | sim | sim |
+
+**Resultado honesto:** as correntes existentes não mudaram (estado idêntico);
+as diferenças são variação da máquina. 68 testes passam, 2 novos (espiral abre
+e segura o anel; circular é tangente em todo ponto).
 
 ## Como testar
 1. Física › Corrente › Modelo "Redemoinho", Aplicar.
