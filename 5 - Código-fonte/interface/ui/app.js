@@ -17,6 +17,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 const IC = {
+  flag: '<path d="M5 21V4h12l-2 4 2 4H5"/>',
   play: '<path d="M7 4.5v15l12-7.5z"/>', pause: '<path d="M8 5v14M16 5v14"/>',
   save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
   restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/>', chev: '<path d="M6 9l6 6 6-6"/>',
@@ -63,7 +64,7 @@ const slotDesc = i => i < TOPO.external ? SLOT_DESC[i] : i < TOPO.timer_start ? 
 
 let INFO = null;
 const S = {
-  mode: 'sessao', tab: 'sessao', collapsed: false, speedMenu: false, keepAwake: true,
+  mode: 'sessao', tab: 'sessao', collapsed: false, speedMenu: false, recMenu: false, keepAwake: true,
   insert: false, insertOk: false, selected: null, follow: false,
   cellsView: 'ind', genView: 'resumo', circView: 'con', demoWin: '30k', demoFull: false,
   cellGroups: { resumo: true, corpo: false, sensores: false, rede: true, genoma: false }, showRecords: false,
@@ -115,6 +116,53 @@ const ro = (label, val, cls = '', live = '') => `<div class="ro ${cls}"><small>$
 const head = (title, sub, right = '') => `<div class="side-head"><div style="flex:1;min-width:0"><h2>${title}</h2>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</div>`;
 const hex = c => '#' + c.toString(16).padStart(6, '0');
 
+/* ------------------------------ Gravador de sessão ------------------------------ */
+const REC_MODES = [
+  ['ecossistema', 'Ecossistema', 'parâmetros, mapa, corrente e demografia'],
+];
+const mmss = s => { s = Math.floor(s || 0); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+function recControl() {
+  if (F?.rec_mode) {
+    const label = F.rec_mode === 'sistema' ? 'eco + sistema' : 'ecossistema';
+    return `<button class="btn rec" data-act="recStop" title="Parar e salvar a gravação (${label})"><span class="recdot"></span><span class="mono" data-live="rec">${mmss(F.rec_seconds)}</span>Parar</button>
+      <button class="btn icon ghost" data-act="recMark" title="Marcar este momento (F8)">${ic('flag')}</button>`;
+  }
+  return `<div class="recw"><button class="btn" data-act="recMenu" title="Gravar a sessão"><span class="recdot"></span>Gravar${ic('chev')}</button>
+    ${S.recMenu ? `<div class="menu">${REC_MODES.map(([v, t, d]) => `<button class="opt" data-act="recStart" data-v="${v}"><b>${t}</b><small>${d}</small></button>`).join('')}</div>` : ''}</div>`;
+}
+
+/* Captura de entradas: só enquanto grava no modo sistema. Movimento do mouse
+   amostrado a no máximo 20 Hz; cliques, roda e teclas, todos. Vai em lotes. */
+const REC_IN = { buf: [], lastMove: 0 };
+function recTarget(el) {
+  if (!el || !el.closest) return '';
+  const a = el.closest('[data-act]'); if (a) return `act:${a.dataset.act}${a.dataset.v != null ? '=' + a.dataset.v : ''}`;
+  if (el.id) return '#' + el.id;
+  if (el.dataset?.f) return 'campo:' + el.dataset.f;
+  return el.tagName ? el.tagName.toLowerCase() : '';
+}
+function recInput(e) {
+  if (F?.rec_mode !== 'sistema') return;
+  const t = Math.round(performance.now());
+  if (e.type === 'mousemove') { if (t - REC_IN.lastMove < 50) return; REC_IN.lastMove = t; }
+  const ev = { t, k: e.type };
+  if ('clientX' in e) { ev.x = Math.round(e.clientX); ev.y = Math.round(e.clientY); }
+  if (e.type === 'mousedown' || e.type === 'mouseup') ev.b = e.button;
+  if (e.type === 'wheel') ev.dy = Math.round(e.deltaY);
+  if (e.key !== undefined) ev.key = e.key;
+  const mods = (e.ctrlKey ? 'c' : '') + (e.shiftKey ? 's' : '') + (e.altKey ? 'a' : '');
+  if (mods) ev.mods = mods;
+  if (e.type !== 'mousemove') ev.alvo = recTarget(e.target);
+  if (e.target === cv && 'clientX' in e) { const r = cv.getBoundingClientRect(); ev.arena = [Math.round(e.clientX - r.left), Math.round(e.clientY - r.top)]; }
+  REC_IN.buf.push(ev);
+}
+['mousedown', 'mouseup', 'mousemove', 'wheel', 'keydown', 'keyup'].forEach(k => window.addEventListener(k, recInput, { capture: true, passive: true }));
+setInterval(() => {
+  if (!REC_IN.buf.length) return;
+  const events = REC_IN.buf; REC_IN.buf = [];
+  if (F?.rec_mode === 'sistema') send({ type: 'ui_input', events });
+}, 500);
+
 /* ------------------------------ Barra superior ------------------------------ */
 function renderTop() {
   const top = $('#top');
@@ -134,6 +182,7 @@ function renderTop() {
     <button class="btn ${paused ? 'pri' : ''}" data-act="pause" title="Espaço">${ic(paused ? 'play' : 'pause')}${paused ? 'Iniciar' : 'Pausar'}</button>
     <div class="speed"><button class="btn" data-act="speedMenu" title="Teclas 1–7"><span class="mono">${SPEEDS[F?.speed ?? 0]}</span>${ic('chev')}</button>
       ${S.speedMenu ? `<div class="menu">${SPEEDS.map((s, i) => `<button class="${i === F?.speed ? 'on' : ''}" data-act="speed" data-v="${i}"><span class="mono">${s}</span><span class="kbd">${i + 1}</span></button>`).join('')}</div>` : ''}</div>
+    ${recControl()}
     <div class="vsep"></div>
     <div class="pend">
       ${ep ? `<span class="pill wa">${ep} ${ep === 1 ? 'alteração pendente' : 'alterações pendentes'}</span>` : ''}
@@ -602,6 +651,10 @@ const ACT = {
   collapse() { S.collapsed = !S.collapsed; renderRail(); if (!S.collapsed) renderPanel(); },
   pause() { send({ type: 'pause', value: !F?.paused }); },
   speedMenu() { S.speedMenu = !S.speedMenu; renderTop(); },
+  recMenu() { S.recMenu = !S.recMenu; renderTop(); },
+  recStart(v) { S.recMenu = false; REC_IN.buf = []; send({ type: 'record_start', mode: v }); renderTop(); },
+  recStop() { send({ type: 'record_stop' }); },
+  recMark() { if (F?.rec_mode) send({ type: 'record_mark', text: '' }); },
   speed(v) { S.speedMenu = false; send({ type: 'speed', value: +v }); say('Velocidade ' + SPEEDS[+v]); renderTop(); },
   apply() {
     const ch = envPending(); if (!ch.length) return;
@@ -672,6 +725,7 @@ let pendingDetailRender = false;
 /* ------------------------------ Eventos globais ------------------------------ */
 document.addEventListener('click', e => {
   if (S.speedMenu && !e.target.closest('.speed')) { S.speedMenu = false; renderTop(); }
+  if (S.recMenu && !e.target.closest('.recw')) { S.recMenu = false; renderTop(); }
   const t = e.target.closest('[data-act]'); if (!t || t.disabled) return;
   const fn = ACT[t.dataset.act]; if (fn) fn(t.dataset.v, t, e);
 });
@@ -714,6 +768,7 @@ document.addEventListener('keydown', e => {
     if (S.demoFull) { ACT.demoFull(); return; }
     return;
   }
+  if (e.key === 'F8') { e.preventDefault(); ACT.recMark(); return; }
   if (typing || S.mode === 'lab') return;
   if (e.key === ' ') { e.preventDefault(); ACT.pause(); }
   else if (/^[1-7]$/.test(e.key)) ACT.speed(+e.key - 1);
@@ -915,7 +970,7 @@ cv.addEventListener('wheel', e => {
 }, { passive: false });
 
 /* ------------------------------ Laços de dados ------------------------------ */
-let fps = 60, frames = 0, fpsT = performance.now(), lastPaused = null, lastSpeed = null, lastHeadless = null, lastMapDirty = null;
+let fps = 60, frames = 0, fpsT = performance.now(), lastPaused = null, lastSpeed = null, lastHeadless = null, lastMapDirty = null, lastRec = null;
 let frameBusy = false;
 async function pollFrame() {
   if (frameBusy) return; frameBusy = true;
@@ -925,7 +980,7 @@ async function pollFrame() {
     if (F.notice && F.notice.seq !== S.lastNoticeSeq) { S.lastNoticeSeq = F.notice.seq; if (F.notice.text) say(F.notice.text, F.notice.ok); }
     if (F.bank_version !== lastBankVersion) { lastBankVersion = F.bank_version; refreshCatalog(); }
     if (F.map_version !== lastMapVersion) { lastMapVersion = F.map_version; MAP = await invoke('map_data'); buildMap(MAP); }
-    if (F.paused !== lastPaused || F.speed !== lastSpeed) { lastPaused = F.paused; lastSpeed = F.speed; renderTop(); }
+    if (F.paused !== lastPaused || F.speed !== lastSpeed || (F.rec_mode || '') !== lastRec) { lastPaused = F.paused; lastSpeed = F.speed; lastRec = F.rec_mode || ''; renderTop(); }
     if (F.headless !== lastHeadless) { lastHeadless = F.headless; renderStage(); }
     if (F.map_dirty !== lastMapDirty) { lastMapDirty = F.map_dirty; renderRail(); if (S.tab === 'mapa') { renderPanel(); renderStage(); } }
     if (S.selected != null && !F.detail && prev && prev.detail) { pendingDetailRender = true; }
@@ -952,6 +1007,7 @@ function updateLive() {
   const set = (k, v) => document.querySelectorAll(`[data-live="${k}"]`).forEach(el => { if (el.textContent !== v) el.textContent = v; });
   set('tick', fmt(F.tick)); set('cells', fmt(F.population)); set('tps', fmt(F.tps)); set('food', fmt(F.food_count)); set('cap', fmt(F.capacity_tps) + ' ticks/s'); set('threads', `em uso: ${fmt(F.threads ?? 1)} de ${fmt(F.max_threads ?? 1)}`);
   set('fps', fps + ' FPS'); set('pubhz', `pub. ${fmt(F.publish_hz)} Hz`); set('pub', `${fmt(F.publish_hz)} Hz`);
+  if (F.rec_mode) set('rec', mmss(F.rec_seconds));
   set('run', '#' + String(F.run_id).slice(-7)); set('conflicts', `${fmt(F.crowding_pairs)} pares em conflito`);
   if (F.chem) set('peak', 'pico ' + fmt(F.chem.max, 2) + ' ppm');
   const d = F.detail;

@@ -35,6 +35,9 @@ use new_gods_unlimited::simulation::world::{
 };
 
 use crate::banco::{genoma_de, Banco};
+use crate::gravador::{
+    diferenca_de_mapa, diferenca_de_parametros, resumo_de_parametros, Gravacao, ModoGravacao,
+};
 
 pub const SPEED_MULTIPLIERS: [f32; 7] = [
     1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0,
@@ -228,7 +231,7 @@ fn chem_display_from(name: &str) -> Option<PheromoneDisplay> {
 }
 
 /// Pedidos da interface. Chegam do JavaScript como `{ "type": "...", ... }`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UiCommand {
     Pause { value: bool },
@@ -254,6 +257,13 @@ pub enum UiCommand {
     /// Threads de cálculo do motor; 0 = todos os núcleos.
     Threads { count: u64 },
     DeleteIndividual { key: String },
+    /// Gravador de sessão (ver `gravador.rs`).
+    RecordStart { mode: ModoGravacao },
+    RecordStop,
+    /// Marca o momento atual da gravação ("aqui deu ruim").
+    RecordMark { text: String },
+    /// Lote de entradas de mouse e teclado vindas da interface (modo sistema).
+    UiInput { events: Vec<serde_json::Value> },
     /// Cria no banco uma cópia do indivíduo com a reprodução de última hora.
     AddLastHourReproduction { key: String },
 }
@@ -386,6 +396,12 @@ pub struct Frame {
     pub threads_requested: usize,
     pub max_threads: usize,
     pub notice: Notice,
+    /// Gravador: "" (parado), "ecossistema" ou "sistema".
+    pub rec_mode: String,
+    pub rec_seconds: f32,
+    pub rec_eco: usize,
+    pub rec_sis: usize,
+    pub rec_marks: usize,
 }
 
 #[derive(Clone, Copy, Default, Serialize)]
@@ -551,6 +567,8 @@ struct Shared {
     started: Instant,
     banco: Mutex<Banco>,
     bank_version: AtomicU64,
+    /// Onde o gravador cria as pastas de gravação.
+    pasta_gravacoes: PathBuf,
 }
 
 pub struct Engine {
@@ -559,7 +577,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn start(caminho_do_banco: Option<PathBuf>) -> Self {
+    pub fn start(caminho_do_banco: Option<PathBuf>, pasta_gravacoes: PathBuf) -> Self {
         let env = EnvSettings::default();
         let init = InitSettings::default();
         let map = MapDefinition::default();
@@ -573,6 +591,7 @@ impl Engine {
             started: Instant::now(),
             banco: Mutex::new(Banco::abrir(caminho_do_banco)),
             bank_version: AtomicU64::new(1),
+            pasta_gravacoes,
         });
         let (sender, receiver) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
@@ -936,6 +955,8 @@ struct WorkerState {
     /// threads; só muda a velocidade.
     pool: Arc<rayon::ThreadPool>,
     threads_requested: usize,
+    /// Gravação em andamento, se houver.
+    gravacao: Option<Gravacao>,
 }
 
 impl WorkerState {
@@ -978,6 +999,16 @@ impl WorkerState {
     }
 
     fn handle(&mut self, command: UiCommand, shared: &Shared) {
+        // Registro de sistema: todo comando da interface, como chegou.
+        // As entradas de mouse/teclado são gravadas uma a uma no braço UiInput.
+        if let Some(gravacao) = self.gravacao.as_mut() {
+            if gravacao.modo == ModoGravacao::Sistema
+                && !matches!(command, UiCommand::UiInput { .. })
+            {
+                let dados = serde_json::to_value(&command).unwrap_or(serde_json::Value::Null);
+                gravacao.sis(self.world.tick, "comando", dados);
+            }
+        }
         match command {
             UiCommand::Pause { value } => {
                 self.paused = value;
@@ -990,6 +1021,7 @@ impl WorkerState {
                 set_windows_keep_awake(self.keep_awake && !self.paused);
             }
             UiCommand::Apply { env } => {
+                let anterior = serde_json::to_value(&self.env).unwrap_or_default();
                 self.env = env.sanitized();
                 self.flow = self.env.flow_field(self.init.seed());
                 self.world.set_phytoplankton_reproduction_rate(self.env.phyto_rate);
@@ -997,6 +1029,18 @@ impl WorkerState {
                 self.world.reproduction_minimum = self.env.min_repro;
                 self.publish_flow(shared);
                 let tick = self.world.tick;
+                if let Some(gravacao) = self.gravacao.as_mut() {
+                    let atual = serde_json::to_value(&self.env).unwrap_or_default();
+                    let mudancas = diferenca_de_parametros(&anterior, &atual);
+                    if !mudancas.is_empty() {
+                        let resumo = resumo_de_parametros(&mudancas);
+                        gravacao.eco(
+                            tick,
+                            "parametros_aplicados",
+                            serde_json::json!({ "resumo": resumo, "origem": "manual", "mudancas": mudancas }),
+                        );
+                    }
+                }
                 self.say(format!("Parâmetros aplicados no tick {tick}"), true);
             }
             UiCommand::Restart { init, env } => {
@@ -1022,6 +1066,20 @@ impl WorkerState {
                     *genetics = None;
                 }
                 self.say("Nova run iniciada", true);
+                if let Some(gravacao) = self.gravacao.as_mut() {
+                    let tick = self.world.tick;
+                    gravacao.eco(
+                        tick,
+                        "sessao_reiniciada",
+                        serde_json::json!({
+                            "resumo": format!("nova run #{} · seed {} · {} células", self.run_id, self.init.seed, self.init.cells),
+                            "run_id": self.run_id.to_string(),
+                            "init": &self.init,
+                            "env": &self.env,
+                        }),
+                    );
+                    gravacao.mapa(tick, &self.applied_map, "reinicio");
+                }
             }
             UiCommand::Insert { x, y, neural } => {
                 let Some(genome) = founder_genome(&neural, shared) else {
@@ -1033,6 +1091,19 @@ impl WorkerState {
                     .insert_organism_with_genome_at(Vec2::new(x, y), genome);
                 if inserted {
                     self.selected = self.world.organisms.last().map(|organism| organism.id);
+                    if let Some(gravacao) = self.gravacao.as_mut() {
+                        gravacao.eco(
+                            self.world.tick,
+                            "celula_inserida",
+                            serde_json::json!({
+                                "resumo": format!("célula #{} ({neural}) em ({x:.0}, {y:.0})", self.selected.unwrap_or(0)),
+                                "id": self.selected,
+                                "x": x,
+                                "y": y,
+                                "neural": &neural,
+                            }),
+                        );
+                    }
                     self.say("Célula inserida", true);
                 } else {
                     self.say(
@@ -1068,6 +1139,12 @@ impl WorkerState {
                 self.publish_map(shared);
             }
             UiCommand::MapApply => {
+                if let Some(gravacao) = self.gravacao.as_mut() {
+                    let tick = self.world.tick;
+                    let diferenca = diferenca_de_mapa(&self.applied_map, &self.edited_map);
+                    gravacao.eco(tick, "mapa_aplicado", diferenca);
+                    gravacao.mapa(tick, &self.edited_map, "aplicado");
+                }
                 self.applied_map = self.edited_map.clone();
                 self.world.map = self.applied_map.clone();
                 self.map_history.clear();
@@ -1193,7 +1270,85 @@ impl WorkerState {
                     Err(erro) => self.say(format!("Não foi possível salvar: {erro}"), false),
                 }
             }
+            UiCommand::RecordStart { mode } => self.start_recording(mode, shared),
+            UiCommand::RecordStop => self.stop_recording(),
+            UiCommand::RecordMark { text } => {
+                let tick = self.world.tick;
+                match self.gravacao.as_mut() {
+                    Some(gravacao) => {
+                        gravacao.marca(tick, &text);
+                        let numero = gravacao.marcas_feitas;
+                        self.say(format!("Marca {numero} no tick {tick}"), true);
+                    }
+                    None => self.say("Nada está sendo gravado", false),
+                }
+            }
+            UiCommand::UiInput { events } => {
+                let tick = self.world.tick;
+                if let Some(gravacao) = self.gravacao.as_mut() {
+                    for evento in events {
+                        gravacao.sis(tick, "entrada", evento);
+                    }
+                    gravacao.descarregar_sis();
+                }
+            }
             UiCommand::DeleteIndividual { .. } | UiCommand::WantGenetics => {}
+        }
+    }
+
+    fn start_recording(&mut self, mode: ModoGravacao, shared: &Shared) {
+        if let Some(gravacao) = &self.gravacao {
+            let modo = gravacao.modo.rotulo();
+            self.say(format!("Já existe uma gravação em andamento ({modo})"), false);
+            return;
+        }
+        let tick = self.world.tick;
+        let manifesto = serde_json::json!({
+            "programa": "New Gods Unlimited",
+            "versao_interface": env!("CARGO_PKG_VERSION"),
+            "sistema_operacional": std::env::consts::OS,
+            "run_id": self.run_id.to_string(),
+            "seed": self.init.seed,
+            "init": &self.init,
+            "env": &self.env,
+            "velocidade": SPEED_MULTIPLIERS[self.speed],
+            "pausado": self.paused,
+            "threads": self.pool.current_num_threads(),
+            "intervalo_telemetria_ticks": self.telemetry_interval,
+            "populacao_inicial": self.world.organisms.len(),
+            "fitoplancton_inicial": self.world.food.len(),
+        });
+        match Gravacao::iniciar(&shared.pasta_gravacoes, mode, tick, manifesto, &self.applied_map) {
+            Ok(mut gravacao) => {
+                let mut amostra = capture_sample(&self.world);
+                amostra.reproduction_minimum = self.env.min_repro;
+                amostra.tps = self.effective_tps;
+                gravacao.amostra(&amostra);
+                let pasta = gravacao.pasta.display().to_string();
+                self.gravacao = Some(gravacao);
+                self.say(format!("Gravando ({}) em {pasta}", mode.rotulo()), true);
+            }
+            Err(erro) => self.say(format!("Não foi possível iniciar a gravação: {erro}"), false),
+        }
+    }
+
+    fn stop_recording(&mut self) {
+        let Some(gravacao) = self.gravacao.take() else {
+            self.say("Nada está sendo gravado", false);
+            return;
+        };
+        let tick = self.world.tick;
+        let estado_final = serde_json::json!({
+            "run_id": self.run_id.to_string(),
+            "populacao": self.world.organisms.len(),
+            "fitoplancton": self.world.food.len(),
+            "nascimentos_total": self.world.births_total,
+            "mortes_total": self.world.deaths_total,
+            "env": &self.env,
+        });
+        match gravacao.encerrar(tick, estado_final) {
+            Ok(pasta) => self.say(format!("Gravação salva em {}", pasta.display()), true),
+            Err(erro) => self.say(format!("Gravação encerrada com erro: {erro}"), false),
         }
     }
 
@@ -1233,6 +1388,13 @@ impl WorkerState {
             notice: self.notice.clone(),
             ..Frame::default()
         };
+        if let Some(gravacao) = &self.gravacao {
+            frame.rec_mode = gravacao.modo.chave().to_owned();
+            frame.rec_seconds = gravacao.segundos() as f32;
+            frame.rec_eco = gravacao.eventos_eco;
+            frame.rec_sis = gravacao.eventos_sis;
+            frame.rec_marks = gravacao.marcas_feitas;
+        }
         if light {
             return frame;
         }
@@ -1325,6 +1487,7 @@ fn worker(
         // seletor da Sessão permite testar mais núcleos em cada máquina.
         pool: Arc::new(build_pool(1).expect("pool de threads do motor")),
         threads_requested: 1,
+        gravacao: None,
     };
     set_windows_keep_awake(true);
     state.reset_telemetry(&shared);
@@ -1410,6 +1573,9 @@ fn worker(
                     let mut sample = capture_sample(&state.world);
                     sample.reproduction_minimum = state.env.min_repro;
                     sample.tps = state.effective_tps;
+                    if let Some(gravacao) = state.gravacao.as_mut() {
+                        gravacao.amostra(&sample);
+                    }
                     if log.1.len() >= MAX_TELEMETRY_SAMPLES {
                         // Mantém a série inteira com metade da resolução.
                         let kept: Vec<Sample> = log.1.iter().copied().step_by(2).collect();
