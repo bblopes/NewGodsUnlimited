@@ -205,3 +205,19 @@ próxima etapa, se você decidir: regras mais leves para o fitoplâncton
 (atualização menos frequente das partículas paradas, corrente lida de uma
 grade, PF recalculado a cada poucos ticks). Todas mudam o resultado da
 simulação.
+
+## 9. V4 — Paralelismo
+
+| Entrega | Sessão | Estresse | Realista | Todos os núcleos × 1 thread (sessão) | Estado igual |
+|---|---:|---:|---:|---:|---|
+| V4.0.0 × V3.0.4 — PF em faixas paralelas e validade do fitoplâncton no movimento | 1,09–1,10× | 1,00× | 0,97× | 0,99–1,02× | sim |
+
+O PF agora pode rodar em faixas paralelas da malha (só com 40 mil amostras
+ou mais) e a limpeza do fitoplâncton deixou de ter passada própria. O ganho
+na sessão vem de menos trabalho repetido. Os núcleos ainda empatam com uma
+thread nos 4 vCPU do GitHub.
+
+Correção do workflow nesta entrega: com a `main` na V3.0.4, a comparação de
+estado passou a ser normal × normal. A forma anterior (branch com
+`--sensores-completos` × `main`) acusava diferença sempre que havia células
+vivas.
