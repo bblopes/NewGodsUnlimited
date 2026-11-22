@@ -466,6 +466,41 @@ pub struct PhagocytosisPull {
     pub size_ratio: f32,
 }
 
+/// Luz efetiva do mapa (V5.1). A malha pintada vai de 0 a 1; a luz basal
+/// existe no mapa inteiro e a intensidade escala o sol todo:
+/// `L = basal + (1 − basal) × intensidade × malha`. O padrão (basal 0,
+/// intensidade 1, limiar 0) reproduz exatamente o comportamento antigo.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SunSettings {
+    pub basal: f32,
+    pub intensity: f32,
+    /// Luz mínima para o fitoplâncton se reproduzir.
+    pub threshold: f32,
+}
+
+impl Default for SunSettings {
+    fn default() -> Self {
+        Self {
+            basal: 0.0,
+            intensity: 1.0,
+            threshold: 0.0,
+        }
+    }
+}
+
+impl SunSettings {
+    pub fn light(&self, map: &MapDefinition, position: Vec2) -> f32 {
+        let painted = map.sunlight_intensity(position);
+        let basal = self.basal.clamp(0.0, 1.0);
+        (basal + (1.0 - basal) * self.intensity.clamp(0.0, 1.0) * painted).clamp(0.0, 1.0)
+    }
+
+    /// A partícula pode se reproduzir com esta luz?
+    fn allows_reproduction(&self, light: f32) -> bool {
+        light > 0.0 && light >= self.threshold
+    }
+}
+
 /// Uma única partícula de fitoplâncton. Ela só desaparece ao ser comida
 /// (quando as células existirem) ou quando alcançar sua vida máxima.
 #[derive(Clone, Copy)]
@@ -640,6 +675,9 @@ pub struct World {
     pub deaths_by_age_total: u64,
     /// Fagocitoses em curso no último tick (Behavior Spotter).
     pub phagocytosis_pulls: Vec<PhagocytosisPull>,
+    /// Luz basal, intensidade e limiar (V5.1). Não vai no checkpoint: a
+    /// interface guarda nas configurações e reaplica.
+    pub sun: SunSettings,
     /// Limiar atual para o motor neural poder reproduzir. É exposto para a
     /// demografia desenhar a referência correta de energia.
     pub reproduction_minimum: f32,
@@ -713,6 +751,7 @@ impl World {
             deaths_by_phagocytosis_total: 0,
             deaths_by_age_total: 0,
             phagocytosis_pulls: Vec::new(),
+            sun: SunSettings::default(),
             reproduction_minimum: MAX_ENERGY,
             phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
             energy_capacity: MAX_ENERGY,
@@ -947,6 +986,7 @@ impl World {
         // muda posição ou idade do alimento até a etapa 12, então a resposta
         // é a mesma que a limpeza calcularia lá, sem outra passada paralela.
         let map = &self.map;
+        let sun = self.sun;
         let clearance = self.pheromones.wall_clearance();
         let mut food_expired: Vec<bool> = map_mut(&mut self.food, 2_048, 1_024, |particle| {
             let previous_position = particle.position;
@@ -969,7 +1009,7 @@ impl World {
             // A luz prolonga a vida, mas não suspende o envelhecimento: todo
             // fitoplâncton eventualmente sai do ciclo, até sob sol pleno.
             particle.age_ticks = particle.age_ticks.saturating_add(1);
-            phytoplankton_expired(particle, map, lifetime_ticks)
+            phytoplankton_expired(particle, map, &sun, lifetime_ticks)
         });
         self.reproduce_sunlit_phytoplankton();
         // Os nascidos agora entram no fim da lista; anotamos os deles também.
@@ -978,7 +1018,7 @@ impl World {
         food_expired.extend(
             self.food[born_from..]
                 .iter()
-                .map(|particle| phytoplankton_expired(particle, map, lifetime_ticks)),
+                .map(|particle| phytoplankton_expired(particle, map, &sun, lifetime_ticks)),
         );
         observer.end(TickPhase::FoodMovement);
 
@@ -1634,6 +1674,7 @@ impl World {
             deaths_by_phagocytosis_total,
             deaths_by_age_total,
             phagocytosis_pulls: Vec::new(),
+            sun: SunSettings::default(),
             reproduction_minimum: MAX_ENERGY,
             phytoplankton_reproduction_rate: DEFAULT_PHYTOPLANKTON_REPRODUCTION_PER_TICK,
             energy_capacity,
@@ -2433,6 +2474,7 @@ impl World {
         let clearance = self.pheromones.wall_clearance();
         let random_state = &mut self.random_state;
         let reproduction_rate = self.phytoplankton_reproduction_rate;
+        let sun = self.sun;
         let mut density: GridMap<(i32, i32), usize> = GridMap::default();
         for particle in &self.food {
             *density
@@ -2444,8 +2486,8 @@ impl World {
         let mut births = Vec::new();
         for index in 0..initial_count {
             let parent_position = self.food[index].position;
-            let sunlight = map.sunlight_intensity(parent_position);
-            if sunlight <= 0.0
+            let sunlight = sun.light(map, parent_position);
+            if !sun.allows_reproduction(sunlight)
                 || next_random_unit_from(random_state) >= reproduction_rate * sunlight
             {
                 continue;
@@ -2459,7 +2501,7 @@ impl World {
             position =
                 map.constrain_to_walls_fast(position, parent_position, FOOD_RADIUS, clearance);
             let cell = phytoplankton_density_cell(position);
-            if map.sunlight_intensity(position) <= 0.0
+            if !sun.allows_reproduction(sun.light(map, position))
                 || density.get(&cell).copied().unwrap_or_default()
                     >= MAX_PHYTOPLANKTON_PER_DENSITY_CELL
             {
@@ -2895,9 +2937,10 @@ fn sensor_grid_cell(position: Vec2) -> (i32, i32) {
 fn phytoplankton_expired(
     particle: &Phytoplankton,
     map: &MapDefinition,
+    sun: &SunSettings,
     lifetime_ticks: u32,
 ) -> bool {
-    let sunlight = map.sunlight_intensity(particle.position);
+    let sunlight = sun.light(map, particle.position);
     let lifespan_multiplier = 1.0 + (SUNLIT_PHYTOPLANKTON_LIFESPAN_MULTIPLIER - 1.0) * sunlight;
     let lifetime = (lifetime_ticks as f32 * lifespan_multiplier).ceil() as u32;
     particle.age_ticks >= lifetime
@@ -3491,6 +3534,25 @@ mod tests {
         assert!(world.organisms[0].external_force.length() < 0.000_1);
         assert!(world.organisms[0].energy < 60.0);
         assert!(outcome.protected_pairs.is_empty());
+    }
+
+    #[test]
+    fn effective_light_uses_basal_intensity_and_threshold() {
+        let mut map = MapDefinition::empty();
+        let lit = vec2(4_000.0, 3_000.0);
+        map.paint_sunlight(lit, 400.0, 1.0, 1.0, false);
+        let dark = vec2(10_000.0, 6_000.0);
+        let default = SunSettings::default();
+        assert_eq!(default.light(&map, lit), 1.0);
+        assert_eq!(default.light(&map, dark), 0.0);
+        assert!(!default.allows_reproduction(default.light(&map, dark)));
+        let sun = SunSettings { basal: 0.02, intensity: 0.5, threshold: 0.0 };
+        assert!((sun.light(&map, dark) - 0.02).abs() < 1e-6);
+        assert!((sun.light(&map, lit) - (0.02 + 0.98 * 0.5)).abs() < 1e-6);
+        assert!(sun.allows_reproduction(sun.light(&map, dark)));
+        let strict = SunSettings { threshold: 0.1, ..sun };
+        assert!(!strict.allows_reproduction(strict.light(&map, dark)));
+        assert!(strict.allows_reproduction(strict.light(&map, lit)));
     }
 
     #[test]

@@ -33,7 +33,7 @@ impl Default for MapDefinition {
                 let position = map.cell_center(x, y);
                 let index = map.index(x, y);
                 if ellipse_level(position) <= 1.0 {
-                    map.sunlight[index] = 1;
+                    map.sunlight[index] = 255;
                 }
                 let wall_band = (ellipse_level(position) - 1.0).abs()
                     <= WALL_HALF_THICKNESS * 1.7 / OASIS_RADII.y;
@@ -59,10 +59,56 @@ impl MapDefinition {
             .is_some_and(|(x, y)| self.sunlight[self.index(x, y)] != 0)
     }
 
-    /// Camada preparada para valores contínuos futuros. Nesta primeira fase,
-    /// cada pixel é 0 (sombra) ou 1 (sol pleno).
+    /// Luz pintada no ponto, de 0 a 1 (V5.1: cada casa guarda 0–255). A luz
+    /// efetiva também depende da luz basal e da intensidade do sol, que
+    /// ficam no mundo (`SunSettings`).
     pub fn sunlight_intensity(&self, position: Vec2) -> f32 {
-        self.is_sunlit(position) as u8 as f32
+        self.cell_at(position)
+            .map(|(x, y)| self.sunlight[self.index(x, y)] as f32 / 255.0)
+            .unwrap_or(0.0)
+    }
+
+    /// Valores crus da malha de luz (0–255), para a interface desenhar.
+    pub fn sunlight_values(&self) -> &[u8] {
+        &self.sunlight
+    }
+
+    /// Pincel de luz. `peak` é a intensidade máxima (0–1) no miolo;
+    /// `hardness` (0–1) é a força: 1 pinta a intensidade máxima até a borda,
+    /// 0 deixa só o pico no centro, caindo a zero na borda. Pintar usa o
+    /// máximo (passar duas vezes não estoura); `erase` tira luz com o mesmo
+    /// esmaecimento.
+    pub fn paint_sunlight(&mut self, center: Vec2, radius: f32, peak: f32, hardness: f32, erase: bool) {
+        let radius = radius.max(1.0);
+        let peak = peak.clamp(0.0, 1.0);
+        let inner = radius * hardness.clamp(0.0, 1.0);
+        let cell_w = WORLD_WIDTH / MAP_GRID_WIDTH as f32;
+        let cell_h = WORLD_HEIGHT / MAP_GRID_HEIGHT as f32;
+        let x0 = ((center.x - radius) / cell_w).floor().max(0.0) as usize;
+        let x1 = (((center.x + radius) / cell_w).ceil() as usize).min(MAP_GRID_WIDTH);
+        let y0 = ((center.y - radius) / cell_h).floor().max(0.0) as usize;
+        let y1 = (((center.y + radius) / cell_h).ceil() as usize).min(MAP_GRID_HEIGHT);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let distance = self.cell_center(x, y).distance(center);
+                if distance >= radius {
+                    continue;
+                }
+                let weight = if distance <= inner {
+                    1.0
+                } else {
+                    let t = ((radius - distance) / (radius - inner).max(0.001)).clamp(0.0, 1.0);
+                    t * t * (3.0 - 2.0 * t)
+                };
+                let index = self.index(x, y);
+                let current = self.sunlight[index] as f32;
+                self.sunlight[index] = if erase {
+                    (current * (1.0 - weight)).round() as u8
+                } else {
+                    current.max((peak * weight * 255.0).round()) as u8
+                };
+            }
+        }
     }
 
     /// Máscara de paredes crua (`MAP_GRID_WIDTH × MAP_GRID_HEIGHT`). Usada
@@ -191,7 +237,7 @@ impl MapDefinition {
         for y in 0..MAP_GRID_HEIGHT {
             for x in 0..MAP_GRID_WIDTH {
                 let index = self.index(x, y);
-                self.sunlight[index] = point_in_polygon(self.cell_center(x, y), polygon) as u8;
+                self.sunlight[index] = point_in_polygon(self.cell_center(x, y), polygon) as u8 * 255;
             }
         }
     }
@@ -291,11 +337,17 @@ impl MapDefinition {
         let mut map = Self::empty();
         reader.read_exact(&mut map.walls)?;
         reader.read_exact(&mut map.sunlight)?;
-        if map.walls.iter().any(|value| *value > 1) || map.sunlight.iter().any(|value| *value > 1) {
+        if map.walls.iter().any(|value| *value > 1) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "máscara de mapa inválida",
             ));
+        }
+        // Mapas de antes da V5.1 guardavam o sol como 0/1: 1 vira luz máxima.
+        if map.sunlight.iter().all(|value| *value <= 1) {
+            for value in &mut map.sunlight {
+                *value *= 255;
+            }
         }
         Ok(map)
     }
@@ -327,7 +379,7 @@ impl MapDefinition {
                         let target_y = legacy_y * 2 + y;
                         let target_index = map.index(target_x, target_y);
                         map.walls[target_index] = legacy_walls[legacy_index];
-                        map.sunlight[target_index] = legacy_sunlight[legacy_index];
+                        map.sunlight[target_index] = legacy_sunlight[legacy_index] * 255;
                     }
                 }
             }
@@ -532,6 +584,39 @@ mod tests {
             5.0,
         );
         assert!(ellipse_level(allowed) > 1.0);
+    }
+
+    #[test]
+    fn light_brush_strength_controls_the_edge() {
+        let center = vec2(4_000.0, 3_000.0);
+        let mut hard = MapDefinition::empty();
+        hard.paint_sunlight(center, 800.0, 0.5, 1.0, false);
+        let mut soft = MapDefinition::empty();
+        soft.paint_sunlight(center, 800.0, 0.5, 0.0, false);
+        // Centro: intensidade máxima nos dois.
+        assert!((hard.sunlight_intensity(center) - 0.5).abs() < 0.01);
+        assert!((soft.sunlight_intensity(center) - 0.5).abs() < 0.03);
+        // Perto da borda: o duro ainda pinta tudo; o suave quase nada.
+        let edge = center + vec2(700.0, 0.0);
+        assert!((hard.sunlight_intensity(edge) - 0.5).abs() < 0.01);
+        assert!(soft.sunlight_intensity(edge) < 0.05);
+        // Fora do raio não pinta; passar de novo não estoura.
+        assert_eq!(hard.sunlight_intensity(center + vec2(900.0, 0.0)), 0.0);
+        hard.paint_sunlight(center, 800.0, 0.5, 1.0, false);
+        assert!((hard.sunlight_intensity(center) - 0.5).abs() < 0.01);
+        // Sombra tira a luz com o mesmo pincel.
+        hard.paint_sunlight(center, 800.0, 1.0, 1.0, true);
+        assert_eq!(hard.sunlight_intensity(center), 0.0);
+    }
+
+    #[test]
+    fn old_binary_sun_reads_as_full_light() {
+        let mut old = MapDefinition::empty();
+        old.sunlight[old.index(10, 10)] = 1;
+        let mut bytes = Vec::new();
+        old.write_to(&mut bytes).unwrap();
+        let read = MapDefinition::read_from(&mut std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(read.sunlight[read.index(10, 10)], 255);
     }
 
     #[test]
